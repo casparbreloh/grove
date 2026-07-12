@@ -7,7 +7,3 @@ edition = "2024"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 clap_usage = "2"
-
-[dev-dependencies]
-assert_cmd = "2"
-tempfile = "3"
