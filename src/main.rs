@@ -2,7 +2,7 @@ mod git;
 
 use std::{
     ffi::OsStr,
-    io::Write,
+    io::{IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
@@ -12,6 +12,9 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 
 use crate::git::{Git, Worktree};
+
+const BOLD: &str = "1";
+const DIM: &str = "2";
 
 #[derive(Parser)]
 #[command(arg_required_else_help = true)]
@@ -165,11 +168,12 @@ fn list(git: &Git) -> Result<()> {
     }
     print_rows(&rows, &format!("{default_name}↕"));
     std::io::stdout().flush()?;
-    eprint!("\n○ Showing {} worktrees", rows.len());
+    let mut summary = format!("○ Showing {} worktrees", rows.len());
     if changed > 0 {
-        eprint!(", {changed} with changes");
+        summary.push_str(&format!(", {changed} with changes"));
     }
-    eprintln!();
+    let styled = styling_enabled(std::io::stderr().is_terminal());
+    eprintln!("\n{}", style(&summary, DIM, styled));
     Ok(())
 }
 
@@ -213,18 +217,35 @@ fn print_rows(rows: &[Row], default_header: &str) {
     let branch_width = width(rows, "Branch", |row| &row.branch);
     let changes_width = width(rows, "Changes", |row| &row.changes);
     let divergence_width = width(rows, default_header, |row| &row.divergence);
-    println!(
+    let header = format!(
         "  {:<branch_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
         "Branch", "Changes", default_header
     );
+    let styled = styling_enabled(std::io::stdout().is_terminal());
+    println!("{}", style(&header, BOLD, styled));
     for row in rows {
         let marker = row.marker;
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
+        let path = style(&row.path, DIM, styled);
         println!(
-            "{marker} {:<branch_width$}  {changes}  {divergence}  {}",
-            row.branch, row.path,
+            "{marker} {:<branch_width$}  {changes}  {divergence}  {path}",
+            row.branch,
         );
+    }
+}
+
+fn styling_enabled(is_terminal: bool) -> bool {
+    is_terminal
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var_os("TERM").as_deref() != Some(OsStr::new("dumb"))
+}
+
+fn style(value: &str, code: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[{code}m{value}\x1b[0m")
+    } else {
+        value.to_owned()
     }
 }
 
