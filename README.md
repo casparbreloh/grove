@@ -9,9 +9,8 @@ grove list
 grove remove feature/login
 ```
 
-`grove list` shows staged (`+`), modified (`!`), and untracked (`?`) work,
-uncommitted line changes, divergence from the primary branch, and the latest
-commit for each worktree.
+`grove list` shows staged (`+`), modified (`!`), and untracked (`?`) work plus
+the number of changed lines in each worktree.
 
 Grove uses Git as its source of truth. It has no configuration, metadata, hooks,
 or workflow steps. New worktrees are siblings of the primary worktree, such as

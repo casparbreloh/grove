@@ -182,34 +182,6 @@ impl Git {
         })
     }
 
-    pub fn divergence(&self, path: &Path, base: &str) -> Result<(usize, usize)> {
-        let counts = self.text_at(
-            path,
-            &[
-                "rev-list",
-                "--left-right",
-                "--count",
-                &format!("{base}...HEAD"),
-            ],
-        )?;
-        let mut counts = counts.split_whitespace();
-        let behind = counts
-            .next()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0);
-        let ahead = counts
-            .next()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0);
-        Ok((ahead, behind))
-    }
-
-    pub fn commit(&self, path: &Path) -> Result<(String, String)> {
-        let text = self.text_at(path, &["log", "-1", "--format=%h%x00%s"])?;
-        let (hash, message) = text.split_once('\0').unwrap_or((&text, ""));
-        Ok((hash.to_owned(), message.to_owned()))
-    }
-
     pub fn worktree_add_new(&self, path: &Path, branch: &str, base: &str) -> Result<()> {
         self.output_os(&["worktree", "add", "-b", branch], path, &[base])
     }
