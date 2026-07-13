@@ -13,9 +13,6 @@ use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshComplete
 
 use crate::git::{Git, Worktree};
 
-const BOLD: &str = "1";
-const DIM: &str = "2";
-
 #[derive(Parser)]
 #[command(arg_required_else_help = true)]
 struct Cli {
@@ -168,12 +165,11 @@ fn list(git: &Git) -> Result<()> {
     }
     print_rows(&rows, &format!("{default_name}↕"));
     std::io::stdout().flush()?;
-    let mut summary = format!("○ Showing {} worktrees", rows.len());
+    eprint!("\n○ Showing {} worktrees", rows.len());
     if changed > 0 {
-        summary.push_str(&format!(", {changed} with changes"));
+        eprint!(", {changed} with changes");
     }
-    let styled = std::io::stderr().is_terminal();
-    eprintln!("\n{}", style(&summary, DIM, styled));
+    eprintln!();
     Ok(())
 }
 
@@ -221,23 +217,21 @@ fn print_rows(rows: &[Row], default_header: &str) {
         "  {:<branch_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
         "Branch", "Changes", default_header
     );
-    let styled = std::io::stdout().is_terminal();
-    println!("{}", style(&header, BOLD, styled));
+    println!("{}", bold(&header, std::io::stdout().is_terminal()));
     for row in rows {
         let marker = row.marker;
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
-        let path = style(&row.path, DIM, styled);
         println!(
-            "{marker} {:<branch_width$}  {changes}  {divergence}  {path}",
-            row.branch,
+            "{marker} {:<branch_width$}  {changes}  {divergence}  {}",
+            row.branch, row.path,
         );
     }
 }
 
-fn style(value: &str, code: &str, enabled: bool) -> String {
+fn bold(value: &str, enabled: bool) -> String {
     if enabled {
-        format!("\x1b[{code}m{value}\x1b[0m")
+        format!("\x1b[1m{value}\x1b[0m")
     } else {
         value.to_owned()
     }
