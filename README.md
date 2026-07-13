@@ -9,8 +9,9 @@ grove list
 grove remove feature/login
 ```
 
-`grove list` shows `●` when a worktree has changes and `×` when it has conflicts.
-Grove deliberately does not expose Git's staging model.
+`grove list` shows changed lines and each branch's commit distance from the
+repository's default branch. Grove deliberately does not expose Git's staging
+model.
 
 Grove uses Git as its source of truth. It has no configuration, metadata, hooks,
 or workflow steps. New worktrees live under `~/.grove/<repo>/<branch>`. Grove
@@ -19,18 +20,16 @@ and Unicode-normalizing filesystems.
 
 ## Shell setup
 
-For Fish, add these lines in this order:
+For Fish:
 
 ```fish
-COMPLETE=fish grove | source
-grove shell fish | source
+grove init fish | source
 ```
 
 For Zsh:
 
 ```sh
-source <(COMPLETE=zsh grove)
-eval "$(grove shell zsh)"
+eval "$(grove init zsh)"
 ```
 
 With the wrapper loaded, switching changes directory without printing a second

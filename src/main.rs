@@ -2,12 +2,14 @@ mod git;
 
 use std::{
     ffi::OsStr,
+    io::Write,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
+use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 
 use crate::git::{Git, Worktree};
 
@@ -43,8 +45,8 @@ enum Cmd {
         #[arg(add = ArgValueCompleter::new(worktree_branches))]
         branch: Option<String>,
     },
-    /// Print shell integration
-    Shell { shell: Shell },
+    /// Print shell integration and completions
+    Init { shell: Shell },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -67,14 +69,7 @@ fn main() -> Result<()> {
         Cmd::Switch { create, branch } => switch(&Git::discover()?, &branch, create),
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, branch } => remove(&Git::discover()?, branch.as_deref(), force),
-        Cmd::Shell { shell: Shell::Fish } => {
-            print!("{}", include_str!("shell.fish"));
-            Ok(())
-        }
-        Cmd::Shell { shell: Shell::Zsh } => {
-            print!("{}", include_str!("shell.zsh"));
-            Ok(())
-        }
+        Cmd::Init { shell } => init(shell),
     }
 }
 
@@ -124,6 +119,16 @@ fn list(git: &Git) -> Result<()> {
     let worktrees = git.worktrees()?;
     let current = git.current_root()?;
     let primary = primary(&worktrees)?;
+    let detected = git.default_branch()?;
+    let default_name = detected
+        .strip_prefix("origin/")
+        .unwrap_or(&detected)
+        .to_owned();
+    let default_ref = if git.branch_exists(&default_name)? {
+        default_name.as_str()
+    } else {
+        detected.as_str()
+    };
     let mut rows = Vec::new();
     let mut changed = 0;
     for worktree in &worktrees {
@@ -135,32 +140,31 @@ fn list(git: &Git) -> Result<()> {
             '+'
         };
         let branch = worktree.branch().unwrap_or("(detached)").to_owned();
-        let changes = if worktree.prunable {
-            "⊟".to_owned()
+        let (changes, divergence) = if worktree.prunable {
+            ("missing".to_owned(), String::new())
         } else {
             let status = git.status(&worktree.path)?;
             if status.changed {
                 changed += 1;
             }
-            if status.conflicts {
-                "×"
-            } else if worktree.locked {
-                "⊞"
-            } else if status.changed {
-                "●"
+            let changes = format_changes(&status);
+            let divergence = if branch == default_name || branch == "(detached)" {
+                String::new()
             } else {
-                ""
-            }
-            .to_owned()
+                format_divergence(&git.divergence(&worktree.path, default_ref)?)
+            };
+            (changes, divergence)
         };
         rows.push(Row {
             marker,
             branch,
             changes,
+            divergence,
             path: display_path(&worktree.path, &current),
         });
     }
-    print_rows(&rows);
+    print_rows(&rows, &format!("{default_name}↕"));
+    std::io::stdout().flush()?;
     eprint!("\n○ Showing {} worktrees", rows.len());
     if changed > 0 {
         eprint!(", {changed} with changes");
@@ -173,21 +177,52 @@ struct Row {
     marker: char,
     branch: String,
     changes: String,
+    divergence: String,
     path: String,
 }
 
-fn print_rows(rows: &[Row]) {
+fn format_changes(status: &git::Status) -> String {
+    let mut parts = Vec::new();
+    if status.added > 0 {
+        parts.push(format!("+{}", status.added));
+    }
+    if status.deleted > 0 {
+        parts.push(format!("-{}", status.deleted));
+    }
+    if status.conflicts > 0 {
+        let label = if status.conflicts == 1 {
+            "conflict"
+        } else {
+            "conflicts"
+        };
+        parts.push(format!("{} {label}", status.conflicts));
+    }
+    parts.join(" ")
+}
+
+fn format_divergence(divergence: &git::Divergence) -> String {
+    match (divergence.ahead, divergence.behind) {
+        (0, 0) => String::new(),
+        (ahead, 0) => format!("↑{ahead}"),
+        (0, behind) => format!("↓{behind}"),
+        (ahead, behind) => format!("↑{ahead} ↓{behind}"),
+    }
+}
+
+fn print_rows(rows: &[Row], default_header: &str) {
     let branch_width = width(rows, "Branch", |row| &row.branch);
     let changes_width = width(rows, "Changes", |row| &row.changes);
+    let divergence_width = width(rows, default_header, |row| &row.divergence);
     println!(
-        "  {:<branch_width$}  {:<changes_width$}  Path",
-        "Branch", "Changes"
+        "  {:<branch_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
+        "Branch", "Changes", default_header
     );
     for row in rows {
         let marker = row.marker;
         let changes = format!("{:<changes_width$}", row.changes);
+        let divergence = format!("{:<divergence_width$}", row.divergence);
         println!(
-            "{marker} {:<branch_width$}  {changes}  {}",
+            "{marker} {:<branch_width$}  {changes}  {divergence}  {}",
             row.branch, row.path,
         );
     }
@@ -196,10 +231,40 @@ fn print_rows(rows: &[Row]) {
 fn width<'a>(rows: &'a [Row], header: &str, value: impl Fn(&'a Row) -> &'a str) -> usize {
     rows.iter()
         .map(value)
-        .map(str::len)
+        .map(|value| value.chars().count())
         .max()
         .unwrap_or(0)
-        .max(header.len())
+        .max(header.chars().count())
+}
+
+fn init(shell: Shell) -> Result<()> {
+    let executable = std::env::current_exe()?;
+    let executable = executable.to_string_lossy();
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    match shell {
+        Shell::Fish => {
+            FishCompleter.write_registration(
+                "COMPLETE",
+                "grove",
+                "grove",
+                &executable,
+                &mut output,
+            )?;
+            output.write_all(include_bytes!("shell.fish"))?;
+        }
+        Shell::Zsh => {
+            ZshCompleter.write_registration(
+                "COMPLETE",
+                "grove",
+                "grove",
+                &executable,
+                &mut output,
+            )?;
+            output.write_all(include_bytes!("shell.zsh"))?;
+        }
+    }
+    Ok(())
 }
 
 fn display_path(path: &Path, current: &Path) -> String {

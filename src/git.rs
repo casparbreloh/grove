@@ -22,7 +22,14 @@ pub struct Worktree {
 
 pub struct Status {
     pub changed: bool,
-    pub conflicts: bool,
+    pub added: usize,
+    pub deleted: usize,
+    pub conflicts: usize,
+}
+
+pub struct Divergence {
+    pub ahead: usize,
+    pub behind: usize,
 }
 
 impl Worktree {
@@ -79,7 +86,10 @@ impl Git {
                 return Ok(branch.to_owned());
             }
         }
-        bail!("could not detect a default branch (expected origin/HEAD, main, or master)")
+        if let Some(branch) = self.worktrees()?.first().and_then(Worktree::branch) {
+            return Ok(branch.to_owned());
+        }
+        bail!("could not detect the default branch")
     }
 
     pub fn current_root(&self) -> Result<PathBuf> {
@@ -130,15 +140,68 @@ impl Git {
 
     pub fn status(&self, path: &Path) -> Result<Status> {
         let porcelain = self.text_at(path, &["status", "--porcelain"])?;
-        let mut conflicts = false;
+        let mut conflicts = 0;
         for line in porcelain.lines() {
             let code = line.as_bytes().get(..2).unwrap_or_default();
-            conflicts |= matches!(code, b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU");
+            if matches!(code, b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU") {
+                conflicts += 1;
+            }
+        }
+        let mut added = 0;
+        let mut deleted = 0;
+        for line in self.text_at(path, &["diff", "--numstat", "HEAD"])?.lines() {
+            let mut fields = line.split('\t');
+            added += fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            deleted += fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+        }
+        let untracked =
+            self.output_bytes_at(path, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+        for relative in untracked
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+        {
+            let contents = std::fs::read(path.join(path_from_bytes(relative)?))?;
+            if !contents.contains(&0) {
+                added += contents.iter().filter(|byte| **byte == b'\n').count();
+                if !contents.is_empty() && !contents.ends_with(b"\n") {
+                    added += 1;
+                }
+            }
         }
         Ok(Status {
             changed: !porcelain.is_empty(),
+            added,
+            deleted,
             conflicts,
         })
+    }
+
+    pub fn divergence(&self, path: &Path, base: &str) -> Result<Divergence> {
+        let counts = self.text_at(
+            path,
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{base}...HEAD"),
+            ],
+        )?;
+        let mut fields = counts.split_whitespace();
+        let behind = fields
+            .next()
+            .context("Git did not return a behind count")?
+            .parse()?;
+        let ahead = fields
+            .next()
+            .context("Git did not return an ahead count")?
+            .parse()?;
+        Ok(Divergence { ahead, behind })
     }
 
     pub fn branches(&self) -> Result<Vec<String>> {
@@ -220,7 +283,17 @@ impl Git {
     }
 
     fn output_bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
-        check(self.raw(args)?, args)
+        self.output_bytes_at(&self.cwd, args)
+    }
+
+    fn output_bytes_at(&self, cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .output()
+            .with_context(|| format!("could not run git {}", args.join(" ")))?;
+        check(output, args)
     }
 
     fn raw(&self, args: &[&str]) -> Result<Output> {
