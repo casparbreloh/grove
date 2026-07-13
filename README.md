@@ -9,26 +9,35 @@ grove list
 grove remove feature/login
 ```
 
-`grove list` shows staged (`+`), modified (`!`), and untracked (`?`) work plus
-the number of changed lines in each worktree.
+`grove list` shows `●` when a worktree has changes and `×` when it has conflicts.
+Grove deliberately does not expose Git's staging model.
 
 Grove uses Git as its source of truth. It has no configuration, metadata, hooks,
-or workflow steps. New worktrees are siblings of the primary worktree, such as
-`project.feature%2Flogin`. Grove preserves lowercase ASCII letters, digits,
-`-`, `_`, and `.`, and percent-encodes every other UTF-8 byte. This keeps branch
-paths distinct even on case-insensitive or Unicode-normalizing filesystems.
+or workflow steps. New worktrees live under `~/.grove/<repo>/<branch>`. Grove
+percent-encodes branch names so their paths remain distinct on case-insensitive
+and Unicode-normalizing filesystems.
 
 ## Shell setup
 
-Add this to `.zshrc` so `switch` changes the current shell's directory:
+For Fish, add these lines in this order:
+
+```fish
+COMPLETE=fish grove | source
+grove shell fish | source
+```
+
+For Zsh:
 
 ```sh
+source <(COMPLETE=zsh grove)
 eval "$(grove shell zsh)"
 ```
 
-With the wrapper loaded, removing the current linked worktree returns you to the
-primary worktree. Removal refuses primary, dirty, untracked, or locked worktrees
-and keeps the local branch.
+With the wrapper loaded, switching changes directory without printing a second
+machine-readable path. New worktrees live under `~/.grove/<repo>/<branch>`.
+
+Removal deletes both the worktree and its local branch when the branch is merged.
+It refuses dirty or unmerged work. `grove remove --force` explicitly discards both.
 
 ## Install
 

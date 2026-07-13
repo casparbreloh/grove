@@ -1,17 +1,11 @@
 grove() {
-  case "$1" in
-    switch)
-      local target
-      target="$(command grove "$@")" || return
-      builtin cd -- "$target"
-      ;;
-    remove)
-      local target
-      target="$(command grove "$@")" || return
-      if [[ -n "$target" ]]; then
-        builtin cd -- "$target"
-      fi
-      ;;
-    *) command grove "$@" ;;
-  esac
+  local directive
+  directive="$(mktemp)" || return
+  GROVE_DIRECTIVE_CD_FILE="$directive" command grove "$@"
+  local command_status=$?
+  if [[ $command_status -eq 0 && -s "$directive" ]]; then
+    builtin cd -- "$(<"$directive")"
+  fi
+  rm -f -- "$directive"
+  return $command_status
 }

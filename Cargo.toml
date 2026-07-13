@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "unstable-ext"] }
+clap_complete = { version = "4", features = ["unstable-dynamic"] }
 clap_usage = "2"

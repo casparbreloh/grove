@@ -21,9 +21,8 @@ pub struct Worktree {
 }
 
 pub struct Status {
-    pub flags: String,
-    pub added: usize,
-    pub deleted: usize,
+    pub changed: bool,
+    pub conflicts: bool,
 }
 
 impl Worktree {
@@ -131,55 +130,42 @@ impl Git {
 
     pub fn status(&self, path: &Path) -> Result<Status> {
         let porcelain = self.text_at(path, &["status", "--porcelain"])?;
-        let mut staged = false;
-        let mut modified = false;
-        let mut untracked = false;
         let mut conflicts = false;
         for line in porcelain.lines() {
             let code = line.as_bytes().get(..2).unwrap_or_default();
-            untracked |= code == b"??";
             conflicts |= matches!(code, b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU");
-            staged |= code
-                .first()
-                .is_some_and(|byte| *byte != b' ' && *byte != b'?');
-            modified |= code
-                .get(1)
-                .is_some_and(|byte| *byte != b' ' && *byte != b'?');
-        }
-
-        let mut flags = String::new();
-        if conflicts {
-            flags.push('✘');
-        } else {
-            if staged {
-                flags.push('+');
-            }
-            if modified {
-                flags.push('!');
-            }
-            if untracked {
-                flags.push('?');
-            }
-        }
-
-        let mut added = 0;
-        let mut deleted = 0;
-        for line in self.text_at(path, &["diff", "--numstat", "HEAD"])?.lines() {
-            let mut fields = line.split('\t');
-            added += fields
-                .next()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0);
-            deleted += fields
-                .next()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0);
         }
         Ok(Status {
-            flags,
-            added,
-            deleted,
+            changed: !porcelain.is_empty(),
+            conflicts,
         })
+    }
+
+    pub fn branches(&self) -> Result<Vec<String>> {
+        Ok(self
+            .text(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])?
+            .lines()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    pub fn branch_merged(&self, branch: &str, base: &str) -> Result<bool> {
+        let output = self.raw(&["merge-base", "--is-ancestor", branch, base])?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => {
+                check(
+                    output,
+                    &["merge-base", "--is-ancestor", "<branch>", "<base>"],
+                )?;
+                unreachable!()
+            }
+        }
+    }
+
+    pub fn branch_oid(&self, branch: &str) -> Result<String> {
+        self.text(&["rev-parse", &format!("refs/heads/{branch}")])
     }
 
     pub fn worktree_add_new(&self, path: &Path, branch: &str, base: &str) -> Result<()> {
@@ -190,8 +176,29 @@ impl Git {
         self.output_os(&["worktree", "add"], path, &[branch])
     }
 
-    pub fn worktree_remove(&self, path: &Path) -> Result<()> {
-        self.output_os(&["worktree", "remove"], path, &[])
+    pub fn worktree_remove(&self, path: &Path, force: bool) -> Result<()> {
+        let before = if force {
+            &["worktree", "remove", "--force", "--force"][..]
+        } else {
+            &["worktree", "remove"][..]
+        };
+        self.output_os(before, path, &[])
+    }
+
+    pub fn delete_branch(&self, cwd: &Path, branch: &str, expected: Option<&str>) -> Result<()> {
+        let reference = format!("refs/heads/{branch}");
+        let mut command = Command::new("git");
+        command.arg("-C").arg(cwd);
+        let shown;
+        if let Some(expected) = expected {
+            command.args(["update-ref", "-d", &reference, expected]);
+            shown = vec!["update-ref", "-d", "<branch>", "<expected>"];
+        } else {
+            command.args(["branch", "-D", "--", branch]);
+            shown = vec!["branch", "-D", "--", "<branch>"];
+        }
+        let output = command.output().context("could not delete branch")?;
+        check(output, &shown).map(|_| ())
     }
 
     fn text(&self, args: &[&str]) -> Result<String> {
