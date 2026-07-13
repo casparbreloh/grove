@@ -172,7 +172,7 @@ fn list(git: &Git) -> Result<()> {
     if changed > 0 {
         summary.push_str(&format!(", {changed} with changes"));
     }
-    let styled = styling_enabled(std::io::stderr().is_terminal());
+    let styled = std::io::stderr().is_terminal();
     eprintln!("\n{}", style(&summary, DIM, styled));
     Ok(())
 }
@@ -221,7 +221,7 @@ fn print_rows(rows: &[Row], default_header: &str) {
         "  {:<branch_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
         "Branch", "Changes", default_header
     );
-    let styled = styling_enabled(std::io::stdout().is_terminal());
+    let styled = std::io::stdout().is_terminal();
     println!("{}", style(&header, BOLD, styled));
     for row in rows {
         let marker = row.marker;
@@ -233,12 +233,6 @@ fn print_rows(rows: &[Row], default_header: &str) {
             row.branch,
         );
     }
-}
-
-fn styling_enabled(is_terminal: bool) -> bool {
-    is_terminal
-        && std::env::var_os("NO_COLOR").is_none()
-        && std::env::var_os("TERM").as_deref() != Some(OsStr::new("dumb"))
 }
 
 fn style(value: &str, code: &str, enabled: bool) -> String {
