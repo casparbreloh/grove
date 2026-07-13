@@ -20,6 +20,12 @@ pub struct Worktree {
     pub prunable: bool,
 }
 
+pub struct Status {
+    pub flags: String,
+    pub added: usize,
+    pub deleted: usize,
+}
+
 impl Worktree {
     pub fn branch(&self) -> Option<&str> {
         self.branch.as_deref()
@@ -121,6 +127,87 @@ impl Git {
         Ok(!self
             .text_at(path, &["status", "--porcelain", "--untracked-files=normal"])?
             .is_empty())
+    }
+
+    pub fn status(&self, path: &Path) -> Result<Status> {
+        let porcelain = self.text_at(path, &["status", "--porcelain"])?;
+        let mut staged = false;
+        let mut modified = false;
+        let mut untracked = false;
+        let mut conflicts = false;
+        for line in porcelain.lines() {
+            let code = line.as_bytes().get(..2).unwrap_or_default();
+            untracked |= code == b"??";
+            conflicts |= matches!(code, b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU");
+            staged |= code
+                .first()
+                .is_some_and(|byte| *byte != b' ' && *byte != b'?');
+            modified |= code
+                .get(1)
+                .is_some_and(|byte| *byte != b' ' && *byte != b'?');
+        }
+
+        let mut flags = String::new();
+        if conflicts {
+            flags.push('✘');
+        } else {
+            if staged {
+                flags.push('+');
+            }
+            if modified {
+                flags.push('!');
+            }
+            if untracked {
+                flags.push('?');
+            }
+        }
+
+        let mut added = 0;
+        let mut deleted = 0;
+        for line in self.text_at(path, &["diff", "--numstat", "HEAD"])?.lines() {
+            let mut fields = line.split('\t');
+            added += fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            deleted += fields
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+        }
+        Ok(Status {
+            flags,
+            added,
+            deleted,
+        })
+    }
+
+    pub fn divergence(&self, path: &Path, base: &str) -> Result<(usize, usize)> {
+        let counts = self.text_at(
+            path,
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{base}...HEAD"),
+            ],
+        )?;
+        let mut counts = counts.split_whitespace();
+        let behind = counts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        let ahead = counts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        Ok((ahead, behind))
+    }
+
+    pub fn commit(&self, path: &Path) -> Result<(String, String)> {
+        let text = self.text_at(path, &["log", "-1", "--format=%h%x00%s"])?;
+        let (hash, message) = text.split_once('\0').unwrap_or((&text, ""));
+        Ok((hash.to_owned(), message.to_owned()))
     }
 
     pub fn worktree_add_new(&self, path: &Path, branch: &str, base: &str) -> Result<()> {
