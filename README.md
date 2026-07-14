@@ -1,55 +1,87 @@
 # grove
 
-Grove is a small branch-and-worktree layer above Git. It keeps Git as the
-source of truth and makes the common worktree workflow short:
+Grove is a small worktree and Git manager for terminal coding agents. Git stays
+the source of truth, while Grove gives each piece of work an isolated worktree:
 
 ```sh
-grove switch --create feature/login
-grove switch feature/login
+grove new "Add passkey login"
+grove switch c-a13f7c45b829
 grove list
-grove remove feature/login
+grove remove c-a13f7c45b829
 ```
-
-Phase 1 is deliberately local and simple. Grove does not yet provide AI,
-`grove.toml` configuration, hooks, network synchronization, or pull-request
-commands.
 
 ## Switching and creating
 
 ```text
 grove switch <branch>
-grove switch --create [--from <ref>] <branch>
+grove new [--from <ref>] [task]
 ```
 
 `switch` reuses an existing worktree or creates one for an existing local
-branch. `--create` creates both the branch and its worktree. Without `--from`,
-the new branch starts at the repository's detected default branch. `--from`
-accepts any revision that resolves to a commit, including a local branch,
-remote-tracking branch, tag, commit expression, or commit ID:
+branch, then starts the configured coding agent there. `new` creates an
+immutable ID branch such as `c-a13f7c45b829` and starts the agent in its
+worktree. An optional task becomes the change title and is passed to the agent:
 
 ```sh
-grove switch --create --from release feature/backport
-grove switch --create --from 'main~2' investigate/regression
+grove new
+grove new "Add passkey login"
+```
+
+Without a task, the agent opens normally with its own native input. Grove does
+not render an editor or manage the agent session. The ID remains stable even as
+the title evolves and can later serve as the backing branch for a pull request.
+
+Without `--from`, the new branch starts at the repository's detected default
+branch. `--from` accepts any revision that resolves to a commit, including a
+local branch, remote-tracking branch, tag, commit expression, or commit ID:
+
+```sh
+grove new --from release "Backport the login fix"
+grove new --from 'main~2' "Investigate the regression"
 ```
 
 `--from @` starts at the invoking worktree's current branch, or its current
 commit when detached:
 
 ```sh
-grove switch --create --from @ feature/follow-up
+grove new --from @ "Follow up on this change"
 ```
 
-New worktrees live at
-`~/.grove/<repo>-<digest>/<percent-encoded-branch>`. The digest identifies the
-Git repository, so repositories with the same directory name cannot collide.
-Grove still discovers existing worktrees through Git, including worktrees made
-by hand or by an older Grove path layout.
+New worktrees live at `~/.grove/<repo>-<digest>/<change-id>`. The digest
+identifies the Git repository, so repositories with the same directory name
+cannot collide. Grove still discovers ordinary Git branches and worktrees.
+
+## Agents and configuration
+
+Grove reads project configuration from `grove.toml`, then global configuration
+from `~/.config/grove/grove.toml` or `$XDG_CONFIG_HOME/grove/grove.toml`, then
+uses built-in defaults. Pi is the default agent; `claude`, `claude-code`, and
+`codex` are also built in:
+
+```toml
+agent = "codex"
+```
+
+Custom agents are defined in the global config because commands from a checked-in
+project file would be unsafe. They use argument arrays and replace `{prompt}` as
+one argument. Grove does not run these values through a shell:
+
+```toml
+agent = "opencode"
+
+[agents.opencode]
+command = ["opencode", "{prompt}"]
+```
+
+`{prompt}` is omitted when `grove new` has no task. If the placeholder is not
+present, Grove appends a supplied task as one argument.
 
 ## Listing
 
-`grove list` shows each worktree's branch, base, uncommitted line changes,
-divergence from its base, and path. In `Base↕`, `↑` means commits ahead of the
-base and `↓` means commits behind it.
+`grove list` shows each change's title, stable ID, base, uncommitted line
+changes, divergence from its base, and path. Untitled changes are shown as
+`(untitled)`. Ordinary Git worktrees remain visible using their branch name. In
+`Base↕`, `↑` means commits ahead of the base and `↓` means commits behind it.
 
 For a branch created from a local branch, Grove follows that parent while it
 still contains the original creation point. Other bases remain fixed at their
@@ -91,13 +123,6 @@ For Zsh:
 ```sh
 eval "$(grove init zsh)"
 ```
-
-## Direction
-
-Later phases will keep ordinary Git branch names while allowing a task prompt
-to infer the name, launch a configured coding agent (especially Pi), and
-generate commits. Remote synchronization and GitHub pull-request workflows come
-after that. These are direction, not available commands or configuration yet.
 
 ## Install
 

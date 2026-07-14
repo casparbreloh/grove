@@ -3,7 +3,48 @@ mod support;
 use support::TestRepo;
 
 #[test]
-fn switch_create_creates_branch_worktree_and_navigation_directive() {
+fn new_without_a_task_creates_an_untitled_change_and_launches_the_agent() {
+    let repo = TestRepo::new();
+
+    repo.grove().arg("new").assert().success();
+
+    let worktree = repo.navigation();
+    let branch = repo.git_from(&worktree, ["branch", "--show-current"]);
+    assert!(
+        branch.starts_with("c-"),
+        "unexpected change branch: {branch}"
+    );
+    assert_eq!(branch.len(), 14);
+    assert_eq!(
+        repo.config(&format!("branch.{branch}.grove-change")),
+        Some("true".to_owned())
+    );
+    assert_eq!(
+        repo.agent_log(),
+        format!(
+            "{}|session\n",
+            worktree
+                .canonicalize()
+                .expect("canonical worktree")
+                .display()
+        )
+    );
+
+    let output = repo
+        .grove()
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).expect("Grove stdout is UTF-8");
+    assert!(output.contains("(untitled)"), "{output}");
+    assert!(output.contains(&branch), "{output}");
+}
+
+#[test]
+fn new_with_a_task_records_it_and_launches_the_agent() {
     let repo = TestRepo::new();
     let starting_commit = repo.git(["rev-parse", "main"]);
     let common_dir = repo
@@ -12,31 +53,70 @@ fn switch_create_creates_branch_worktree_and_navigation_directive() {
         .canonicalize()
         .expect("canonical Git common directory");
     let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
-    let worktree = repo
+    let change = repo.create_change("Fix OAuth refresh race", None);
+    let expected = repo
         .home()
         .join(".grove")
         .join(format!("repo-{}", &digest[..12]))
-        .join("topic");
+        .join(&change.id);
 
-    repo.grove()
-        .args(["switch", "--create", "topic"])
-        .assert()
-        .success();
-
-    assert_eq!(repo.git(["rev-parse", "topic"]), starting_commit);
+    assert_eq!(repo.git(["rev-parse", &change.id]), starting_commit);
+    assert_eq!(change.path, expected);
     assert_eq!(
-        repo.git_from(&worktree, ["branch", "--show-current"]),
-        "topic"
-    );
-    assert_eq!(
-        repo.git_from(&worktree, ["rev-parse", "--show-toplevel"]),
-        worktree
+        repo.git_from(&change.path, ["rev-parse", "--show-toplevel"]),
+        change
+            .path
             .canonicalize()
             .expect("canonical worktree path")
             .display()
             .to_string()
     );
-    assert_eq!(repo.navigation(), worktree);
+    assert_eq!(
+        repo.config(&format!("branch.{}.description", change.id)),
+        Some("Fix OAuth refresh race".to_owned())
+    );
+    assert_eq!(
+        repo.agent_log(),
+        format!(
+            "{}|session Fix OAuth refresh race\n",
+            change
+                .path
+                .canonicalize()
+                .expect("canonical worktree")
+                .display()
+        )
+    );
+
+    let long_task = "Investigate why authentication refresh races can silently discard newly issued access tokens";
+    let other = repo.create_change(long_task, None);
+    assert_ne!(change.id, other.id);
+    let output = repo.grove().arg("list").output().expect("run Grove list");
+    assert!(output.status.success());
+    let output = String::from_utf8(output.stdout).expect("Grove stdout is UTF-8");
+    let shortened = long_task.chars().take(59).chain(['…']).collect::<String>();
+    assert!(output.contains(&shortened), "{output}");
+    assert!(!output.contains(long_task), "{output}");
+}
+
+#[test]
+fn project_config_overrides_global_agent_selection() {
+    let repo = TestRepo::new();
+    repo.use_project_agent();
+
+    repo.grove()
+        .env("XDG_CONFIG_HOME", repo.home().join(".config"))
+        .args(["new", "project-task"])
+        .assert()
+        .success();
+
+    assert!(repo.agent_log().contains("|project-session project-task"));
+
+    std::fs::write(
+        repo.path().join("grove.toml"),
+        "agent = \"unsafe\"\n\n[agents.unsafe]\ncommand = [\"unsafe\"]\n",
+    )
+    .expect("write unsafe project config");
+    repo.grove().args(["switch", "main"]).assert().failure();
 }
 
 #[test]
@@ -44,26 +124,17 @@ fn same_named_repositories_get_distinct_worktree_directories() {
     let repo = TestRepo::new();
     let other = repo.create_repo("other/repo");
 
-    repo.grove()
-        .args(["switch", "--create", "topic"])
-        .assert()
-        .success();
-    let first_worktree = repo.navigation();
+    let first = repo.create_change("topic", None);
+    let second = repo.create_change_from(&other, "topic", None);
 
-    repo.grove_from(&other)
-        .args(["switch", "--create", "topic"])
-        .assert()
-        .success();
-    let second_worktree = repo.navigation();
-
-    assert_ne!(first_worktree, second_worktree);
+    assert_ne!(first.path, second.path);
     assert_eq!(
-        repo.git_from(&first_worktree, ["branch", "--show-current"]),
-        "topic"
+        repo.git_from(&first.path, ["branch", "--show-current"]),
+        first.id
     );
     assert_eq!(
-        repo.git_from(&second_worktree, ["branch", "--show-current"]),
-        "topic"
+        repo.git_from(&second.path, ["branch", "--show-current"]),
+        second.id
     );
 
     let legacy_worktree = repo.home().join(".grove/repo/legacy");
@@ -81,12 +152,19 @@ fn same_named_repositories_get_distinct_worktree_directories() {
             .canonicalize()
             .expect("canonical legacy worktree path")
     );
+    assert!(repo.agent_log().contains(&format!(
+        "{}|session\n",
+        legacy_worktree
+            .canonicalize()
+            .expect("canonical legacy worktree path")
+            .display()
+    )));
     repo.grove().args(["remove", "legacy"]).assert().success();
     assert!(!legacy_worktree.exists());
 }
 
 #[test]
-fn switch_create_resolves_and_records_explicit_bases() {
+fn new_resolves_and_records_explicit_bases() {
     let repo = TestRepo::new();
     repo.commit_file(repo.path(), "second.txt", "second\n");
     let head = repo.git(["rev-parse", "main"]);
@@ -99,12 +177,12 @@ fn switch_create_resolves_and_records_explicit_bases() {
     ]);
     repo.git(["tag", "release", &parent]);
 
-    repo.grove()
-        .args(["switch", "--create", "legacy-default"])
-        .assert()
-        .success();
-    assert_eq!(repo.git(["rev-parse", "legacy-default"]), head);
-    assert_eq!(repo.config("branch.legacy-default.grove-base-ref"), None);
+    let legacy = repo.create_change("legacy-default", None);
+    assert_eq!(repo.git(["rev-parse", &legacy.id]), head);
+    assert_eq!(
+        repo.config(&format!("branch.{}.grove-base-ref", legacy.id)),
+        None
+    );
 
     let cases = [
         ("from-local", "main", head.as_str(), Some("main")),
@@ -119,18 +197,16 @@ fn switch_create_resolves_and_records_explicit_bases() {
         ("from-expression", "main^", parent.as_str(), None),
         ("from-attached", "@", head.as_str(), Some("main")),
     ];
-    for (branch, source, expected_oid, expected_parent) in cases {
-        repo.grove()
-            .args(["switch", "--create", "--from", source, branch])
-            .assert()
-            .success();
-        assert_eq!(repo.git(["rev-parse", branch]), expected_oid);
+    let mut attached = None;
+    for (task, source, expected_oid, expected_parent) in cases {
+        let change = repo.create_change(task, Some(source));
+        assert_eq!(repo.git(["rev-parse", &change.id]), expected_oid);
         assert_eq!(
             repo.git([
                 "config",
                 "--local",
                 "--get",
-                &format!("branch.{branch}.grove-base-ref")
+                &format!("branch.{}.grove-base-ref", change.id)
             ]),
             source
         );
@@ -139,29 +215,23 @@ fn switch_create_resolves_and_records_explicit_bases() {
                 "config",
                 "--local",
                 "--get",
-                &format!("branch.{branch}.grove-base-oid")
+                &format!("branch.{}.grove-base-oid", change.id)
             ]),
             expected_oid
         );
         assert_eq!(
-            repo.config(&format!("branch.{branch}.grove-parent")),
+            repo.config(&format!("branch.{}.grove-parent", change.id)),
             expected_parent.map(str::to_owned)
         );
+        if task == "from-attached" {
+            attached = Some(change.path);
+        }
     }
 
-    let attached = repo.navigation();
+    let attached = attached.expect("attached change");
     repo.commit_file(&attached, "linked-only.txt", "linked only\n");
-    repo.grove_from(&attached)
-        .args([
-            "switch",
-            "--create",
-            "--from",
-            "HEAD^",
-            "from-linked-expression",
-        ])
-        .assert()
-        .success();
-    assert_eq!(repo.git(["rev-parse", "from-linked-expression"]), head);
+    let linked = repo.create_change_from(&attached, "from-linked-expression", Some("HEAD^"));
+    assert_eq!(repo.git(["rev-parse", &linked.id]), head);
 
     let detached = repo
         .path()
@@ -175,50 +245,41 @@ fn switch_create_resolves_and_records_explicit_bases() {
         detached.to_str().expect("UTF-8 path"),
         &parent,
     ]);
-    repo.grove_from(&detached)
-        .args(["switch", "--create", "--from", "@", "from-detached"])
-        .assert()
-        .success();
-    assert_eq!(repo.git(["rev-parse", "from-detached"]), parent);
+    let detached_change = repo.create_change_from(&detached, "from-detached", Some("@"));
+    assert_eq!(repo.git(["rev-parse", &detached_change.id]), parent);
     assert_eq!(
         repo.git([
             "config",
             "--local",
             "--get",
-            "branch.from-detached.grove-base-ref"
+            &format!("branch.{}.grove-base-ref", detached_change.id)
         ]),
         "@"
     );
-    assert_eq!(repo.config("branch.from-detached.grove-parent"), None);
+    assert_eq!(
+        repo.config(&format!("branch.{}.grove-parent", detached_change.id)),
+        None
+    );
 }
 
 #[test]
-fn switch_from_validation_leaves_repository_untouched() {
+fn new_from_validation_leaves_repository_untouched() {
     let repo = TestRepo::new();
 
     repo.grove()
         .args(["switch", "--from", "main", "missing"])
         .assert()
         .failure();
+    let before = repo.git(["branch", "--format=%(refname:short)"]);
     repo.grove()
-        .args(["switch", "--create", "--from", "does-not-exist", "bad-ref"])
+        .args(["new", "--from", "does-not-exist", "bad-ref"])
         .assert()
         .failure();
     repo.grove()
-        .args([
-            "switch",
-            "--create",
-            "--from",
-            "HEAD:README.md",
-            "bad-object",
-        ])
+        .args(["new", "--from", "HEAD:README.md", "bad-object"])
         .assert()
         .failure();
-
-    for branch in ["missing", "bad-ref", "bad-object"] {
-        assert!(!repo.branch_exists(branch));
-        assert!(!repo.has_lineage(branch));
-    }
+    assert_eq!(repo.git(["branch", "--format=%(refname:short)"]), before);
 }
 
 #[test]
@@ -227,31 +288,20 @@ fn list_reports_each_worktrees_own_base_without_hiding_invalid_lineage() {
     let initial = repo.git(["rev-parse", "main"]);
 
     repo.git(["branch", "parent"]);
-    repo.grove()
-        .args(["switch", "--create", "--from", "parent", "dependent"])
-        .assert()
-        .success();
-    let dependent = repo.navigation();
-    repo.commit_file(&dependent, "dependent.txt", "dependent\n");
+    let dependent = repo.create_change("dependent", Some("parent"));
+    repo.commit_file(&dependent.path, "dependent.txt", "dependent\n");
 
-    repo.grove()
-        .args(["switch", "--create", "legacy"])
-        .assert()
-        .success();
+    let legacy = repo.create_change("legacy", None);
 
     repo.git(["tag", "release"]);
-    repo.grove()
-        .args(["switch", "--create", "--from", "release", "independent"])
-        .assert()
-        .success();
-    let independent = repo.navigation();
+    let independent = repo.create_change("independent", Some("release"));
     repo.git([
         "worktree",
         "remove",
-        independent.to_str().expect("UTF-8 path"),
+        independent.path.to_str().expect("UTF-8 path"),
     ]);
     repo.grove()
-        .args(["switch", "independent"])
+        .args(["switch", &independent.id])
         .assert()
         .success();
 
@@ -273,16 +323,7 @@ fn list_reports_each_worktrees_own_base_without_hiding_invalid_lineage() {
         "remove",
         parent_worktree.to_str().expect("UTF-8 path"),
     ]);
-    repo.grove()
-        .args([
-            "switch",
-            "--create",
-            "--from",
-            "rewritten-parent",
-            "stale-dependent",
-        ])
-        .assert()
-        .success();
+    let stale = repo.create_change("stale-dependent", Some("rewritten-parent"));
     repo.git(["branch", "-f", "rewritten-parent", &initial]);
 
     repo.git(["branch", "invalid"]);
@@ -308,26 +349,26 @@ fn list_reports_each_worktrees_own_base_without_hiding_invalid_lineage() {
         lines
             .first()
             .map(|line| line.split_whitespace().collect::<Vec<_>>()),
-        Some(vec!["Branch", "Base", "Changes", "Base↕", "Path"])
+        Some(vec!["Change", "ID", "Base", "Changes", "Base↕", "Path"])
     );
-    let dependent_row = row_for_branch(&lines, "dependent");
+    let dependent_row = row_for_value(&lines, &dependent.id);
     assert!(dependent_row.contains("parent"), "{dependent_row}");
     assert!(dependent_row.contains("↑1"), "{dependent_row}");
 
-    let independent_row = row_for_branch(&lines, "independent");
+    let independent_row = row_for_value(&lines, &independent.id);
     assert!(independent_row.contains("release"), "{independent_row}");
 
-    let stale_row = row_for_branch(&lines, "stale-dependent");
+    let stale_row = row_for_value(&lines, &stale.id);
     assert!(
         stale_row.contains(&parent_creation_oid[..12]),
         "{stale_row}"
     );
     assert!(!stale_row.contains("rewritten-parent"), "{stale_row}");
 
-    let legacy_row = row_for_branch(&lines, "legacy");
+    let legacy_row = row_for_value(&lines, &legacy.id);
     assert!(legacy_row.contains("main"), "{legacy_row}");
 
-    let invalid_row = row_for_branch(&lines, "invalid");
+    let invalid_row = row_for_value(&lines, "invalid");
     assert!(invalid_row.contains("invalid metadata"), "{invalid_row}");
 
     repo.grove().args(["remove", "invalid"]).assert().failure();
@@ -337,56 +378,58 @@ fn list_reports_each_worktrees_own_base_without_hiding_invalid_lineage() {
         .success();
 
     repo.grove()
-        .args(["remove", "independent"])
+        .args(["remove", &independent.id])
         .assert()
         .success();
-    assert!(!repo.has_lineage("independent"));
+    assert!(!repo.has_lineage(&independent.id));
 
-    repo.grove()
-        .args(["remove", "stale-dependent"])
-        .assert()
-        .failure();
+    repo.grove().args(["remove", &stale.id]).assert().failure();
 }
 
 #[test]
 fn remove_accepts_integrated_history_shapes_and_rejects_real_unmerged_work() {
     let repo = TestRepo::new();
     let mut tips = std::collections::HashMap::new();
-    for branch in ["ancestor", "rebased", "squashed", "unmerged"] {
-        repo.grove()
-            .args(["switch", "--create", branch])
-            .assert()
-            .success();
-        let worktree = repo.navigation();
-        repo.commit_file(&worktree, &format!("{branch}.txt"), &format!("{branch}\n"));
-        if branch == "squashed" {
-            repo.commit_file(&worktree, "squashed-second.txt", "second\n");
+    let mut changes = std::collections::HashMap::new();
+    for title in ["ancestor", "rebased", "squashed", "unmerged"] {
+        let change = repo.create_change(title, None);
+        repo.commit_file(&change.path, &format!("{title}.txt"), &format!("{title}\n"));
+        if title == "squashed" {
+            repo.commit_file(&change.path, "squashed-second.txt", "second\n");
         }
-        tips.insert(branch, repo.git(["rev-parse", branch]));
+        tips.insert(title, repo.git(["rev-parse", &change.id]));
+        changes.insert(title, change.id);
     }
 
-    repo.git(["merge", "--no-ff", "-m", "Merge ancestor", "ancestor"]);
+    repo.git([
+        "merge",
+        "--no-ff",
+        "-m",
+        "Merge ancestor",
+        &changes["ancestor"],
+    ]);
     repo.git(["cherry-pick", tips["rebased"].as_str()]);
-    repo.git(["merge", "--squash", "squashed"]);
+    repo.git(["merge", "--squash", &changes["squashed"]]);
     repo.git(["commit", "-m", "Squash squashed"]);
 
-    for branch in ["ancestor", "rebased", "squashed"] {
-        repo.grove().args(["remove", branch]).assert().success();
-        assert!(!repo.branch_exists(branch));
+    for title in ["ancestor", "rebased", "squashed"] {
+        let id = &changes[title];
+        repo.grove().args(["remove", id]).assert().success();
+        assert!(!repo.branch_exists(id));
     }
 
-    repo.grove().args(["remove", "unmerged"]).assert().failure();
-    assert!(repo.branch_exists("unmerged"));
+    repo.grove()
+        .args(["remove", &changes["unmerged"]])
+        .assert()
+        .failure();
+    assert!(repo.branch_exists(&changes["unmerged"]));
 }
 
 #[test]
 fn remove_rejects_unique_content_hidden_in_a_merge_commit() {
     let repo = TestRepo::new();
-    repo.grove()
-        .args(["switch", "--create", "topic"])
-        .assert()
-        .success();
-    let worktree = repo.navigation();
+    let change = repo.create_change("topic", None);
+    let worktree = change.path;
 
     let topic_change = repo.commit_file(&worktree, "shared.txt", "shared\n");
 
@@ -402,16 +445,16 @@ fn remove_rejects_unique_content_hidden_in_a_merge_commit() {
     );
     repo.git(["cherry-pick", &topic_change]);
 
-    let cherry = repo.git(["cherry", "main", "topic"]);
+    let cherry = repo.git(["cherry", "main", &change.id]);
     assert!(
         !cherry.is_empty() && cherry.lines().all(|line| line.starts_with('-')),
         "fixture must reproduce Git cherry omitting the unique merge commit: {cherry}"
     );
 
-    repo.grove().args(["remove", "topic"]).assert().failure();
+    repo.grove().args(["remove", &change.id]).assert().failure();
     assert!(worktree.exists(), "unsafe removal must retain the worktree");
     assert!(
-        repo.branch_exists("topic"),
+        repo.branch_exists(&change.id),
         "unsafe removal must retain the branch"
     );
 }
@@ -419,25 +462,24 @@ fn remove_rejects_unique_content_hidden_in_a_merge_commit() {
 #[test]
 fn remove_current_annotated_worktree_clears_lineage_from_primary() {
     let repo = TestRepo::new();
-    repo.grove()
-        .args(["switch", "--create", "--from", "main", "topic"])
+    let change = repo.create_change("topic", Some("main"));
+
+    repo.grove_from(&change.path)
+        .arg("remove")
         .assert()
         .success();
-    let worktree = repo.navigation();
-
-    repo.grove_from(&worktree).arg("remove").assert().success();
 
     assert_eq!(
         repo.navigation(),
         repo.path().canonicalize().expect("canonical primary path")
     );
-    assert!(!repo.branch_exists("topic"));
-    assert!(!repo.has_lineage("topic"));
+    assert!(!repo.branch_exists(&change.id));
+    assert!(!repo.has_lineage(&change.id));
 }
 
-fn row_for_branch<'a>(lines: &'a [&str], branch: &str) -> &'a str {
+fn row_for_value<'a>(lines: &'a [&str], value: &str) -> &'a str {
     lines
         .iter()
-        .find(|line| line.split_whitespace().nth(1) == Some(branch))
-        .unwrap_or_else(|| panic!("missing {branch} row"))
+        .find(|line| line.split_whitespace().any(|field| field == value))
+        .unwrap_or_else(|| panic!("missing {value} row"))
 }

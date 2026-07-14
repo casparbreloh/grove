@@ -1,3 +1,4 @@
+mod agent;
 mod git;
 
 use std::{
@@ -11,6 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 
+use crate::agent::Agent;
 use crate::git::{Git, WorktreeState};
 
 #[derive(Parser)]
@@ -27,14 +29,17 @@ struct Cli {
 enum Cmd {
     /// Go to a branch's worktree
     Switch {
-        /// Create the branch from the default branch
-        #[arg(long)]
-        create: bool,
-        /// Create the branch from this revision (`@` means the invoking worktree)
-        #[arg(long, requires = "create")]
-        from: Option<String>,
+        /// Branch to use
         #[arg(add = ArgValueCompleter::new(branches))]
         branch: String,
+    },
+    /// Create a change worktree and start an agent
+    New {
+        /// Start from this revision (`@` means the invoking worktree)
+        #[arg(long)]
+        from: Option<String>,
+        /// Optional task to record and pass to the coding agent
+        task: Option<String>,
     },
     /// List the repository's worktrees
     List,
@@ -68,26 +73,29 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::Switch {
-            create,
-            from,
-            branch,
-        } => switch(&Git::discover()?, &branch, create, from.as_deref()),
+        Cmd::Switch { branch } => switch(&Git::discover()?, &branch),
+        Cmd::New { from, task } => new(&Git::discover()?, task, from.as_deref()),
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, branch } => remove(&Git::discover()?, branch.as_deref(), force),
         Cmd::Init { shell } => init(shell),
     }
 }
 
-fn switch(git: &Git, branch: &str, create: bool, from: Option<&str>) -> Result<()> {
-    let result = git.switch(branch, create, from)?;
-    if result.created {
-        eprintln!("✓ Created {branch} at {}", result.path.display());
-    } else {
-        eprintln!("✓ Using {branch} at {}", result.path.display());
-    }
-    navigate(&result.path)?;
-    Ok(())
+fn switch(git: &Git, branch: &str) -> Result<()> {
+    let agent = Agent::load(&git.project_root()?)?;
+    let path = git.enter(branch)?;
+    eprintln!("✓ Using {branch} at {}", path.display());
+    navigate(&path)?;
+    agent.launch(&path, None)
+}
+
+fn new(git: &Git, task: Option<String>, from: Option<&str>) -> Result<()> {
+    let project = git.project_root()?;
+    let agent = Agent::load(&project)?;
+    let change = git.create_change(from, task.as_deref())?;
+    eprintln!("✓ Created {} at {}", change.id, change.path.display());
+    navigate(&change.path)?;
+    agent.launch(&change.path, task.as_deref())
 }
 
 fn list(git: &Git) -> Result<()> {
@@ -112,6 +120,18 @@ fn list(git: &Git) -> Result<()> {
             .as_deref()
             .unwrap_or("(detached)")
             .to_owned();
+        let (change, id) = if worktree.is_change {
+            (
+                worktree
+                    .title
+                    .as_deref()
+                    .map(|title| ellipsize(title, 60))
+                    .unwrap_or_else(|| "(untitled)".to_owned()),
+                branch,
+            )
+        } else {
+            (branch, String::new())
+        };
         let changes = match &worktree.state {
             WorktreeState::Missing => "missing".to_owned(),
             WorktreeState::Present(status) => {
@@ -123,7 +143,8 @@ fn list(git: &Git) -> Result<()> {
         };
         rows.push(Row {
             marker,
-            branch,
+            change,
+            id,
             base: worktree.base.clone(),
             changes,
             divergence: worktree
@@ -146,7 +167,8 @@ fn list(git: &Git) -> Result<()> {
 
 struct Row {
     marker: char,
-    branch: String,
+    change: String,
+    id: String,
     base: String,
     changes: String,
     divergence: String,
@@ -182,13 +204,14 @@ fn format_divergence(divergence: &git::Divergence) -> String {
 }
 
 fn print_rows(rows: &[Row]) {
-    let branch_width = width(rows, "Branch", |row| &row.branch);
+    let change_width = width(rows, "Change", |row| &row.change);
+    let id_width = width(rows, "ID", |row| &row.id);
     let base_width = width(rows, "Base", |row| &row.base);
     let changes_width = width(rows, "Changes", |row| &row.changes);
     let divergence_width = width(rows, "Base↕", |row| &row.divergence);
     let header = format!(
-        "  {:<branch_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
-        "Branch", "Base", "Changes", "Base↕"
+        "  {:<change_width$}  {:<id_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
+        "Change", "ID", "Base", "Changes", "Base↕"
     );
     println!("{}", bold(&header, std::io::stdout().is_terminal()));
     for row in rows {
@@ -197,8 +220,8 @@ fn print_rows(rows: &[Row]) {
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
         println!(
-            "{marker} {:<branch_width$}  {base}  {changes}  {divergence}  {}",
-            row.branch, row.path,
+            "{marker} {:<change_width$}  {:<id_width$}  {base}  {changes}  {divergence}  {}",
+            row.change, row.id, row.path,
         );
     }
 }
@@ -218,6 +241,13 @@ fn width<'a>(rows: &'a [Row], header: &str, value: impl Fn(&'a Row) -> &'a str) 
         .max()
         .unwrap_or(0)
         .max(header.chars().count())
+}
+
+fn ellipsize(value: &str, width: usize) -> String {
+    if value.chars().count() <= width {
+        return value.to_owned();
+    }
+    value.chars().take(width - 1).chain(['…']).collect()
 }
 
 fn init(shell: Shell) -> Result<()> {

@@ -1,6 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -32,9 +33,9 @@ pub struct Divergence {
     pub behind: usize,
 }
 
-pub struct SwitchResult {
+pub struct Change {
+    pub id: String,
     pub path: PathBuf,
-    pub created: bool,
 }
 
 pub enum WorktreeState {
@@ -45,6 +46,8 @@ pub enum WorktreeState {
 pub struct WorktreeView {
     pub path: PathBuf,
     pub branch: Option<String>,
+    pub is_change: bool,
+    pub title: Option<String>,
     pub base: String,
     pub divergence: Option<Divergence>,
     pub state: WorktreeState,
@@ -104,16 +107,14 @@ impl Lineage {
     }
 
     fn clear(git: &Git, cwd: &Path, branch: &str) -> Result<()> {
-        for field in LINEAGE_FIELDS {
-            let output = git.raw_at(
-                cwd,
-                &[
-                    "config",
-                    "--local",
-                    "--unset-all",
-                    &lineage_key(branch, field),
-                ],
-            )?;
+        let mut keys = LINEAGE_FIELDS
+            .map(|field| lineage_key(branch, field))
+            .into_iter()
+            .collect::<Vec<_>>();
+        keys.push(format!("branch.{branch}.grove-change"));
+        keys.push(format!("branch.{branch}.description"));
+        for key in keys {
+            let output = git.raw_at(cwd, &["config", "--local", "--unset-all", &key])?;
             if !output.status.success() && output.status.code() != Some(5) {
                 check(output, &["config", "--local", "--unset-all", "<key>"])?;
             }
@@ -142,8 +143,45 @@ impl Git {
         Ok(git)
     }
 
-    pub fn switch(&self, branch: &str, create: bool, from: Option<&str>) -> Result<SwitchResult> {
+    pub fn enter(&self, branch: &str) -> Result<PathBuf> {
+        self.switch(branch, None)
+    }
+
+    pub fn create_change(&self, from: Option<&str>, description: Option<&str>) -> Result<Change> {
+        let base = self.resolve_creation_base(from)?;
+        let id = self.change_id()?;
+        let path = self.switch(&id, Some(&base))?;
+        let metadata = (|| {
+            self.output(&[
+                "config",
+                "--local",
+                &format!("branch.{id}.grove-change"),
+                "true",
+            ])?;
+            if let Some(description) = description {
+                self.output(&[
+                    "config",
+                    "--local",
+                    &format!("branch.{id}.description"),
+                    description,
+                ])?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = metadata {
+            self.rollback_created_worktree(&path, &id);
+            return Err(error);
+        }
+        Ok(Change { id, path })
+    }
+
+    pub fn project_root(&self) -> Result<PathBuf> {
+        self.current_root()
+    }
+
+    fn switch(&self, branch: &str, base: Option<&CreationBase>) -> Result<PathBuf> {
         self.validate_branch(branch)?;
+        let create = base.is_some();
         let worktrees = self.worktrees()?;
         if let Some(worktree) = worktrees
             .iter()
@@ -152,10 +190,7 @@ impl Git {
             if create {
                 bail!("branch '{branch}' already exists");
             }
-            return Ok(SwitchResult {
-                path: worktree.path.clone(),
-                created: false,
-            });
+            return Ok(worktree.path.clone());
         }
 
         let branch_exists = self.branch_exists(branch)?;
@@ -163,27 +198,21 @@ impl Git {
             bail!("branch '{branch}' already exists");
         }
         if !create && !branch_exists {
-            bail!("branch '{branch}' does not exist; create it with --create");
+            bail!("branch '{branch}' does not exist; create it with `grove new`");
         }
 
-        let base = create
-            .then(|| self.resolve_creation_base(from))
-            .transpose()?;
         let path = self.worktree_path(branch)?;
         if path.exists() {
             bail!("worktree path already exists: {}", path.display());
         }
         std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
 
-        if let Some(base) = &base {
+        if let Some(base) = base {
             self.worktree_add_new(&path, branch, base)?;
         } else {
             self.worktree_add(&path, branch)?;
         }
-        Ok(SwitchResult {
-            path,
-            created: true,
-        })
+        Ok(path)
     }
 
     pub fn inventory(&self) -> Result<Vec<WorktreeView>> {
@@ -199,6 +228,20 @@ impl Git {
             .into_iter()
             .map(|worktree| {
                 let branch = worktree.branch.clone();
+                let is_change = branch
+                    .as_deref()
+                    .map(|branch| self.is_change(branch))
+                    .transpose()?
+                    .unwrap_or(false);
+                let title = if is_change {
+                    branch
+                        .as_deref()
+                        .map(|branch| self.change_title(branch))
+                        .transpose()?
+                        .flatten()
+                } else {
+                    None
+                };
                 let (base, divergence) = if worktree.prunable || branch.is_none() {
                     (String::new(), None)
                 } else {
@@ -221,6 +264,8 @@ impl Git {
                     primary: worktree.path == primary,
                     path: worktree.path,
                     branch,
+                    is_change,
+                    title,
                     base,
                     divergence,
                     state,
@@ -302,6 +347,45 @@ impl Git {
     fn validate_branch(&self, branch: &str) -> Result<()> {
         self.output(&["check-ref-format", "--branch", branch])?;
         Ok(())
+    }
+
+    fn change_id(&self) -> Result<String> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before the Unix epoch")?
+            .as_nanos();
+        for nonce in 0..100_u8 {
+            let seed = format!(
+                "{}:{now}:{}:{nonce}",
+                self.cwd.display(),
+                std::process::id()
+            );
+            let digest = blake3::hash(seed.as_bytes()).to_hex();
+            let id = format!("c-{}", &digest[..12]);
+            if !self.branch_exists(&id)? {
+                return Ok(id);
+            }
+        }
+        bail!("could not generate a unique change ID")
+    }
+
+    fn is_change(&self, branch: &str) -> Result<bool> {
+        Ok(self
+            .config_value(&format!("branch.{branch}.grove-change"))?
+            .as_deref()
+            == Some("true"))
+    }
+
+    fn change_title(&self, branch: &str) -> Result<Option<String>> {
+        Ok(self
+            .config_value(&format!("branch.{branch}.description"))?
+            .and_then(|description| {
+                description
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(str::to_owned)
+            }))
     }
 
     fn branch_exists(&self, branch: &str) -> Result<bool> {

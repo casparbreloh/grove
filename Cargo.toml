@@ -9,6 +9,8 @@ blake3 = "1"
 clap = { version = "4", features = ["derive", "unstable-ext"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 clap_usage = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
 
 [dev-dependencies]
 assert_cmd = "2"

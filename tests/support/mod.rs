@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -13,6 +14,13 @@ pub struct TestRepo {
     home: PathBuf,
     git_config: PathBuf,
     navigation: PathBuf,
+    agent_log: PathBuf,
+    agent: PathBuf,
+}
+
+pub struct TestChange {
+    pub id: String,
+    pub path: PathBuf,
 }
 
 impl TestRepo {
@@ -22,6 +30,8 @@ impl TestRepo {
         let home = root.path().join("home");
         let git_config = root.path().join("gitconfig");
         let navigation = root.path().join("navigation");
+        let agent_log = root.path().join("agent.log");
+        let agent = root.path().join("agent");
         fs::create_dir(&home).expect("create test home");
 
         let fixture = Self {
@@ -30,6 +40,8 @@ impl TestRepo {
             home,
             git_config,
             navigation,
+            agent_log,
+            agent,
         };
         fixture.git_from(
             fixture._root.path(),
@@ -40,6 +52,7 @@ impl TestRepo {
             ["config", "--global", "user.email", "grove@example.test"],
         );
         fixture.initialize(&fixture.repo);
+        fixture.configure_agent();
         fixture
     }
 
@@ -61,15 +74,47 @@ impl TestRepo {
         self.grove_from(&self.repo)
     }
 
+    pub fn create_change(&self, task: &str, from: Option<&str>) -> TestChange {
+        self.create_change_from(&self.repo, task, from)
+    }
+
+    pub fn create_change_from(
+        &self,
+        directory: &Path,
+        task: &str,
+        from: Option<&str>,
+    ) -> TestChange {
+        let mut command = self.grove_from(directory);
+        command.arg("new");
+        if let Some(from) = from {
+            command.args(["--from", from]);
+        }
+        command.arg(task).assert().success();
+        let path = self.navigation();
+        let id = self.git_from(&path, ["branch", "--show-current"]);
+        TestChange { id, path }
+    }
+
     pub fn grove_from(&self, directory: &Path) -> assert_cmd::Command {
         let mut command = assert_cmd::Command::cargo_bin("grove").expect("compiled grove binary");
         command
             .current_dir(directory)
             .env("HOME", &self.home)
+            .env_remove("XDG_CONFIG_HOME")
             .env("GIT_CONFIG_GLOBAL", &self.git_config)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation);
+            .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation)
+            .env("GROVE_TEST_AGENT_LOG", &self.agent_log);
         command
+    }
+
+    pub fn agent_log(&self) -> String {
+        fs::read_to_string(&self.agent_log).unwrap_or_default()
+    }
+
+    pub fn use_project_agent(&self) {
+        fs::write(self.repo.join("grove.toml"), "agent = \"project\"\n")
+            .expect("write project Grove config");
     }
 
     pub fn git<I, S>(&self, args: I) -> String
@@ -185,6 +230,27 @@ impl TestRepo {
         fs::write(repo.join("README.md"), "# Test repository\n").expect("write initial file");
         self.git_from(repo, ["add", "README.md"]);
         self.git_from(repo, ["commit", "-m", "Initial commit"]);
+    }
+
+    fn configure_agent(&self) {
+        fs::write(
+            &self.agent,
+            "#!/bin/sh\nif [ -n \"${GROVE_DIRECTIVE_CD_FILE-}\" ]; then\n  exit 97\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$GROVE_TEST_AGENT_LOG\"\n",
+        )
+        .expect("write test agent");
+        fs::set_permissions(&self.agent, fs::Permissions::from_mode(0o755))
+            .expect("make test agent executable");
+        let config_dir = self.home.join(".config/grove");
+        fs::create_dir_all(&config_dir).expect("create global Grove config directory");
+        fs::write(
+            config_dir.join("grove.toml"),
+            format!(
+                "agent = \"test\"\n\n[agents.test]\ncommand = [\"{}\", \"session\", \"{{prompt}}\"]\n\n[agents.project]\ncommand = [\"{}\", \"project-session\", \"{{prompt}}\"]\n",
+                self.agent.display(),
+                self.agent.display()
+            ),
+        )
+        .expect("write global Grove config");
     }
 }
 
