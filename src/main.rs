@@ -6,17 +6,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 
-use crate::git::{Git, Worktree};
+use crate::git::{Git, WorktreeState};
 
 #[derive(Parser)]
 #[command(arg_required_else_help = true)]
 struct Cli {
-    /// Emit the CLI's usage specification.
     #[arg(long, hide = true)]
     usage_spec: bool,
 
@@ -31,6 +30,9 @@ enum Cmd {
         /// Create the branch from the default branch
         #[arg(long)]
         create: bool,
+        /// Create the branch from this revision (`@` means the invoking worktree)
+        #[arg(long, requires = "create")]
+        from: Option<String>,
         #[arg(add = ArgValueCompleter::new(branches))]
         branch: String,
     },
@@ -66,104 +68,73 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::Switch { create, branch } => switch(&Git::discover()?, &branch, create),
+        Cmd::Switch {
+            create,
+            from,
+            branch,
+        } => switch(&Git::discover()?, &branch, create, from.as_deref()),
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, branch } => remove(&Git::discover()?, branch.as_deref(), force),
         Cmd::Init { shell } => init(shell),
     }
 }
 
-fn switch(git: &Git, branch: &str, create: bool) -> Result<()> {
-    git.validate_branch(branch)?;
-    let worktrees = git.worktrees()?;
-    if let Some(worktree) = worktrees
-        .iter()
-        .find(|worktree| worktree.branch() == Some(branch))
-    {
-        if create {
-            bail!("branch '{branch}' already exists");
-        }
-        eprintln!("✓ Using {branch} at {}", worktree.path.display());
-        navigate(&worktree.path)?;
-        return Ok(());
-    }
-
-    let branch_exists = git.branch_exists(branch)?;
-    if create && branch_exists {
-        bail!("branch '{branch}' already exists");
-    }
-    if !create && !branch_exists {
-        bail!("branch '{branch}' does not exist; create it with --create");
-    }
-
-    let primary = primary(&worktrees)?;
-    let path = worktree_path(&primary.path, branch)?;
-    if path.exists() {
-        bail!("worktree path already exists: {}", path.display());
-    }
-    std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
-
-    eprintln!("◎ Creating worktree for {branch}…");
-    if create {
-        let base = git.default_branch()?;
-        git.worktree_add_new(&path, branch, &base)?;
+fn switch(git: &Git, branch: &str, create: bool, from: Option<&str>) -> Result<()> {
+    let result = git.switch(branch, create, from)?;
+    if result.created {
+        eprintln!("✓ Created {branch} at {}", result.path.display());
     } else {
-        git.worktree_add(&path, branch)?;
+        eprintln!("✓ Using {branch} at {}", result.path.display());
     }
-    eprintln!("✓ Created {branch} at {}", path.display());
-    navigate(&path)?;
+    navigate(&result.path)?;
     Ok(())
 }
 
 fn list(git: &Git) -> Result<()> {
-    let worktrees = git.worktrees()?;
-    let current = git.current_root()?;
-    let primary = primary(&worktrees)?;
-    let detected = git.default_branch()?;
-    let default_name = detected
-        .strip_prefix("origin/")
-        .unwrap_or(&detected)
-        .to_owned();
-    let default_ref = if git.branch_exists(&default_name)? {
-        default_name.as_str()
-    } else {
-        detected.as_str()
-    };
+    let worktrees = git.inventory()?;
+    let current = worktrees
+        .iter()
+        .find(|worktree| worktree.current)
+        .map(|worktree| worktree.path.as_path())
+        .context("current worktree is missing")?;
     let mut rows = Vec::new();
     let mut changed = 0;
     for worktree in &worktrees {
-        let marker = if worktree.path == current {
+        let marker = if worktree.current {
             '@'
-        } else if worktree.path == primary.path {
+        } else if worktree.primary {
             '^'
         } else {
             '+'
         };
-        let branch = worktree.branch().unwrap_or("(detached)").to_owned();
-        let (changes, divergence) = if worktree.prunable {
-            ("missing".to_owned(), String::new())
-        } else {
-            let status = git.status(&worktree.path)?;
-            if status.changed {
-                changed += 1;
+        let branch = worktree
+            .branch
+            .as_deref()
+            .unwrap_or("(detached)")
+            .to_owned();
+        let changes = match &worktree.state {
+            WorktreeState::Missing => "missing".to_owned(),
+            WorktreeState::Present(status) => {
+                if status.changed {
+                    changed += 1;
+                }
+                format_changes(status)
             }
-            let changes = format_changes(&status);
-            let divergence = if branch == default_name || branch == "(detached)" {
-                String::new()
-            } else {
-                format_divergence(&git.divergence(&worktree.path, default_ref)?)
-            };
-            (changes, divergence)
         };
         rows.push(Row {
             marker,
             branch,
+            base: worktree.base.clone(),
             changes,
-            divergence,
-            path: display_path(&worktree.path, &current),
+            divergence: worktree
+                .divergence
+                .as_ref()
+                .map(format_divergence)
+                .unwrap_or_default(),
+            path: display_path(&worktree.path, current),
         });
     }
-    print_rows(&rows, &format!("{default_name}↕"));
+    print_rows(&rows);
     std::io::stdout().flush()?;
     eprint!("\n○ Showing {} worktrees", rows.len());
     if changed > 0 {
@@ -176,6 +147,7 @@ fn list(git: &Git) -> Result<()> {
 struct Row {
     marker: char,
     branch: String,
+    base: String,
     changes: String,
     divergence: String,
     path: String,
@@ -209,21 +181,23 @@ fn format_divergence(divergence: &git::Divergence) -> String {
     }
 }
 
-fn print_rows(rows: &[Row], default_header: &str) {
+fn print_rows(rows: &[Row]) {
     let branch_width = width(rows, "Branch", |row| &row.branch);
+    let base_width = width(rows, "Base", |row| &row.base);
     let changes_width = width(rows, "Changes", |row| &row.changes);
-    let divergence_width = width(rows, default_header, |row| &row.divergence);
+    let divergence_width = width(rows, "Base↕", |row| &row.divergence);
     let header = format!(
-        "  {:<branch_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
-        "Branch", "Changes", default_header
+        "  {:<branch_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
+        "Branch", "Base", "Changes", "Base↕"
     );
     println!("{}", bold(&header, std::io::stdout().is_terminal()));
     for row in rows {
         let marker = row.marker;
+        let base = format!("{:<base_width$}", row.base);
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
         println!(
-            "{marker} {:<branch_width$}  {changes}  {divergence}  {}",
+            "{marker} {:<branch_width$}  {base}  {changes}  {divergence}  {}",
             row.branch, row.path,
         );
     }
@@ -295,77 +269,12 @@ fn display_path(path: &Path, current: &Path) -> String {
 }
 
 fn remove(git: &Git, requested: Option<&str>, force: bool) -> Result<()> {
-    let worktrees = git.worktrees()?;
-    let primary = primary(&worktrees)?;
-    let current = git.current_root()?;
-    let target = match requested {
-        Some(branch) => worktrees
-            .iter()
-            .find(|worktree| worktree.branch() == Some(branch))
-            .with_context(|| format!("branch '{branch}' has no worktree"))?,
-        None => worktrees
-            .iter()
-            .find(|worktree| worktree.path == current)
-            .context("current directory is not in a worktree")?,
-    };
-    if target.path == primary.path {
-        bail!("cannot remove the primary worktree");
-    }
-    if target.locked && !force {
-        bail!("worktree is locked: {}", target.path.display());
-    }
-    if !force && git.is_dirty(&target.path)? {
-        bail!(
-            "worktree has uncommitted changes: {}",
-            target.path.display()
-        );
-    }
-
-    let branch = target.branch();
-    let expected_oid = if force {
-        None
-    } else {
-        branch.map(|branch| git.branch_oid(branch)).transpose()?
-    };
-    if !force && let Some(branch) = branch {
-        let detected = git.default_branch()?;
-        let name = detected.rsplit('/').next().unwrap_or(&detected);
-        let base = if git.branch_exists(name)? {
-            name
-        } else {
-            &detected
-        };
-        if !git.branch_merged(branch, base)? {
-            bail!("branch '{branch}' is not merged; use --force to discard it");
-        }
-    }
-
-    let label = branch.unwrap_or("detached");
-    eprintln!("◎ Removing worktree for {label}…");
-    git.worktree_remove(&target.path, force)?;
-    if let Some(branch) = branch {
-        git.delete_branch(&primary.path, branch, expected_oid.as_deref())?;
-    }
-    eprintln!("✓ Removed {label}");
-    if target.path == current {
-        navigate(&primary.path)?;
+    let removal = git.remove(requested, force)?;
+    eprintln!("✓ Removed {}", removal.label);
+    if let Some(path) = removal.navigate_to {
+        navigate(&path)?;
     }
     Ok(())
-}
-
-fn primary(worktrees: &[Worktree]) -> Result<&Worktree> {
-    worktrees.first().context("repository has no worktrees")
-}
-
-fn worktree_path(primary: &Path, branch: &str) -> Result<PathBuf> {
-    let repo = primary
-        .file_name()
-        .context("primary worktree has no directory name")?;
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home)
-        .join(".grove")
-        .join(encode_branch(&repo.to_string_lossy()))
-        .join(encode_branch(branch)))
 }
 
 fn navigate(path: &Path) -> Result<()> {
@@ -388,33 +297,10 @@ fn complete(current: &OsStr, worktrees_only: bool) -> Vec<CompletionCandidate> {
     let Ok(git) = Git::discover() else {
         return Vec::new();
     };
-    let values = if worktrees_only {
-        git.worktrees().map(|worktrees| {
-            worktrees
-                .into_iter()
-                .filter_map(|worktree| worktree.branch().map(str::to_owned))
-                .collect()
-        })
-    } else {
-        git.branches()
-    };
-    values
+    git.branch_names(worktrees_only)
         .unwrap_or_default()
         .into_iter()
         .filter(|value| value.starts_with(current.as_ref()))
         .map(CompletionCandidate::new)
         .collect()
-}
-
-fn encode_branch(branch: &str) -> String {
-    let mut encoded = String::with_capacity(branch.len());
-    for byte in branch.bytes() {
-        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
-        {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
 }

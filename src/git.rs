@@ -13,11 +13,11 @@ pub struct Git {
 }
 
 #[derive(Debug)]
-pub struct Worktree {
-    pub path: PathBuf,
+struct Worktree {
+    path: PathBuf,
     branch: Option<String>,
-    pub locked: bool,
-    pub prunable: bool,
+    locked: bool,
+    prunable: bool,
 }
 
 pub struct Status {
@@ -32,10 +32,102 @@ pub struct Divergence {
     pub behind: usize,
 }
 
-impl Worktree {
-    pub fn branch(&self) -> Option<&str> {
-        self.branch.as_deref()
+pub struct SwitchResult {
+    pub path: PathBuf,
+    pub created: bool,
+}
+
+pub enum WorktreeState {
+    Present(Status),
+    Missing,
+}
+
+pub struct WorktreeView {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub base: String,
+    pub divergence: Option<Divergence>,
+    pub state: WorktreeState,
+    pub current: bool,
+    pub primary: bool,
+}
+
+pub struct Removal {
+    pub label: String,
+    pub navigate_to: Option<PathBuf>,
+}
+
+struct BranchBase {
+    display: String,
+    divergence_ref: Option<String>,
+    removal_ref: Option<String>,
+    valid: bool,
+}
+
+struct CreationBase {
+    display_ref: Option<String>,
+    oid: String,
+    parent: Option<String>,
+}
+
+const LINEAGE_FIELDS: [&str; 3] = ["base-ref", "base-oid", "parent"];
+
+struct Lineage {
+    base_ref: Option<String>,
+    base_oid: Option<String>,
+    parent: Option<String>,
+}
+
+impl Lineage {
+    fn load(git: &Git, branch: &str) -> Result<Self> {
+        let [base_ref, base_oid, parent] =
+            LINEAGE_FIELDS.map(|field| git.config_value(&lineage_key(branch, field)));
+        Ok(Self {
+            base_ref: base_ref?,
+            base_oid: base_oid?,
+            parent: parent?,
+        })
     }
+
+    fn write(&self, git: &Git, branch: &str) -> Result<()> {
+        let values = [
+            self.base_ref.as_deref(),
+            self.base_oid.as_deref(),
+            self.parent.as_deref(),
+        ];
+        for (field, value) in LINEAGE_FIELDS.into_iter().zip(values) {
+            if let Some(value) = value {
+                git.output(&["config", "--local", &lineage_key(branch, field), value])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear(git: &Git, cwd: &Path, branch: &str) -> Result<()> {
+        for field in LINEAGE_FIELDS {
+            let output = git.raw_at(
+                cwd,
+                &[
+                    "config",
+                    "--local",
+                    "--unset-all",
+                    &lineage_key(branch, field),
+                ],
+            )?;
+            if !output.status.success() && output.status.code() != Some(5) {
+                check(output, &["config", "--local", "--unset-all", "<key>"])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.base_ref.is_none() && self.base_oid.is_none() && self.parent.is_none()
+    }
+}
+
+fn lineage_key(branch: &str, field: &str) -> String {
+    format!("branch.{branch}.grove-{field}")
 }
 
 impl Git {
@@ -50,53 +142,268 @@ impl Git {
         Ok(git)
     }
 
-    pub fn validate_branch(&self, branch: &str) -> Result<()> {
+    pub fn switch(&self, branch: &str, create: bool, from: Option<&str>) -> Result<SwitchResult> {
+        self.validate_branch(branch)?;
+        let worktrees = self.worktrees()?;
+        if let Some(worktree) = worktrees
+            .iter()
+            .find(|worktree| worktree.branch.as_deref() == Some(branch))
+        {
+            if create {
+                bail!("branch '{branch}' already exists");
+            }
+            return Ok(SwitchResult {
+                path: worktree.path.clone(),
+                created: false,
+            });
+        }
+
+        let branch_exists = self.branch_exists(branch)?;
+        if create && branch_exists {
+            bail!("branch '{branch}' already exists");
+        }
+        if !create && !branch_exists {
+            bail!("branch '{branch}' does not exist; create it with --create");
+        }
+
+        let base = create
+            .then(|| self.resolve_creation_base(from))
+            .transpose()?;
+        let path = self.worktree_path(branch)?;
+        if path.exists() {
+            bail!("worktree path already exists: {}", path.display());
+        }
+        std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
+
+        if let Some(base) = &base {
+            self.worktree_add_new(&path, branch, base)?;
+        } else {
+            self.worktree_add(&path, branch)?;
+        }
+        Ok(SwitchResult {
+            path,
+            created: true,
+        })
+    }
+
+    pub fn inventory(&self) -> Result<Vec<WorktreeView>> {
+        let worktrees = self.worktrees()?;
+        let current = self.current_root()?;
+        let primary = worktrees
+            .first()
+            .context("repository has no worktrees")?
+            .path
+            .clone();
+
+        worktrees
+            .into_iter()
+            .map(|worktree| {
+                let branch = worktree.branch.clone();
+                let (base, divergence) = if worktree.prunable || branch.is_none() {
+                    (String::new(), None)
+                } else {
+                    let base =
+                        self.base_for_branch(branch.as_deref().context("branch is missing")?)?;
+                    let divergence = base
+                        .divergence_ref
+                        .as_deref()
+                        .map(|reference| self.divergence(&worktree.path, reference))
+                        .transpose()?;
+                    (base.display, divergence)
+                };
+                let state = if worktree.prunable {
+                    WorktreeState::Missing
+                } else {
+                    WorktreeState::Present(self.status(&worktree.path)?)
+                };
+                Ok(WorktreeView {
+                    current: worktree.path == current,
+                    primary: worktree.path == primary,
+                    path: worktree.path,
+                    branch,
+                    base,
+                    divergence,
+                    state,
+                })
+            })
+            .collect()
+    }
+
+    pub fn remove(&self, requested: Option<&str>, force: bool) -> Result<Removal> {
+        let worktrees = self.worktrees()?;
+        let primary = worktrees
+            .first()
+            .context("repository has no worktrees")?
+            .path
+            .clone();
+        let current = self.current_root()?;
+        let target = match requested {
+            Some(branch) => worktrees
+                .iter()
+                .find(|worktree| worktree.branch.as_deref() == Some(branch))
+                .with_context(|| format!("branch '{branch}' has no worktree"))?,
+            None => worktrees
+                .iter()
+                .find(|worktree| worktree.path == current)
+                .context("current directory is not in a worktree")?,
+        };
+        if target.path == primary {
+            bail!("cannot remove the primary worktree");
+        }
+        if target.locked && !force {
+            bail!("worktree is locked: {}", target.path.display());
+        }
+        if !force && self.is_dirty(&target.path)? {
+            bail!(
+                "worktree has uncommitted changes: {}",
+                target.path.display()
+            );
+        }
+
+        let path = target.path.clone();
+        let branch = target.branch.clone();
+        let expected_oid = if force {
+            None
+        } else {
+            branch
+                .as_deref()
+                .map(|branch| self.branch_oid(branch))
+                .transpose()?
+        };
+        if !force && let Some(branch) = &branch {
+            let base = self.base_for_branch(branch)?;
+            if !self.branch_integrated(branch, &base)? {
+                bail!("branch '{branch}' is not merged; use --force to discard it");
+            }
+        }
+
+        self.worktree_remove(&path, force)?;
+        if let Some(branch) = &branch {
+            self.delete_branch(&primary, branch, expected_oid.as_deref())
+                .context("worktree was removed, but branch cleanup did not complete")?;
+        }
+        Ok(Removal {
+            label: branch.unwrap_or_else(|| "detached".to_owned()),
+            navigate_to: (path == current).then_some(primary),
+        })
+    }
+
+    pub fn branch_names(&self, worktrees_only: bool) -> Result<Vec<String>> {
+        if worktrees_only {
+            return Ok(self
+                .worktrees()?
+                .into_iter()
+                .filter_map(|worktree| worktree.branch)
+                .collect());
+        }
+        self.branches()
+    }
+
+    fn validate_branch(&self, branch: &str) -> Result<()> {
         self.output(&["check-ref-format", "--branch", branch])?;
         Ok(())
     }
 
-    pub fn branch_exists(&self, branch: &str) -> Result<bool> {
-        let output = self.raw(&[
+    fn branch_exists(&self, branch: &str) -> Result<bool> {
+        self.predicate(&[
             "show-ref",
             "--verify",
             "--quiet",
             &format!("refs/heads/{branch}"),
-        ])?;
-        if output.status.success() {
-            Ok(true)
-        } else if output.status.code() == Some(1) {
-            Ok(false)
-        } else {
-            check(output, &["show-ref", "--verify", "--quiet", "<branch>"])?;
-            unreachable!()
-        }
+        ])
     }
 
-    pub fn default_branch(&self) -> Result<String> {
+    fn default_branch(&self) -> Result<String> {
         if let Ok(remote) = self.text(&[
             "symbolic-ref",
             "--quiet",
             "--short",
             "refs/remotes/origin/HEAD",
         ]) {
-            return Ok(remote);
+            let local = remote.strip_prefix("origin/").unwrap_or(&remote);
+            return if self.branch_exists(local)? {
+                Ok(local.to_owned())
+            } else {
+                Ok(remote)
+            };
         }
         for branch in ["main", "master"] {
             if self.branch_exists(branch)? {
                 return Ok(branch.to_owned());
             }
         }
-        if let Some(branch) = self.worktrees()?.first().and_then(Worktree::branch) {
-            return Ok(branch.to_owned());
-        }
-        bail!("could not detect the default branch")
+        self.worktrees()?
+            .first()
+            .and_then(|worktree| worktree.branch.as_deref())
+            .map(str::to_owned)
+            .context("could not detect the default branch")
     }
 
-    pub fn current_root(&self) -> Result<PathBuf> {
+    fn resolve_creation_base(&self, source: Option<&str>) -> Result<CreationBase> {
+        let Some(source) = source else {
+            let default = self.default_branch()?;
+            return Ok(CreationBase {
+                oid: self.peel_commit(&default)?,
+                display_ref: None,
+                parent: None,
+            });
+        };
+
+        if source == "@" {
+            let oid = self.peel_commit("HEAD")?;
+            let parent = self
+                .text(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+                .ok();
+            return Ok(CreationBase {
+                display_ref: Some(source.to_owned()),
+                oid,
+                parent,
+            });
+        }
+
+        let oid = self.peel_commit(source)?;
+        let parent = self.local_branch(source)?;
+        Ok(CreationBase {
+            display_ref: Some(source.to_owned()),
+            oid,
+            parent,
+        })
+    }
+
+    fn current_root(&self) -> Result<PathBuf> {
         Ok(PathBuf::from(self.text(&["rev-parse", "--show-toplevel"])?))
     }
 
-    pub fn worktrees(&self) -> Result<Vec<Worktree>> {
+    fn worktree_path(&self, branch: &str) -> Result<PathBuf> {
+        let common_dir = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
+        let common_dir = if common_dir.is_absolute() {
+            common_dir
+        } else {
+            self.cwd.join(common_dir)
+        };
+        let common_dir = common_dir
+            .canonicalize()
+            .context("failed to resolve Git common directory")?;
+        let primary = self
+            .worktrees()?
+            .into_iter()
+            .next()
+            .context("repository has no worktrees")?;
+        let repo = primary
+            .path
+            .file_name()
+            .context("primary worktree has no directory name")?
+            .to_string_lossy();
+        let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
+        let home = std::env::var_os("HOME").context("HOME is not set")?;
+
+        Ok(PathBuf::from(home)
+            .join(".grove")
+            .join(format!("{}-{}", encode_path_segment(&repo), &digest[..12]))
+            .join(encode_path_segment(branch)))
+    }
+
+    fn worktrees(&self) -> Result<Vec<Worktree>> {
         let bytes = self.output_bytes(&["worktree", "list", "--porcelain", "-z"])?;
         bytes
             .split(|byte| *byte == 0)
@@ -132,13 +439,13 @@ impl Git {
             .collect()
     }
 
-    pub fn is_dirty(&self, path: &Path) -> Result<bool> {
+    fn is_dirty(&self, path: &Path) -> Result<bool> {
         Ok(!self
             .text_at(path, &["status", "--porcelain", "--untracked-files=normal"])?
             .is_empty())
     }
 
-    pub fn status(&self, path: &Path) -> Result<Status> {
+    fn status(&self, path: &Path) -> Result<Status> {
         let porcelain = self.text_at(path, &["status", "--porcelain"])?;
         let mut conflicts = 0;
         for line in porcelain.lines() {
@@ -182,7 +489,7 @@ impl Git {
         })
     }
 
-    pub fn divergence(&self, path: &Path, base: &str) -> Result<Divergence> {
+    fn divergence(&self, path: &Path, base: &str) -> Result<Divergence> {
         let counts = self.text_at(
             path,
             &[
@@ -204,7 +511,91 @@ impl Git {
         Ok(Divergence { ahead, behind })
     }
 
-    pub fn branches(&self) -> Result<Vec<String>> {
+    fn base_for_branch(&self, branch: &str) -> Result<BranchBase> {
+        let (default_name, default_ref) = self.normalized_default()?;
+        if branch == default_name {
+            return Ok(BranchBase {
+                display: String::new(),
+                divergence_ref: None,
+                removal_ref: None,
+                valid: true,
+            });
+        }
+
+        let lineage = Lineage::load(self, branch)?;
+        if lineage.is_empty() {
+            return Ok(BranchBase {
+                display: default_name,
+                divergence_ref: Some(default_ref.clone()),
+                removal_ref: Some(default_ref),
+                valid: true,
+            });
+        }
+
+        let metadata_valid = lineage
+            .base_ref
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+            && lineage
+                .base_oid
+                .as_deref()
+                .is_some_and(|value| self.is_full_commit(value))
+            && lineage
+                .parent
+                .as_deref()
+                .is_none_or(|value| !value.is_empty());
+        if !metadata_valid {
+            return Ok(BranchBase {
+                display: "invalid metadata".to_owned(),
+                divergence_ref: None,
+                removal_ref: None,
+                valid: false,
+            });
+        }
+
+        let display_ref = lineage.base_ref.context("validated base ref is missing")?;
+        let oid = lineage.base_oid.context("validated base OID is missing")?;
+        if let Some(parent) = lineage.parent {
+            let live_parent = self.branch_exists(&parent)? && self.is_ancestor(&oid, &parent)?;
+            if live_parent {
+                return Ok(BranchBase {
+                    display: parent.clone(),
+                    divergence_ref: Some(parent.clone()),
+                    removal_ref: Some(parent),
+                    valid: true,
+                });
+            }
+            return Ok(BranchBase {
+                display: abbreviate_oid(&oid),
+                divergence_ref: Some(oid),
+                removal_ref: Some(default_ref),
+                valid: true,
+            });
+        }
+
+        Ok(BranchBase {
+            display: display_ref,
+            divergence_ref: Some(oid.clone()),
+            removal_ref: Some(oid),
+            valid: true,
+        })
+    }
+
+    fn branch_integrated(&self, branch: &str, base: &BranchBase) -> Result<bool> {
+        if !base.valid {
+            bail!("branch '{branch}' has invalid Grove base metadata; use --force to discard it");
+        }
+        let comparison = base
+            .removal_ref
+            .as_deref()
+            .context("the default branch cannot be removed as a linked worktree")?;
+        if self.is_ancestor(branch, comparison)? || self.same_tree(branch, comparison)? {
+            return Ok(true);
+        }
+        self.merge_adds_no_change(branch, comparison)
+    }
+
+    fn branches(&self) -> Result<Vec<String>> {
         Ok(self
             .text(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])?
             .lines()
@@ -212,34 +603,35 @@ impl Git {
             .collect())
     }
 
-    pub fn branch_merged(&self, branch: &str, base: &str) -> Result<bool> {
-        let output = self.raw(&["merge-base", "--is-ancestor", branch, base])?;
-        match output.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            _ => {
-                check(
-                    output,
-                    &["merge-base", "--is-ancestor", "<branch>", "<base>"],
-                )?;
-                unreachable!()
-            }
-        }
+    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        self.predicate(&["merge-base", "--is-ancestor", ancestor, descendant])
     }
 
-    pub fn branch_oid(&self, branch: &str) -> Result<String> {
+    fn branch_oid(&self, branch: &str) -> Result<String> {
         self.text(&["rev-parse", &format!("refs/heads/{branch}")])
     }
 
-    pub fn worktree_add_new(&self, path: &Path, branch: &str, base: &str) -> Result<()> {
-        self.output_os(&["worktree", "add", "-b", branch], path, &[base])
+    fn worktree_add_new(&self, path: &Path, branch: &str, base: &CreationBase) -> Result<()> {
+        self.output_os(&["worktree", "add", "-b", branch], path, &[&base.oid])?;
+        if let Some(display_ref) = &base.display_ref
+            && let Err(error) = (Lineage {
+                base_ref: Some(display_ref.clone()),
+                base_oid: Some(base.oid.clone()),
+                parent: base.parent.clone(),
+            })
+            .write(self, branch)
+        {
+            self.rollback_created_worktree(path, branch);
+            return Err(error).context("could not record branch creation base");
+        }
+        Ok(())
     }
 
-    pub fn worktree_add(&self, path: &Path, branch: &str) -> Result<()> {
+    fn worktree_add(&self, path: &Path, branch: &str) -> Result<()> {
         self.output_os(&["worktree", "add"], path, &[branch])
     }
 
-    pub fn worktree_remove(&self, path: &Path, force: bool) -> Result<()> {
+    fn worktree_remove(&self, path: &Path, force: bool) -> Result<()> {
         let before = if force {
             &["worktree", "remove", "--force", "--force"][..]
         } else {
@@ -248,7 +640,7 @@ impl Git {
         self.output_os(before, path, &[])
     }
 
-    pub fn delete_branch(&self, cwd: &Path, branch: &str, expected: Option<&str>) -> Result<()> {
+    fn delete_branch(&self, cwd: &Path, branch: &str, expected: Option<&str>) -> Result<()> {
         let reference = format!("refs/heads/{branch}");
         let mut command = Command::new("git");
         command.arg("-C").arg(cwd);
@@ -261,25 +653,120 @@ impl Git {
             shown = vec!["branch", "-D", "--", "<branch>"];
         }
         let output = command.output().context("could not delete branch")?;
-        check(output, &shown).map(|_| ())
+        check(output, &shown).with_context(|| {
+            if expected.is_some() {
+                format!("branch '{branch}' changed before it could be deleted")
+            } else {
+                format!("branch '{branch}' could not be deleted")
+            }
+        })?;
+        Lineage::clear(self, cwd, branch)
+            .context("branch was deleted, but its Grove lineage metadata could not be cleared")
     }
 
     fn text(&self, args: &[&str]) -> Result<String> {
         self.text_at(&self.cwd, args)
     }
 
+    fn peel_commit(&self, source: &str) -> Result<String> {
+        let revision = format!("{source}^{{commit}}");
+        let args = [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            revision.as_str(),
+        ];
+        let output = self.raw(&args)?;
+        if !output.status.success() {
+            bail!("base '{source}' does not resolve to a commit");
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    fn local_branch(&self, source: &str) -> Result<Option<String>> {
+        let output = self.raw(&[
+            "rev-parse",
+            "--symbolic-full-name",
+            "--verify",
+            "--end-of-options",
+            source,
+        ])?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .strip_prefix("refs/heads/")
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_owned))
+    }
+
+    fn normalized_default(&self) -> Result<(String, String)> {
+        let reference = self.default_branch()?;
+        let name = reference
+            .strip_prefix("origin/")
+            .unwrap_or(&reference)
+            .to_owned();
+        Ok((name, reference))
+    }
+
+    fn config_value(&self, key: &str) -> Result<Option<String>> {
+        let output = self.raw(&["config", "--local", "--get", key])?;
+        match output.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            )),
+            Some(1) => Ok(None),
+            _ => {
+                check(output, &["config", "--local", "--get", "<key>"])?;
+                unreachable!()
+            }
+        }
+    }
+
+    fn is_full_commit(&self, oid: &str) -> bool {
+        self.peel_commit(oid).is_ok_and(|resolved| resolved == oid)
+    }
+
+    fn same_tree(&self, branch: &str, base: &str) -> Result<bool> {
+        self.predicate(&["diff", "--quiet", branch, base])
+    }
+
+    fn merge_adds_no_change(&self, branch: &str, base: &str) -> Result<bool> {
+        let output = self.raw(&["merge-tree", "--write-tree", base, branch])?;
+        if !output.status.success() {
+            return match output.status.code() {
+                Some(1) => Ok(false),
+                _ => {
+                    check(
+                        output,
+                        &["merge-tree", "--write-tree", "<base>", "<branch>"],
+                    )?;
+                    unreachable!()
+                }
+            };
+        }
+        let merged_tree = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .context("git merge-tree did not return a tree")?
+            .to_owned();
+        Ok(merged_tree == self.text(&["rev-parse", &format!("{base}^{{tree}}")])?)
+    }
+
+    fn rollback_created_worktree(&self, path: &Path, branch: &str) {
+        let _ = Lineage::clear(self, &self.cwd, branch);
+        let _ = self.worktree_remove(path, true);
+        let _ = self.raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
+    }
+
     fn text_at(&self, cwd: &Path, args: &[&str]) -> Result<String> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .output()
-            .with_context(|| format!("could not run git {}", args.join(" ")))?;
-        check(output, args).map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
+        self.checked_at(cwd, args)
+            .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
     }
 
     fn output(&self, args: &[&str]) -> Result<()> {
-        check(self.raw(args)?, args).map(|_| ())
+        self.checked_at(&self.cwd, args).map(|_| ())
     }
 
     fn output_bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
@@ -287,19 +774,33 @@ impl Git {
     }
 
     fn output_bytes_at(&self, cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .output()
-            .with_context(|| format!("could not run git {}", args.join(" ")))?;
-        check(output, args)
+        self.checked_at(cwd, args)
+    }
+
+    fn checked_at(&self, cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+        check(self.raw_at(cwd, args)?, args)
     }
 
     fn raw(&self, args: &[&str]) -> Result<Output> {
+        self.raw_at(&self.cwd, args)
+    }
+
+    fn predicate(&self, args: &[&str]) -> Result<bool> {
+        let output = self.raw(args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => {
+                check(output, args)?;
+                unreachable!()
+            }
+        }
+    }
+
+    fn raw_at(&self, cwd: &Path, args: &[&str]) -> Result<Output> {
         Command::new("git")
             .arg("-C")
-            .arg(&self.cwd)
+            .arg(cwd)
             .args(args)
             .output()
             .with_context(|| format!("could not run git {}", args.join(" ")))
@@ -319,6 +820,23 @@ impl Git {
         shown.extend_from_slice(after);
         check(output, &shown).map(|_| ())
     }
+}
+
+fn encode_path_segment(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
+        {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn abbreviate_oid(oid: &str) -> String {
+    oid.chars().take(12).collect()
 }
 
 #[cfg(unix)]
