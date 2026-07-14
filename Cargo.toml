@@ -9,6 +9,7 @@ blake3 = "1"
 clap = { version = "4", features = ["derive", "unstable-ext"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 clap_usage = "2"
+crossterm = { version = "0.29", default-features = false, features = ["events"] }
 rmux-client = "=0.8.0"
 rmux-proto = "=0.8.0"
 rmux-server = { version = "=0.8.0", default-features = false }

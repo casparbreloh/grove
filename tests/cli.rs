@@ -245,28 +245,29 @@ fn switch_navigates_without_launching_an_agent() {
 }
 
 #[test]
-fn switch_without_an_id_picks_a_worktree() {
+fn switch_without_an_id_moves_a_cursor_and_enters_the_selected_worktree() {
     let repo = TestRepo::new();
-    let change = repo.create_change("Fix OAuth refresh race", None);
+    repo.git(["branch", "alpha"]);
+    repo.git(["branch", "beta"]);
+    repo.grove().args(["switch", "alpha"]).assert().success();
+    let selected = repo.navigation();
+    repo.grove().args(["switch", "beta"]).assert().success();
     let agent_log = repo.agent_log();
 
-    let output = repo
-        .grove()
-        .arg("switch")
-        .write_stdin("1\n")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
+    let output = repo.switch_in_pty("beta", b"\x1b[B\x1b[A\r");
 
+    assert!(output.status.success(), "{output:?}");
+    let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
     assert_eq!(
         repo.navigation(),
-        change.path.canonicalize().expect("canonical worktree")
+        selected.canonicalize().expect("canonical worktree"),
+        "{terminal:?}"
     );
     assert_eq!(repo.agent_log(), agent_log);
-    let stderr = String::from_utf8(output.stderr).expect("Grove stderr is UTF-8");
-    assert!(stderr.contains("Fix OAuth refresh race"), "{stderr}");
-    assert!(stderr.contains(&change.id), "{stderr}");
+    assert!(terminal.contains("Change"), "{terminal:?}");
+    assert!(terminal.contains("› alpha"), "{terminal:?}");
+    assert!(terminal.contains("› beta"), "{terminal:?}");
+    assert!(!terminal.contains("›1"), "{terminal:?}");
 }
 
 #[test]
