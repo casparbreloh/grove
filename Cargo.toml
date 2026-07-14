@@ -9,7 +9,11 @@ blake3 = "1"
 clap = { version = "4", features = ["derive", "unstable-ext"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 clap_usage = "2"
+rmux-client = "=0.8.0"
+rmux-proto = "=0.8.0"
+rmux-server = { version = "=0.8.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["net", "process", "rt", "time"] }
 toml = "1"
 
 [dev-dependencies]

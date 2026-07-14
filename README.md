@@ -4,80 +4,90 @@ Grove is a small worktree and Git manager for terminal coding agents. Git stays
 the source of truth, while Grove gives each piece of work an isolated worktree:
 
 ```sh
-grove new "Add passkey login"
+grove switch --create "Add passkey login"
+grove agent
 grove switch
 grove list
 grove remove c-a13f7c45b829
 ```
 
+See [VISION.md](VISION.md) for the product direction and upcoming phases.
+
 ## Switching and creating
 
 ```text
 grove switch [change-id-or-branch]
-grove new [--from <ref>] [task]
+grove switch --create [--from <ref>] [title]
 ```
 
 `switch` only navigates to a worktree. Without an argument it shows a small
 interactive picker; an exact change ID or ordinary branch selects directly.
 It never launches an agent, so inspecting a diff does not begin a session.
 
-`new` creates an immutable ID branch such as `c-a13f7c45b829` and starts the
-configured agent in its worktree. An optional task becomes the change title and
-is passed to the agent:
+`switch --create` creates an immutable ID branch such as `c-a13f7c45b829` and
+navigates to its worktree. An optional title describes the change:
 
 ```sh
-grove new
-grove new "Add passkey login"
+grove switch --create
+grove switch --create "Add passkey login"
 ```
 
-Without a task, the agent opens normally with its own native input. Grove does
-not render an editor or manage the agent session. The ID remains stable even as
-the title evolves and can later serve as the backing branch for a pull request.
+Without a title, Grove records an untitled change. Creation never launches an
+agent or opens the picker. The ID remains stable even as the title evolves and
+can later serve as the backing branch for a pull request.
 
 Without `--from`, the new branch starts at the repository's detected default
 branch. `--from` accepts any revision that resolves to a commit, including a
 local branch, remote-tracking branch, tag, commit expression, or commit ID:
 
 ```sh
-grove new --from release "Backport the login fix"
-grove new --from 'main~2' "Investigate the regression"
+grove switch --create --from release "Backport the login fix"
+grove switch --create --from 'main~2' "Investigate the regression"
 ```
 
 `--from @` starts at the invoking worktree's current branch, or its current
 commit when detached:
 
 ```sh
-grove new --from @ "Follow up on this change"
+grove switch --create --from @ "Follow up on this change"
 ```
 
 New worktrees live at `~/.grove/<repo>-<digest>/<change-id>`. The digest
 identifies the Git repository, so repositories with the same directory name
 cannot collide. Grove still discovers ordinary Git branches and worktrees.
 
-## Agents and configuration
+## Agents
 
-Grove reads project configuration from `grove.toml`, then global configuration
-from `~/.config/grove/grove.toml` or `$XDG_CONFIG_HOME/grove/grove.toml`, then
-uses built-in defaults. Pi is the default agent; `claude`, `claude-code`, and
-`codex` are also built in:
+```text
+grove agent [agent-name]
+```
+
+`agent` opens a persistent terminal session in the current worktree. Detach
+with `Ctrl-b d`; running the same command again reattaches. Different agent
+names have separate sessions. Grove embeds rmux, so there is no multiplexer to
+install or run separately.
+
+Pi is the default. `claude`, `claude-code`, and `codex` are also built in. A
+project can select one in `grove.toml`:
 
 ```toml
 agent = "codex"
 ```
 
-Custom agents are defined in the global config because commands from a checked-in
-project file would be unsafe. They use argument arrays and replace `{prompt}` as
-one argument. Grove does not run these values through a shell:
+The project setting overrides the global setting in
+`~/.config/grove/grove.toml` or `$XDG_CONFIG_HOME/grove/grove.toml`. Custom
+commands are global-only and use a direct argument array rather than a shell:
 
 ```toml
 agent = "opencode"
 
 [agents.opencode]
-command = ["opencode", "{prompt}"]
+command = ["opencode", "--mode", "agent"]
 ```
 
-`{prompt}` is omitted when `grove new` has no task. If the placeholder is not
-present, Grove appends a supplied task as one argument.
+Arguments, including spaces and empty values, are passed unchanged. The old
+`{prompt}` placeholder is no longer supported because Grove does not capture
+or forward agent prompts.
 
 ## Listing
 
@@ -105,7 +115,9 @@ lineage, falling back to the detected default branch for older branches or a
 rewritten/missing local parent. It accepts changes integrated by a merge,
 rebase or cherry-pick, as well as squash-equivalent changes. Genuine unmerged
 work is refused. `--force` is the explicit escape hatch that discards changes
-and deletes the branch.
+and deletes the branch. A live Grove agent session protects its worktree from
+safe removal. Forced removal stops every agent session in the worktree before
+changing Git state.
 
 Safe squash detection requires Git 2.38 or newer for
 `git merge-tree --write-tree`.

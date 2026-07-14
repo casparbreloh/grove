@@ -1,5 +1,6 @@
 mod agent;
 mod git;
+mod runtime;
 
 use std::{
     ffi::OsStr,
@@ -7,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
@@ -27,19 +28,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Open a persistent agent session
+    Agent {
+        /// Configured agent name [default: project, global, then pi]
+        name: Option<String>,
+    },
     /// Go to a worktree
     Switch {
-        /// Change ID or branch to use [default: choose interactively]
-        #[arg(add = ArgValueCompleter::new(branches))]
-        branch: Option<String>,
-    },
-    /// Create a change worktree and start an agent
-    New {
-        /// Start from this revision (`@` means the invoking worktree)
-        #[arg(long)]
+        /// Create a change worktree
+        #[arg(short, long)]
+        create: bool,
+        /// Start a created change from this revision (`@` means the invoking worktree)
+        #[arg(long, requires = "create")]
         from: Option<String>,
-        /// Optional task to record and pass to the coding agent
-        task: Option<String>,
+        /// Change ID or branch, or the title with `--create` [default: choose interactively]
+        #[arg(add = ArgValueCompleter::new(branches))]
+        target: Option<String>,
     },
     /// List the repository's worktrees
     List,
@@ -63,6 +67,9 @@ enum Shell {
 }
 
 fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(rmux_client::INTERNAL_DAEMON_FLAG.as_ref()) {
+        return runtime::run_daemon(std::env::args_os().skip(2));
+    }
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
     if std::env::args_os().len() == 2
@@ -73,16 +80,35 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::Switch { branch } => switch(&Git::discover()?, branch.as_deref()),
-        Cmd::New { from, task } => new(&Git::discover()?, task, from.as_deref()),
+        Cmd::Agent { name } => {
+            let git = Git::discover()?;
+            let agent = Agent::load(&git, name.as_deref())?;
+            unsafe { std::env::remove_var("GROVE_DIRECTIVE_CD_FILE") };
+            agent.attach(&git)
+        }
+        Cmd::Switch {
+            create,
+            from,
+            target,
+        } => switch(
+            &Git::discover()?,
+            target.as_deref(),
+            create,
+            from.as_deref(),
+        ),
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, branch } => remove(&Git::discover()?, branch.as_deref(), force),
         Cmd::Init { shell } => init(shell),
     }
 }
 
-fn switch(git: &Git, branch: Option<&str>) -> Result<()> {
-    let branch = branch.map(str::to_owned).map_or_else(|| pick(git), Ok)?;
+fn switch(git: &Git, target: Option<&str>, create: bool, from: Option<&str>) -> Result<()> {
+    if create {
+        let change = git.create_change(from, target)?;
+        eprintln!("✓ Created {} at {}", change.id, change.path.display());
+        return navigate(&change.path);
+    }
+    let branch = target.map(str::to_owned).map_or_else(|| pick(git), Ok)?;
     let path = git.enter(&branch)?;
     eprintln!("✓ Using {branch} at {}", path.display());
     navigate(&path)
@@ -121,15 +147,6 @@ fn pick(git: &Git) -> Result<String> {
         .filter(|index| (1..=choices.len()).contains(index))
         .context("select a listed worktree number")?;
     Ok(choices[index - 1].0.clone())
-}
-
-fn new(git: &Git, task: Option<String>, from: Option<&str>) -> Result<()> {
-    let project = git.project_root()?;
-    let agent = Agent::load(&project)?;
-    let change = git.create_change(from, task.as_deref())?;
-    eprintln!("✓ Created {} at {}", change.id, change.path.display());
-    navigate(&change.path)?;
-    agent.launch(&change.path, task.as_deref())
 }
 
 fn list(git: &Git) -> Result<()> {
@@ -333,7 +350,19 @@ fn display_path(path: &Path, current: &Path) -> String {
 }
 
 fn remove(git: &Git, requested: Option<&str>, force: bool) -> Result<()> {
-    let removal = git.remove(requested, force)?;
+    let prepared = git.prepare_removal(requested, force)?;
+    let sessions = runtime::sessions(prepared.identity())?;
+    if !sessions.is_empty() && !force {
+        bail!(
+            "worktree has {} live agent session{}; use --force to stop them",
+            sessions.len(),
+            if sessions.len() == 1 { "" } else { "s" }
+        );
+    }
+    if force {
+        runtime::terminate(sessions)?;
+    }
+    let removal = git.remove(prepared)?;
     eprintln!("✓ Removed {}", removal.label);
     if let Some(path) = removal.navigate_to {
         navigate(&path)?;

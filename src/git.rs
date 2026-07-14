@@ -13,6 +13,11 @@ pub struct Git {
     cwd: PathBuf,
 }
 
+pub(crate) struct WorktreeIdentity {
+    pub(crate) common_dir: PathBuf,
+    pub(crate) root: PathBuf,
+}
+
 #[derive(Debug)]
 struct Worktree {
     path: PathBuf,
@@ -58,6 +63,22 @@ pub struct WorktreeView {
 pub struct Removal {
     pub label: String,
     pub navigate_to: Option<PathBuf>,
+}
+
+pub(crate) struct PreparedRemoval {
+    path: PathBuf,
+    branch: Option<String>,
+    primary: PathBuf,
+    current: PathBuf,
+    expected_oid: Option<String>,
+    force: bool,
+    identity: WorktreeIdentity,
+}
+
+impl PreparedRemoval {
+    pub(crate) fn identity(&self) -> &WorktreeIdentity {
+        &self.identity
+    }
 }
 
 struct BranchBase {
@@ -143,6 +164,25 @@ impl Git {
         Ok(git)
     }
 
+    pub fn project_root(&self) -> Result<PathBuf> {
+        self.current_root()
+    }
+
+    pub fn worktree_identity(&self) -> Result<WorktreeIdentity> {
+        let common_dir = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
+        let common_dir = if common_dir.is_absolute() {
+            common_dir
+        } else {
+            self.cwd.join(common_dir)
+        };
+        Ok(WorktreeIdentity {
+            common_dir: common_dir
+                .canonicalize()
+                .context("failed to resolve Git common directory")?,
+            root: self.current_root()?,
+        })
+    }
+
     pub fn enter(&self, branch: &str) -> Result<PathBuf> {
         self.switch(branch, None)
     }
@@ -175,10 +215,6 @@ impl Git {
         Ok(Change { id, path })
     }
 
-    pub fn project_root(&self) -> Result<PathBuf> {
-        self.current_root()
-    }
-
     fn switch(&self, branch: &str, base: Option<&CreationBase>) -> Result<PathBuf> {
         self.validate_branch(branch)?;
         let create = base.is_some();
@@ -198,7 +234,7 @@ impl Git {
             bail!("branch '{branch}' already exists");
         }
         if !create && !branch_exists {
-            bail!("branch '{branch}' does not exist; create it with `grove new`");
+            bail!("branch '{branch}' does not exist; create a change with `grove switch --create`");
         }
 
         let path = self.worktree_path(branch)?;
@@ -274,7 +310,11 @@ impl Git {
             .collect()
     }
 
-    pub fn remove(&self, requested: Option<&str>, force: bool) -> Result<Removal> {
+    pub(crate) fn prepare_removal(
+        &self,
+        requested: Option<&str>,
+        force: bool,
+    ) -> Result<PreparedRemoval> {
         let worktrees = self.worktrees()?;
         let primary = worktrees
             .first()
@@ -322,14 +362,36 @@ impl Git {
             }
         }
 
-        self.worktree_remove(&path, force)?;
-        if let Some(branch) = &branch {
-            self.delete_branch(&primary, branch, expected_oid.as_deref())
+        let common_dir = self.worktree_identity()?.common_dir;
+        let root = if path
+            .try_exists()
+            .with_context(|| format!("failed to inspect worktree {}", path.display()))?
+        {
+            path.canonicalize()
+                .with_context(|| format!("failed to resolve worktree {}", path.display()))?
+        } else {
+            path.clone()
+        };
+        Ok(PreparedRemoval {
+            path,
+            branch,
+            primary,
+            current,
+            expected_oid,
+            force,
+            identity: WorktreeIdentity { common_dir, root },
+        })
+    }
+
+    pub(crate) fn remove(&self, prepared: PreparedRemoval) -> Result<Removal> {
+        self.worktree_remove(&prepared.path, prepared.force)?;
+        if let Some(branch) = &prepared.branch {
+            self.delete_branch(&prepared.primary, branch, prepared.expected_oid.as_deref())
                 .context("worktree was removed, but branch cleanup did not complete")?;
         }
         Ok(Removal {
-            label: branch.unwrap_or_else(|| "detached".to_owned()),
-            navigate_to: (path == current).then_some(primary),
+            label: prepared.branch.unwrap_or_else(|| "detached".to_owned()),
+            navigate_to: (prepared.path == prepared.current).then_some(prepared.primary),
         })
     }
 

@@ -3,10 +3,128 @@ mod support;
 use support::TestRepo;
 
 #[test]
-fn new_without_a_task_creates_an_untitled_change_and_launches_the_agent() {
+fn agent_rejects_prompt_templates() {
+    let repo = TestRepo::new();
+    repo.use_prompt_template();
+
+    let output = repo
+        .grove()
+        .arg("agent")
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+    assert!(
+        stderr.contains("{prompt} is no longer supported; remove it from the agent command"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn agent_runs_the_configured_command_in_the_worktree() {
+    let repo = TestRepo::new();
+    let change = repo.create_change("agent runtime", None);
+
+    repo.detach_agent(&change.path, None);
+
+    assert_eq!(
+        repo.agent_log(),
+        format!(
+            "cwd={}\ndirective=absent\narg=<session>\narg=<space value>\narg=<quote'\">\narg=<>\n",
+            change
+                .path
+                .canonicalize()
+                .expect("canonical worktree")
+                .display()
+        )
+    );
+}
+
+#[test]
+fn agent_reattaches_and_named_agents_coexist() {
+    let repo = TestRepo::new();
+    let change = repo.create_change("persistent agents", None);
+
+    repo.detach_agent(&change.path, None);
+    repo.detach_agent(&change.path, None);
+    repo.detach_agent(&change.path, Some("project"));
+
+    let log = repo.agent_log();
+    assert_eq!(log.matches("arg=<session>").count(), 1, "{log}");
+    assert_eq!(log.matches("arg=<project-session>").count(), 1, "{log}");
+}
+
+#[test]
+fn concurrent_agent_launches_reuse_one_session() {
+    let repo = TestRepo::new();
+    let change = repo.create_change("concurrent agents", None);
+
+    repo.detach_agents_concurrently(&change.path, 8);
+
+    assert_eq!(repo.agent_pids().len(), 1, "{}", repo.agent_log());
+    repo.grove()
+        .args(["remove", "--force", &change.id])
+        .assert()
+        .success();
+}
+
+#[test]
+fn project_agent_selection_works_in_an_ordinary_worktree() {
+    let repo = TestRepo::new();
+    repo.select_project_agent(repo.path(), "project");
+
+    repo.detach_agent(repo.path(), None);
+
+    let log = repo.agent_log();
+    assert!(log.contains("arg=<project-session>"), "{log}");
+    assert!(
+        log.contains(&format!(
+            "cwd={}",
+            repo.path()
+                .canonicalize()
+                .expect("canonical worktree")
+                .display()
+        )),
+        "{log}"
+    );
+}
+
+#[test]
+fn agent_launch_errors_are_reported_before_terminal_attachment() {
+    let repo = TestRepo::new();
+    repo.use_missing_agent_command();
+
+    let output = repo
+        .grove()
+        .arg("agent")
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+    assert!(stderr.contains("missing-agent"), "{stderr}");
+}
+
+#[test]
+fn agent_defaults_to_pi_without_configuration() {
+    let repo = TestRepo::new();
+    repo.use_builtin_defaults();
+
+    repo.detach_agent(repo.path(), None);
+
+    let log = repo.agent_log();
+    assert!(log.contains("directive=absent"), "{log}");
+    assert!(!log.contains("arg=<"), "{log}");
+}
+
+#[test]
+fn switch_create_without_a_title_creates_an_untitled_change_without_an_agent() {
     let repo = TestRepo::new();
 
-    repo.grove().arg("new").assert().success();
+    repo.grove().args(["switch", "-c"]).assert().success();
 
     let worktree = repo.navigation();
     let branch = repo.git_from(&worktree, ["branch", "--show-current"]);
@@ -19,16 +137,7 @@ fn new_without_a_task_creates_an_untitled_change_and_launches_the_agent() {
         repo.config(&format!("branch.{branch}.grove-change")),
         Some("true".to_owned())
     );
-    assert_eq!(
-        repo.agent_log(),
-        format!(
-            "{}|session\n",
-            worktree
-                .canonicalize()
-                .expect("canonical worktree")
-                .display()
-        )
-    );
+    assert_eq!(repo.agent_log(), "");
 
     let output = repo
         .grove()
@@ -44,7 +153,7 @@ fn new_without_a_task_creates_an_untitled_change_and_launches_the_agent() {
 }
 
 #[test]
-fn new_with_a_task_records_it_and_launches_the_agent() {
+fn switch_create_with_a_title_records_it_on_a_stable_change() {
     let repo = TestRepo::new();
     let starting_commit = repo.git(["rev-parse", "main"]);
     let common_dir = repo
@@ -53,43 +162,41 @@ fn new_with_a_task_records_it_and_launches_the_agent() {
         .canonicalize()
         .expect("canonical Git common directory");
     let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
-    let change = repo.create_change("Fix OAuth refresh race", None);
+    repo.grove()
+        .args(["switch", "--create", "Fix OAuth refresh race"])
+        .assert()
+        .success();
+    let change_path = repo.navigation();
+    let change_id = repo.git_from(&change_path, ["branch", "--show-current"]);
     let expected = repo
         .home()
         .join(".grove")
         .join(format!("repo-{}", &digest[..12]))
-        .join(&change.id);
+        .join(&change_id);
 
-    assert_eq!(repo.git(["rev-parse", &change.id]), starting_commit);
-    assert_eq!(change.path, expected);
+    assert_eq!(repo.git(["rev-parse", &change_id]), starting_commit);
+    assert_eq!(change_path, expected);
     assert_eq!(
-        repo.git_from(&change.path, ["rev-parse", "--show-toplevel"]),
-        change
-            .path
+        repo.git_from(&change_path, ["rev-parse", "--show-toplevel"]),
+        change_path
             .canonicalize()
             .expect("canonical worktree path")
             .display()
             .to_string()
     );
     assert_eq!(
-        repo.config(&format!("branch.{}.description", change.id)),
+        repo.config(&format!("branch.{change_id}.description")),
         Some("Fix OAuth refresh race".to_owned())
     );
-    assert_eq!(
-        repo.agent_log(),
-        format!(
-            "{}|session Fix OAuth refresh race\n",
-            change
-                .path
-                .canonicalize()
-                .expect("canonical worktree")
-                .display()
-        )
-    );
+    assert_eq!(repo.agent_log(), "");
 
     let long_task = "Investigate why authentication refresh races can silently discard newly issued access tokens";
-    let other = repo.create_change(long_task, None);
-    assert_ne!(change.id, other.id);
+    repo.grove()
+        .args(["switch", "--create", long_task])
+        .assert()
+        .success();
+    let other_id = repo.git_from(&repo.navigation(), ["branch", "--show-current"]);
+    assert_ne!(change_id, other_id);
     let output = repo.grove().arg("list").output().expect("run Grove list");
     assert!(output.status.success());
     let output = String::from_utf8(output.stdout).expect("Grove stdout is UTF-8");
@@ -99,24 +206,26 @@ fn new_with_a_task_records_it_and_launches_the_agent() {
 }
 
 #[test]
-fn project_config_overrides_global_agent_selection() {
+fn help_exposes_creation_on_switch_instead_of_new() {
     let repo = TestRepo::new();
-    repo.use_project_agent();
-
-    repo.grove()
-        .env("XDG_CONFIG_HOME", repo.home().join(".config"))
-        .args(["new", "project-task"])
+    let output = repo
+        .grove()
+        .arg("--help")
         .assert()
-        .success();
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(output).expect("Grove help is UTF-8");
 
-    assert!(repo.agent_log().contains("|project-session project-task"));
-
-    std::fs::write(
-        repo.path().join("grove.toml"),
-        "agent = \"unsafe\"\n\n[agents.unsafe]\ncommand = [\"unsafe\"]\n",
-    )
-    .expect("write unsafe project config");
-    repo.grove().args(["new", "unsafe-task"]).assert().failure();
+    assert!(help.contains("switch"), "{help}");
+    assert!(
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("new")),
+        "{help}"
+    );
+    repo.grove().arg("new").assert().failure();
 }
 
 #[test]
@@ -197,7 +306,7 @@ fn same_named_repositories_get_distinct_worktree_directories() {
 }
 
 #[test]
-fn new_resolves_and_records_explicit_bases() {
+fn switch_create_resolves_and_records_explicit_bases() {
     let repo = TestRepo::new();
     repo.commit_file(repo.path(), "second.txt", "second\n");
     let head = repo.git(["rev-parse", "main"]);
@@ -296,20 +405,26 @@ fn new_resolves_and_records_explicit_bases() {
 }
 
 #[test]
-fn new_from_validation_leaves_repository_untouched() {
+fn switch_from_validation_leaves_repository_untouched() {
     let repo = TestRepo::new();
+    let before = repo.git(["branch", "--format=%(refname:short)"]);
 
     repo.grove()
         .args(["switch", "--from", "main", "missing"])
         .assert()
         .failure();
-    let before = repo.git(["branch", "--format=%(refname:short)"]);
     repo.grove()
-        .args(["new", "--from", "does-not-exist", "bad-ref"])
+        .args(["switch", "--create", "--from", "does-not-exist", "bad-ref"])
         .assert()
         .failure();
     repo.grove()
-        .args(["new", "--from", "HEAD:README.md", "bad-object"])
+        .args([
+            "switch",
+            "--create",
+            "--from",
+            "HEAD:README.md",
+            "bad-object",
+        ])
         .assert()
         .failure();
     assert_eq!(repo.git(["branch", "--format=%(refname:short)"]), before);
@@ -508,6 +623,102 @@ fn remove_current_annotated_worktree_clears_lineage_from_primary() {
     );
     assert!(!repo.branch_exists(&change.id));
     assert!(!repo.has_lineage(&change.id));
+}
+
+#[test]
+fn same_named_agents_are_isolated_by_worktree_during_removal() {
+    let repo = TestRepo::new();
+    let first = repo.create_change("first agent", None);
+    let second = repo.create_change("second agent", None);
+    repo.detach_agent(&first.path, None);
+    repo.detach_agent(&first.path, Some("project"));
+    repo.detach_agent(&second.path, None);
+    let pids = repo.agent_pids();
+    assert_eq!(
+        pids.len(),
+        3,
+        "same-named agents must have distinct sessions"
+    );
+    assert!(pids.iter().all(|pid| repo.process_running(*pid)));
+
+    let output = repo
+        .grove()
+        .args(["remove", &first.id])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+    assert!(stderr.contains("2 live agent sessions"), "{stderr}");
+    assert!(first.path.exists());
+    assert!(second.path.exists());
+
+    repo.grove_from(&first.path)
+        .args(["remove", "--force"])
+        .assert()
+        .success();
+
+    assert!(!first.path.exists());
+    assert!(!repo.branch_exists(&first.id));
+    assert!(!repo.has_lineage(&first.id));
+    for _ in 0..20 {
+        if !repo.process_running(pids[0]) && !repo.process_running(pids[1]) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(!repo.process_running(pids[0]));
+    assert!(!repo.process_running(pids[1]));
+    assert!(repo.process_running(pids[2]));
+
+    let output = repo
+        .grove()
+        .args(["remove", &second.id])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+    assert!(stderr.contains("1 live agent session"), "{stderr}");
+    assert!(second.path.exists());
+    repo.grove()
+        .args(["remove", "--force", &second.id])
+        .assert()
+        .success();
+}
+
+#[test]
+fn remove_does_not_start_the_runtime_and_runtime_errors_preserve_git_state() {
+    let repo = TestRepo::new();
+    let removable = repo.create_change("no runtime", None);
+
+    repo.grove()
+        .args(["remove", &removable.id])
+        .assert()
+        .success();
+    assert!(!repo.runtime_exists());
+
+    let protected = repo.create_change("runtime failure", None);
+    let endpoint = repo.home().join("x".repeat(200));
+    let output = repo
+        .grove()
+        .env("GROVE_RUNTIME_SOCKET", endpoint)
+        .args(["remove", "--force", &protected.id])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+    assert!(
+        stderr.contains("failed to inspect embedded agent runtime"),
+        "{stderr}"
+    );
+    assert!(protected.path.exists());
+    assert!(repo.branch_exists(&protected.id));
+    assert!(repo.has_lineage(&protected.id));
 }
 
 fn row_for_value<'a>(lines: &'a [&str], value: &str) -> &'a str {

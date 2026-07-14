@@ -1,9 +1,12 @@
 use std::{
     ffi::OsStr,
     fs,
+    io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Child, Command, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 use tempfile::TempDir;
@@ -15,12 +18,19 @@ pub struct TestRepo {
     git_config: PathBuf,
     navigation: PathBuf,
     agent_log: PathBuf,
+    agent_pid: PathBuf,
     agent: PathBuf,
+    runtime_socket: PathBuf,
 }
 
 pub struct TestChange {
     pub id: String,
     pub path: PathBuf,
+}
+
+struct AgentPty {
+    child: Child,
+    output: tempfile::NamedTempFile,
 }
 
 impl TestRepo {
@@ -31,7 +41,9 @@ impl TestRepo {
         let git_config = root.path().join("gitconfig");
         let navigation = root.path().join("navigation");
         let agent_log = root.path().join("agent.log");
+        let agent_pid = root.path().join("agent.pid");
         let agent = root.path().join("agent");
+        let runtime_socket = root.path().join("runtime/rmux.sock");
         fs::create_dir(&home).expect("create test home");
 
         let fixture = Self {
@@ -41,7 +53,9 @@ impl TestRepo {
             git_config,
             navigation,
             agent_log,
+            agent_pid,
             agent,
+            runtime_socket,
         };
         fixture.git_from(
             fixture._root.path(),
@@ -85,7 +99,7 @@ impl TestRepo {
         from: Option<&str>,
     ) -> TestChange {
         let mut command = self.grove_from(directory);
-        command.arg("new");
+        command.args(["switch", "--create"]);
         if let Some(from) = from {
             command.args(["--from", from]);
         }
@@ -105,6 +119,9 @@ impl TestRepo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation)
             .env("GROVE_TEST_AGENT_LOG", &self.agent_log);
+        command.env("GROVE_TEST_AGENT_PID", &self.agent_pid);
+        command.env("PATH", self.test_path());
+        command.env("GROVE_RUNTIME_SOCKET", &self.runtime_socket);
         command
     }
 
@@ -112,9 +129,168 @@ impl TestRepo {
         fs::read_to_string(&self.agent_log).unwrap_or_default()
     }
 
-    pub fn use_project_agent(&self) {
-        fs::write(self.repo.join("grove.toml"), "agent = \"project\"\n")
-            .expect("write project Grove config");
+    pub fn agent_pids(&self) -> Vec<u32> {
+        fs::read_to_string(&self.agent_pid)
+            .unwrap_or_default()
+            .lines()
+            .map(|pid| pid.parse().expect("agent PID is an integer"))
+            .collect()
+    }
+
+    pub fn process_running(&self, pid: u32) -> bool {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    pub fn runtime_exists(&self) -> bool {
+        self.runtime_socket.exists()
+    }
+
+    fn agent_pty(&self, directory: &Path, name: Option<&str>) -> Command {
+        let binary = assert_cmd::Command::cargo_bin("grove")
+            .expect("compiled grove binary")
+            .get_program()
+            .to_owned();
+        let mut command = Command::new("script");
+        command
+            .args([OsStr::new("-q"), OsStr::new("/dev/null")])
+            .arg(binary)
+            .arg("agent")
+            .current_dir(directory)
+            .env("HOME", &self.home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env("GIT_CONFIG_GLOBAL", &self.git_config)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation)
+            .env("GROVE_TEST_AGENT_LOG", &self.agent_log)
+            .env("GROVE_TEST_AGENT_PID", &self.agent_pid)
+            .env("PATH", self.test_path())
+            .env("GROVE_RUNTIME_SOCKET", &self.runtime_socket);
+        if let Some(name) = name {
+            command.arg(name);
+        }
+        command
+    }
+
+    pub fn detach_agent(&self, directory: &Path, name: Option<&str>) {
+        let mut agent = self.start_agent(directory, name);
+        agent.wait_ready();
+        agent.detach();
+    }
+
+    pub fn detach_agents_concurrently(&self, directory: &Path, count: usize) {
+        let mut agents = (0..count)
+            .map(|_| self.start_agent(directory, None))
+            .collect::<Vec<_>>();
+        for agent in &mut agents {
+            agent.wait_ready();
+        }
+        for agent in &mut agents {
+            agent.detach();
+        }
+    }
+
+    fn start_agent(&self, directory: &Path, name: Option<&str>) -> AgentPty {
+        let mut command = self.agent_pty(directory, name);
+        let output =
+            tempfile::NamedTempFile::new_in(self._root.path()).expect("create agent PTY output");
+        let child = command
+            .stdin(Stdio::piped())
+            .stdout(output.reopen().expect("open agent PTY output"))
+            .stderr(output.reopen().expect("open agent PTY errors"))
+            .spawn()
+            .expect("start Grove agent in a PTY");
+        AgentPty { child, output }
+    }
+}
+
+impl AgentPty {
+    fn wait_ready(&mut self) {
+        let ready_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let terminal = fs::read_to_string(self.output.path()).unwrap_or_default();
+            if terminal.contains("grove-test-agent-ready") {
+                break;
+            }
+            if let Some(status) = self.child.try_wait().expect("inspect Grove agent") {
+                panic!("Grove agent exited before attaching: {status}\n{terminal}");
+            }
+            if Instant::now() >= ready_deadline {
+                self.child.kill().expect("kill timed out Grove agent");
+                self.child.wait().expect("reap timed out Grove agent");
+                panic!("Grove agent did not attach before timeout\n{terminal}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn detach(&mut self) {
+        self.child
+            .stdin
+            .take()
+            .expect("Grove agent stdin")
+            .write_all(b"\x02d")
+            .expect("send rmux detach keys");
+        let detach_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = self.child.try_wait().expect("inspect detached Grove agent") {
+                assert!(status.success(), "Grove agent detach failed: {status}");
+                break;
+            }
+            if Instant::now() >= detach_deadline {
+                self.child.kill().expect("kill stuck Grove agent wrapper");
+                self.child.wait().expect("reap stuck Grove agent wrapper");
+                panic!("Grove agent did not detach before timeout");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+impl Drop for AgentPty {
+    fn drop(&mut self) {
+        if self.child.try_wait().is_ok_and(|status| status.is_none()) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+impl TestRepo {
+    pub fn use_prompt_template(&self) {
+        fs::write(
+            self.home.join(".config/grove/grove.toml"),
+            format!(
+                "agent = \"test\"\n\n[agents.test]\ncommand = [\"{}\", \"--prompt={{prompt}}\"]\n",
+                self.agent.display()
+            ),
+        )
+        .expect("write stale agent config");
+    }
+
+    pub fn select_project_agent(&self, directory: &Path, name: &str) {
+        fs::write(
+            directory.join("grove.toml"),
+            format!("agent = \"{name}\"\n"),
+        )
+        .expect("write project Grove config");
+    }
+
+    pub fn use_missing_agent_command(&self) {
+        fs::write(
+            self.home.join(".config/grove/grove.toml"),
+            "agent = \"missing\"\n\n[agents.missing]\ncommand = [\"/grove-test/missing-agent\"]\n",
+        )
+        .expect("write missing agent config");
+    }
+
+    pub fn use_builtin_defaults(&self) {
+        fs::remove_file(self.home.join(".config/grove/grove.toml"))
+            .expect("remove global Grove config");
     }
 
     pub fn git<I, S>(&self, args: I) -> String
@@ -235,22 +411,41 @@ impl TestRepo {
     fn configure_agent(&self) {
         fs::write(
             &self.agent,
-            "#!/bin/sh\nif [ -n \"${GROVE_DIRECTIVE_CD_FILE-}\" ]; then\n  exit 97\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$GROVE_TEST_AGENT_LOG\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$GROVE_TEST_AGENT_PID\"\nprintf 'cwd=%s\\ndirective=%s\\n' \"$PWD\" \"${GROVE_DIRECTIVE_CD_FILE-absent}\" >> \"$GROVE_TEST_AGENT_LOG\"\nfor argument do printf 'arg=<%s>\\n' \"$argument\" >> \"$GROVE_TEST_AGENT_LOG\"; done\nprintf 'grove-test-agent-ready\\n'\nsleep 30\n",
         )
         .expect("write test agent");
         fs::set_permissions(&self.agent, fs::Permissions::from_mode(0o755))
             .expect("make test agent executable");
+        let bin = self.home.join("bin");
+        fs::create_dir(&bin).expect("create test bin directory");
+        fs::copy(&self.agent, bin.join("pi")).expect("install fake Pi executable");
         let config_dir = self.home.join(".config/grove");
         fs::create_dir_all(&config_dir).expect("create global Grove config directory");
         fs::write(
             config_dir.join("grove.toml"),
             format!(
-                "agent = \"test\"\n\n[agents.test]\ncommand = [\"{}\", \"session\", \"{{prompt}}\"]\n\n[agents.project]\ncommand = [\"{}\", \"project-session\", \"{{prompt}}\"]\n",
+                "agent = \"test\"\n\n[agents.test]\ncommand = [\"{}\", \"session\", \"space value\", \"quote'\\\"\", \"\"]\n\n[agents.project]\ncommand = [\"{}\", \"project-session\"]\n",
                 self.agent.display(),
                 self.agent.display()
             ),
         )
         .expect("write global Grove config");
+    }
+
+    fn test_path(&self) -> std::ffi::OsString {
+        let mut paths = vec![self.home.join("bin")];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::join_paths(paths).expect("build test PATH")
+    }
+}
+
+impl Drop for TestRepo {
+    fn drop(&mut self) {
+        if let Ok(mut connection) = rmux_client::connect(&self.runtime_socket) {
+            let _ = connection.kill_server();
+        }
     }
 }
 
