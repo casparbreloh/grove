@@ -20,8 +20,9 @@ grove switch [change-id-or-branch]
 grove switch --create [--from <ref>] [title]
 ```
 
-`switch` only navigates to a worktree. Without an argument it shows a small
-interactive picker; an exact change ID or ordinary branch selects directly.
+`switch` only navigates to a worktree. Without an argument it shows the same
+worktree details as `list`; move the `›` cursor with Up and Down, then press
+Enter. An exact change ID or ordinary branch selects directly.
 It never launches an agent, so inspecting a diff does not begin a session.
 
 `switch --create` creates an immutable ID branch such as `c-a13f7c45b829` and

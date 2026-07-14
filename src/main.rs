@@ -12,6 +12,12 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
+use crossterm::{
+    QueueableCommand,
+    cursor::{RestorePosition, SavePosition},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
+};
 
 use crate::agent::Agent;
 use crate::git::{Git, WorktreeState};
@@ -115,41 +121,97 @@ fn switch(git: &Git, target: Option<&str>, create: bool, from: Option<&str>) -> 
 }
 
 fn pick(git: &Git) -> Result<String> {
-    let choices = git
-        .inventory()?
-        .into_iter()
-        .filter(|worktree| !worktree.current)
-        .filter_map(|worktree| {
-            let branch = worktree.branch?;
-            let title = if worktree.is_change {
-                worktree.title.unwrap_or_else(|| "(untitled)".to_owned())
-            } else {
-                branch.clone()
-            };
-            Some((branch, ellipsize(&title, 60)))
-        })
-        .collect::<Vec<_>>();
+    let (mut choices, _) = rows(git)?;
+    choices.retain(|row| !row.current && row.branch.is_some());
     if choices.is_empty() {
         anyhow::bail!("no other worktrees to switch to");
     }
-    eprintln!("Select a worktree:");
-    for (index, (branch, title)) in choices.iter().enumerate() {
-        eprintln!("  {}. {title}  {branch}", index + 1);
+    for (index, row) in choices.iter_mut().enumerate() {
+        row.marker = if index == 0 { "›" } else { " " }.to_owned();
     }
-    eprint!("> ");
-    std::io::stderr().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let index = input
-        .trim()
-        .parse::<usize>()
-        .ok()
-        .filter(|index| (1..=choices.len()).contains(index))
-        .context("select a listed worktree number")?;
-    Ok(choices[index - 1].0.clone())
+    let stderr = std::io::stderr();
+    if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
+        bail!("interactive worktree selection requires a terminal");
+    }
+    let mut output = stderr.lock();
+    output.queue(SavePosition)?;
+    print_rows(&choices, &mut output, true, "\r\n")?;
+    output.flush()?;
+    let selected = select(&mut output, &mut choices)?;
+    Ok(choices[selected]
+        .branch
+        .clone()
+        .expect("picker choices have branches"))
+}
+
+fn select(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
+    let _raw_mode = RawMode::enter()?;
+    let mut selected: usize = 0;
+    loop {
+        let Event::Key(key) = event::read().context("read picker input")? else {
+            continue;
+        };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        let next = match key.code {
+            KeyCode::Up => selected.saturating_sub(1),
+            KeyCode::Down => (selected + 1).min(choices.len() - 1),
+            KeyCode::Enter => return Ok(selected),
+            KeyCode::Esc => bail!("selection cancelled"),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                bail!("selection cancelled")
+            }
+            _ => continue,
+        };
+        if next != selected {
+            choices[selected].marker = " ".to_owned();
+            choices[next].marker = "›".to_owned();
+            redraw_picker(output, choices)?;
+            selected = next;
+        }
+    }
+}
+
+fn redraw_picker(output: &mut impl Write, rows: &[Row]) -> std::io::Result<()> {
+    output
+        .queue(RestorePosition)?
+        .queue(Clear(ClearType::FromCursorDown))?;
+    print_rows(rows, output, true, "\r\n")?;
+    output.flush()
+}
+
+struct RawMode;
+
+impl RawMode {
+    fn enter() -> Result<Self> {
+        enable_raw_mode().context("enable raw mode for worktree picker")?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
 }
 
 fn list(git: &Git) -> Result<()> {
+    let (rows, changed) = rows(git)?;
+    let stdout = std::io::stdout();
+    let terminal = stdout.is_terminal();
+    let mut output = stdout.lock();
+    print_rows(&rows, &mut output, terminal, "\n")?;
+    output.flush()?;
+    eprint!("\n○ Showing {} worktrees", rows.len());
+    if changed > 0 {
+        eprint!(", {changed} with changes");
+    }
+    eprintln!();
+    Ok(())
+}
+
+fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
     let worktrees = git.inventory()?;
     let current = worktrees
         .iter()
@@ -193,7 +255,9 @@ fn list(git: &Git) -> Result<()> {
             }
         };
         rows.push(Row {
-            marker,
+            marker: marker.to_string(),
+            branch: worktree.branch.clone(),
+            current: worktree.current,
             change,
             id,
             base: worktree.base.clone(),
@@ -206,18 +270,13 @@ fn list(git: &Git) -> Result<()> {
             path: display_path(&worktree.path, current),
         });
     }
-    print_rows(&rows);
-    std::io::stdout().flush()?;
-    eprint!("\n○ Showing {} worktrees", rows.len());
-    if changed > 0 {
-        eprint!(", {changed} with changes");
-    }
-    eprintln!();
-    Ok(())
+    Ok((rows, changed))
 }
 
 struct Row {
-    marker: char,
+    marker: String,
+    branch: Option<String>,
+    current: bool,
     change: String,
     id: String,
     base: String,
@@ -254,27 +313,34 @@ fn format_divergence(divergence: &git::Divergence) -> String {
     }
 }
 
-fn print_rows(rows: &[Row]) {
+fn print_rows(
+    rows: &[Row],
+    output: &mut impl Write,
+    terminal: bool,
+    newline: &str,
+) -> std::io::Result<()> {
+    let marker_width = width(rows, "", |row| &row.marker);
     let change_width = width(rows, "Change", |row| &row.change);
     let id_width = width(rows, "ID", |row| &row.id);
     let base_width = width(rows, "Base", |row| &row.base);
     let changes_width = width(rows, "Changes", |row| &row.changes);
     let divergence_width = width(rows, "Base↕", |row| &row.divergence);
     let header = format!(
-        "  {:<change_width$}  {:<id_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
-        "Change", "ID", "Base", "Changes", "Base↕"
+        "{:<marker_width$} {:<change_width$}  {:<id_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
+        "", "Change", "ID", "Base", "Changes", "Base↕"
     );
-    println!("{}", bold(&header, std::io::stdout().is_terminal()));
+    write!(output, "{}{newline}", bold(&header, terminal))?;
     for row in rows {
-        let marker = row.marker;
         let base = format!("{:<base_width$}", row.base);
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
-        println!(
-            "{marker} {:<change_width$}  {:<id_width$}  {base}  {changes}  {divergence}  {}",
-            row.change, row.id, row.path,
-        );
+        write!(
+            output,
+            "{:<marker_width$} {:<change_width$}  {:<id_width$}  {base}  {changes}  {divergence}  {}{newline}",
+            row.marker, row.change, row.id, row.path,
+        )?;
     }
+    Ok(())
 }
 
 fn bold(value: &str, enabled: bool) -> String {

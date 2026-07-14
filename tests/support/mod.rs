@@ -4,7 +4,7 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -28,7 +28,7 @@ pub struct TestChange {
     pub path: PathBuf,
 }
 
-struct AgentPty {
+struct PtyProcess {
     child: Child,
     output: tempfile::NamedTempFile,
 }
@@ -125,6 +125,20 @@ impl TestRepo {
         command
     }
 
+    pub fn switch_in_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.grove_pty(&self.repo);
+        command.arg("switch");
+        let mut picker = PtyProcess::start(&mut command, self._root.path());
+        picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
+        picker.send(input, "Grove switch");
+        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove switch");
+        Output {
+            status,
+            stdout: picker.output(),
+            stderr: Vec::new(),
+        }
+    }
+
     pub fn agent_log(&self) -> String {
         fs::read_to_string(&self.agent_log).unwrap_or_default()
     }
@@ -150,7 +164,7 @@ impl TestRepo {
         self.runtime_socket.exists()
     }
 
-    fn agent_pty(&self, directory: &Path, name: Option<&str>) -> Command {
+    fn grove_pty(&self, directory: &Path) -> Command {
         let binary = assert_cmd::Command::cargo_bin("grove")
             .expect("compiled grove binary")
             .get_program()
@@ -159,7 +173,6 @@ impl TestRepo {
         command
             .args([OsStr::new("-q"), OsStr::new("/dev/null")])
             .arg(binary)
-            .arg("agent")
             .current_dir(directory)
             .env("HOME", &self.home)
             .env_remove("XDG_CONFIG_HOME")
@@ -170,6 +183,12 @@ impl TestRepo {
             .env("GROVE_TEST_AGENT_PID", &self.agent_pid)
             .env("PATH", self.test_path())
             .env("GROVE_RUNTIME_SOCKET", &self.runtime_socket);
+        command
+    }
+
+    fn agent_pty(&self, directory: &Path, name: Option<&str>) -> Command {
+        let mut command = self.grove_pty(directory);
+        command.arg("agent");
         if let Some(name) = name {
             command.arg(name);
         }
@@ -194,64 +213,94 @@ impl TestRepo {
         }
     }
 
-    fn start_agent(&self, directory: &Path, name: Option<&str>) -> AgentPty {
+    fn start_agent(&self, directory: &Path, name: Option<&str>) -> PtyProcess {
         let mut command = self.agent_pty(directory, name);
-        let output =
-            tempfile::NamedTempFile::new_in(self._root.path()).expect("create agent PTY output");
-        let child = command
-            .stdin(Stdio::piped())
-            .stdout(output.reopen().expect("open agent PTY output"))
-            .stderr(output.reopen().expect("open agent PTY errors"))
-            .spawn()
-            .expect("start Grove agent in a PTY");
-        AgentPty { child, output }
+        PtyProcess::start(&mut command, self._root.path())
     }
 }
 
-impl AgentPty {
-    fn wait_ready(&mut self) {
-        let ready_deadline = Instant::now() + Duration::from_secs(10);
+impl PtyProcess {
+    fn start(command: &mut Command, output_directory: &Path) -> Self {
+        let output = tempfile::NamedTempFile::new_in(output_directory).expect("create PTY output");
+        let child = command
+            .stdin(Stdio::piped())
+            .stdout(output.reopen().expect("open PTY output"))
+            .stderr(output.reopen().expect("open PTY errors"))
+            .spawn()
+            .expect("start command in a PTY");
+        Self { child, output }
+    }
+
+    fn wait_for(&mut self, expected: &str, timeout: Duration, label: &str) {
+        let deadline = Instant::now() + timeout;
         loop {
-            let terminal = fs::read_to_string(self.output.path()).unwrap_or_default();
-            if terminal.contains("grove-test-agent-ready") {
+            let captured = self.output();
+            let output = String::from_utf8_lossy(&captured);
+            if output.contains(expected) {
                 break;
             }
-            if let Some(status) = self.child.try_wait().expect("inspect Grove agent") {
-                panic!("Grove agent exited before attaching: {status}\n{terminal}");
+            if let Some(status) = self.child.try_wait().expect("inspect PTY command") {
+                panic!("{label} exited before it was ready: {status}\n{output}");
             }
-            if Instant::now() >= ready_deadline {
-                self.child.kill().expect("kill timed out Grove agent");
-                self.child.wait().expect("reap timed out Grove agent");
-                panic!("Grove agent did not attach before timeout\n{terminal}");
+            if Instant::now() >= deadline {
+                self.stop();
+                panic!("{label} did not become ready before timeout\n{output}");
             }
             thread::sleep(Duration::from_millis(20));
         }
     }
 
-    fn detach(&mut self) {
+    fn send(&mut self, input: &[u8], label: &str) {
         self.child
             .stdin
             .take()
-            .expect("Grove agent stdin")
-            .write_all(b"\x02d")
-            .expect("send rmux detach keys");
-        let detach_deadline = Instant::now() + Duration::from_secs(5);
+            .unwrap_or_else(|| panic!("{label} stdin is unavailable"))
+            .write_all(input)
+            .unwrap_or_else(|error| panic!("send input to {label}: {error}"));
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration, label: &str) -> ExitStatus {
+        let deadline = Instant::now() + timeout;
         loop {
-            if let Some(status) = self.child.try_wait().expect("inspect detached Grove agent") {
-                assert!(status.success(), "Grove agent detach failed: {status}");
-                break;
+            if let Some(status) = self.child.try_wait().expect("inspect PTY command") {
+                return status;
             }
-            if Instant::now() >= detach_deadline {
-                self.child.kill().expect("kill stuck Grove agent wrapper");
-                self.child.wait().expect("reap stuck Grove agent wrapper");
-                panic!("Grove agent did not detach before timeout");
+            if Instant::now() >= deadline {
+                self.stop();
+                panic!(
+                    "{label} did not exit before timeout\n{}",
+                    String::from_utf8_lossy(&self.output())
+                );
             }
             thread::sleep(Duration::from_millis(20));
         }
     }
+
+    fn output(&self) -> Vec<u8> {
+        fs::read(self.output.path()).expect("read PTY output")
+    }
+
+    fn stop(&mut self) {
+        self.child.kill().expect("kill PTY command");
+        self.child.wait().expect("reap PTY command");
+    }
+
+    fn wait_ready(&mut self) {
+        self.wait_for(
+            "grove-test-agent-ready",
+            Duration::from_secs(10),
+            "Grove agent",
+        );
+    }
+
+    fn detach(&mut self) {
+        self.send(b"\x02d", "Grove agent");
+        let status = self.wait_for_exit(Duration::from_secs(5), "Grove agent");
+        assert!(status.success(), "Grove agent detach failed: {status}");
+    }
 }
 
-impl Drop for AgentPty {
+impl Drop for PtyProcess {
     fn drop(&mut self) {
         if self.child.try_wait().is_ok_and(|status| status.is_none()) {
             let _ = self.child.kill();
