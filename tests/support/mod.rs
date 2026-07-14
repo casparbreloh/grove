@@ -126,8 +126,17 @@ impl TestRepo {
     }
 
     pub fn switch_in_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let mut command = self.grove_pty(&self.repo);
-        command.arg("switch");
+        let binary = assert_cmd::Command::cargo_bin("grove")
+            .expect("compiled grove binary")
+            .get_program()
+            .to_owned();
+        let mut command = self.pty(&self.repo, OsStr::new("/bin/sh"));
+        command
+            .args([
+                "-c",
+                "\"$GROVE_TEST_BINARY\" switch\nstatus=$?\nstty -a\nexit \"$status\"",
+            ])
+            .env("GROVE_TEST_BINARY", binary);
         let mut picker = PtyProcess::start(&mut command, self._root.path());
         picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
         picker.send(input, "Grove switch");
@@ -169,10 +178,14 @@ impl TestRepo {
             .expect("compiled grove binary")
             .get_program()
             .to_owned();
+        self.pty(directory, &binary)
+    }
+
+    fn pty(&self, directory: &Path, program: &OsStr) -> Command {
         let mut command = Command::new("script");
         command
             .args([OsStr::new("-q"), OsStr::new("/dev/null")])
-            .arg(binary)
+            .arg(program)
             .current_dir(directory)
             .env("HOME", &self.home)
             .env_remove("XDG_CONFIG_HOME")

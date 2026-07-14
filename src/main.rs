@@ -145,7 +145,13 @@ fn pick(git: &Git) -> Result<String> {
 }
 
 fn select(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
-    let _raw_mode = RawMode::enter()?;
+    let mut raw_mode = RawMode::enter()?;
+    let selection = select_raw(output, choices);
+    raw_mode.restore()?;
+    selection
+}
+
+fn select_raw(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
     let mut selected: usize = 0;
     loop {
         let Event::Key(key) = event::read().context("read picker input")? else {
@@ -181,18 +187,28 @@ fn redraw_picker(output: &mut impl Write, rows: &[Row]) -> std::io::Result<()> {
     output.flush()
 }
 
-struct RawMode;
+struct RawMode {
+    active: bool,
+}
 
 impl RawMode {
     fn enter() -> Result<Self> {
         enable_raw_mode().context("enable raw mode for worktree picker")?;
-        Ok(Self)
+        Ok(Self { active: true })
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        disable_raw_mode().context("restore terminal mode after worktree picker")?;
+        self.active = false;
+        Ok(())
     }
 }
 
 impl Drop for RawMode {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
+        if self.active {
+            let _ = disable_raw_mode();
+        }
     }
 }
 
