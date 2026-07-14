@@ -268,6 +268,47 @@ fn switch_without_an_id_moves_a_cursor_and_enters_the_selected_worktree() {
     assert!(terminal.contains("› alpha"), "{terminal:?}");
     assert!(terminal.contains("› beta"), "{terminal:?}");
     assert!(!terminal.contains("›1"), "{terminal:?}");
+    assert_terminal_restored(&terminal);
+}
+
+#[test]
+fn cancelling_the_worktree_picker_restores_the_terminal_without_navigating() {
+    let repo = TestRepo::new();
+    repo.git(["branch", "alpha"]);
+    repo.git(["branch", "beta"]);
+    repo.grove().args(["switch", "beta"]).assert().success();
+    let before = repo.navigation();
+
+    for input in [b"\x1b".as_slice(), b"\x03".as_slice()] {
+        let output = repo.switch_in_pty("beta", input);
+
+        assert!(!output.status.success(), "{output:?}");
+        let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
+        assert!(terminal.contains("selection cancelled"), "{terminal:?}");
+        assert_eq!(repo.navigation(), before);
+        assert_terminal_restored(&terminal);
+    }
+}
+
+#[test]
+fn worktree_picker_requires_a_terminal() {
+    let repo = TestRepo::new();
+    repo.create_change("pick me", None);
+
+    let output = repo
+        .grove()
+        .arg("switch")
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+
+    assert!(
+        stderr.contains("interactive worktree selection requires a terminal"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -430,6 +471,43 @@ fn switch_from_validation_leaves_repository_untouched() {
         .assert()
         .failure();
     assert_eq!(repo.git(["branch", "--format=%(refname:short)"]), before);
+}
+
+#[test]
+fn failed_change_metadata_rolls_back_the_worktree_and_branch() {
+    let repo = TestRepo::new();
+    let branches_before = repo.git(["branch", "--format=%(refname:short)"]);
+    let worktrees_before = repo.git(["worktree", "list", "--porcelain"]);
+    let config_lock = repo.path().join(".git/config.lock");
+    std::fs::write(&config_lock, "locked by test\n").expect("lock repository config");
+
+    let output = repo
+        .grove()
+        .args(["switch", "--create", "rollback metadata"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    std::fs::remove_file(config_lock).expect("unlock repository config");
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+    assert!(
+        stderr.contains("could not record change metadata"),
+        "fixture must fail after worktree creation: {stderr}"
+    );
+    assert_eq!(
+        repo.git(["branch", "--format=%(refname:short)"]),
+        branches_before
+    );
+    assert_eq!(
+        repo.git(["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+    assert!(
+        repo.git_optional(["config", "--local", "--get-regexp", "^branch\\.c-"])
+            .is_none()
+    );
 }
 
 #[test]
@@ -728,4 +806,10 @@ fn row_for_value<'a>(lines: &'a [&str], value: &str) -> &'a str {
         .iter()
         .find(|line| line.split_whitespace().any(|field| field == value))
         .unwrap_or_else(|| panic!("missing {value} row"))
+}
+
+fn assert_terminal_restored(terminal: &str) {
+    let flags = terminal.split_whitespace().collect::<Vec<_>>();
+    assert!(flags.contains(&"icanon"), "{terminal:?}");
+    assert!(flags.contains(&"echo"), "{terminal:?}");
 }
