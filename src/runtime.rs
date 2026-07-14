@@ -6,7 +6,7 @@ use rmux_client::{
     ensure_server_running_with_config,
 };
 use rmux_proto::{
-    ProcessCommand, Response, SessionName,
+    OptionName, ProcessCommand, Response, ScopeSelector, SessionName, SetOptionMode,
     request::{KillSessionRequest, ListSessionsRequest, NewSessionExtRequest},
 };
 use rmux_server::{DaemonConfig, ServerDaemon};
@@ -66,6 +66,21 @@ pub(crate) fn attach(
         Response::Error(response) => {
             return Err(response.error)
                 .with_context(|| format!("failed to launch agent '{executable}'"));
+        }
+        response => bail!("agent runtime returned an unexpected response: {response:?}"),
+    }
+    match connection
+        .set_option(
+            ScopeSelector::Session(session.clone()),
+            OptionName::Status,
+            "off".to_owned(),
+            SetOptionMode::Replace,
+        )
+        .context("failed to hide embedded agent runtime chrome")?
+    {
+        Response::SetOption(_) => {}
+        Response::Error(response) => {
+            return Err(response.error).context("failed to hide embedded agent runtime chrome");
         }
         response => bail!("agent runtime returned an unexpected response: {response:?}"),
     }
