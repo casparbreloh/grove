@@ -43,6 +43,16 @@ fn agent_runs_the_configured_command_in_the_worktree() {
 }
 
 #[test]
+fn agent_session_hides_runtime_chrome() {
+    let repo = TestRepo::new();
+
+    let terminal = repo.attached_agent_terminal(repo.path(), None);
+
+    assert!(terminal.contains("grove-test-agent-ready"), "{terminal}");
+    assert!(!terminal.contains("[grove-"), "{terminal}");
+}
+
+#[test]
 fn agent_reattaches_and_named_agents_coexist() {
     let repo = TestRepo::new();
     let change = repo.create_change("persistent agents", None);

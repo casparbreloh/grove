@@ -182,6 +182,14 @@ impl TestRepo {
         agent.detach();
     }
 
+    pub fn attached_agent_terminal(&self, directory: &Path, name: Option<&str>) -> String {
+        let mut agent = self.start_agent(directory, name);
+        agent.wait_ready();
+        let terminal = fs::read_to_string(agent.output.path()).expect("read agent PTY output");
+        agent.detach();
+        terminal
+    }
+
     pub fn detach_agents_concurrently(&self, directory: &Path, count: usize) {
         let mut agents = (0..count)
             .map(|_| self.start_agent(directory, None))
