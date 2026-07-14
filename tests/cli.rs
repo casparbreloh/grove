@@ -122,10 +122,10 @@ fn agent_defaults_to_pi_without_configuration() {
 }
 
 #[test]
-fn switch_create_without_a_title_creates_an_untitled_change_without_an_agent() {
+fn new_without_a_title_creates_an_untitled_change_without_an_agent() {
     let repo = TestRepo::new();
 
-    repo.grove().args(["switch", "-c"]).assert().success();
+    repo.grove().arg("new").assert().success();
 
     let worktree = repo.navigation();
     let branch = repo.git_from(&worktree, ["branch", "--show-current"]);
@@ -154,7 +154,7 @@ fn switch_create_without_a_title_creates_an_untitled_change_without_an_agent() {
 }
 
 #[test]
-fn switch_create_with_a_title_records_it_on_a_stable_change() {
+fn new_with_a_title_records_it_on_a_stable_change() {
     let repo = TestRepo::new();
     let starting_commit = repo.git(["rev-parse", "main"]);
     let common_dir = repo
@@ -164,7 +164,7 @@ fn switch_create_with_a_title_records_it_on_a_stable_change() {
         .expect("canonical Git common directory");
     let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
     repo.grove()
-        .args(["switch", "--create", "Fix OAuth refresh race"])
+        .args(["new", "Fix OAuth refresh race"])
         .assert()
         .success();
     let change_path = repo.navigation();
@@ -192,10 +192,7 @@ fn switch_create_with_a_title_records_it_on_a_stable_change() {
     assert_eq!(repo.agent_log(), "");
 
     let long_task = "Investigate why authentication refresh races can silently discard newly issued access tokens";
-    repo.grove()
-        .args(["switch", "--create", long_task])
-        .assert()
-        .success();
+    repo.grove().args(["new", long_task]).assert().success();
     let other_id = repo.git_from(&repo.navigation(), ["branch", "--show-current"]);
     assert_ne!(change_id, other_id);
     let output = repo.grove().arg("list").output().expect("run Grove list");
@@ -207,7 +204,7 @@ fn switch_create_with_a_title_records_it_on_a_stable_change() {
 }
 
 #[test]
-fn help_exposes_creation_on_switch_instead_of_new() {
+fn help_exposes_new_and_switch_as_separate_commands() {
     let repo = TestRepo::new();
     let output = repo
         .grove()
@@ -221,12 +218,83 @@ fn help_exposes_creation_on_switch_instead_of_new() {
 
     assert!(help.contains("switch"), "{help}");
     assert!(
-        !help
-            .lines()
+        help.lines()
             .any(|line| line.trim_start().starts_with("new")),
         "{help}"
     );
-    repo.grove().arg("new").assert().failure();
+
+    let new_help = repo
+        .grove()
+        .args(["new", "--help"])
+        .output()
+        .expect("run Grove new help");
+    let new_help = String::from_utf8(new_help.stdout).expect("Grove new help is UTF-8");
+    assert!(
+        new_help.contains("Usage: grove new [OPTIONS] [TITLE]"),
+        "{new_help}"
+    );
+    assert!(new_help.contains("--from <REF>"), "{new_help}");
+
+    let switch_help = repo
+        .grove()
+        .args(["switch", "--help"])
+        .output()
+        .expect("run Grove switch help");
+    let switch_help = String::from_utf8(switch_help.stdout).expect("Grove switch help is UTF-8");
+    assert!(
+        switch_help.contains("Usage: grove switch [CHANGE-ID-OR-BRANCH]"),
+        "{switch_help}"
+    );
+    assert!(!switch_help.contains("--create"), "{switch_help}");
+}
+
+#[test]
+fn remove_help_describes_a_change_id_or_branch_target() {
+    let repo = TestRepo::new();
+    let output = repo
+        .grove()
+        .args(["remove", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(output).expect("Grove help is UTF-8");
+
+    assert!(help.contains("Change ID or branch"), "{help}");
+}
+
+#[test]
+fn switch_rejects_creation_mode() {
+    let repo = TestRepo::new();
+    let branches_before = repo.git(["branch", "--format=%(refname:short)"]);
+
+    repo.grove().args(["switch", "--create"]).assert().failure();
+
+    assert_eq!(
+        repo.git(["branch", "--format=%(refname:short)"]),
+        branches_before
+    );
+}
+
+#[test]
+fn switch_missing_branch_suggests_new() {
+    let repo = TestRepo::new();
+    let output = repo
+        .grove()
+        .args(["switch", "missing"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
+
+    assert!(
+        stderr.contains("create a change with `grove new`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("switch --create"), "{stderr}");
 }
 
 #[test]
@@ -349,7 +417,7 @@ fn same_named_repositories_get_distinct_worktree_directories() {
 }
 
 #[test]
-fn switch_create_resolves_and_records_explicit_bases() {
+fn new_resolves_and_records_explicit_bases() {
     let repo = TestRepo::new();
     repo.commit_file(repo.path(), "second.txt", "second\n");
     let head = repo.git(["rev-parse", "main"]);
@@ -448,7 +516,7 @@ fn switch_create_resolves_and_records_explicit_bases() {
 }
 
 #[test]
-fn switch_from_validation_leaves_repository_untouched() {
+fn new_from_validation_leaves_repository_untouched() {
     let repo = TestRepo::new();
     let before = repo.git(["branch", "--format=%(refname:short)"]);
 
@@ -457,17 +525,11 @@ fn switch_from_validation_leaves_repository_untouched() {
         .assert()
         .failure();
     repo.grove()
-        .args(["switch", "--create", "--from", "does-not-exist", "bad-ref"])
+        .args(["new", "--from", "does-not-exist", "bad-ref"])
         .assert()
         .failure();
     repo.grove()
-        .args([
-            "switch",
-            "--create",
-            "--from",
-            "HEAD:README.md",
-            "bad-object",
-        ])
+        .args(["new", "--from", "HEAD:README.md", "bad-object"])
         .assert()
         .failure();
     assert_eq!(repo.git(["branch", "--format=%(refname:short)"]), before);
@@ -483,7 +545,7 @@ fn failed_change_metadata_rolls_back_the_worktree_and_branch() {
 
     let output = repo
         .grove()
-        .args(["switch", "--create", "rollback metadata"])
+        .args(["new", "rollback metadata"])
         .assert()
         .failure()
         .get_output()

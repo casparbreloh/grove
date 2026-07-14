@@ -4,7 +4,7 @@ Grove is a small worktree and Git manager for terminal coding agents. Git stays
 the source of truth, while Grove gives each piece of work an isolated worktree:
 
 ```sh
-grove switch --create "Add passkey login"
+grove new "Add passkey login"
 grove agent
 grove switch
 grove list
@@ -13,24 +13,19 @@ grove remove c-a13f7c45b829
 
 See [VISION.md](VISION.md) for the product direction and upcoming phases.
 
-## Switching and creating
+## Creating and switching
 
 ```text
+grove new [--from <ref>] [title]
 grove switch [change-id-or-branch]
-grove switch --create [--from <ref>] [title]
 ```
 
-`switch` only navigates to a worktree. Without an argument it shows the same
-worktree details as `list`; move the `›` cursor with Up and Down, then press
-Enter. An exact change ID or ordinary branch selects directly.
-It never launches an agent, so inspecting a diff does not begin a session.
-
-`switch --create` creates an immutable ID branch such as `c-a13f7c45b829` and
-navigates to its worktree. An optional title describes the change:
+`new` creates an immutable ID branch such as `c-a13f7c45b829` and navigates to
+its worktree. An optional title describes the change:
 
 ```sh
-grove switch --create
-grove switch --create "Add passkey login"
+grove new
+grove new "Add passkey login"
 ```
 
 Without a title, Grove records an untitled change. Creation never launches an
@@ -42,20 +37,25 @@ branch. `--from` accepts any revision that resolves to a commit, including a
 local branch, remote-tracking branch, tag, commit expression, or commit ID:
 
 ```sh
-grove switch --create --from release "Backport the login fix"
-grove switch --create --from 'main~2' "Investigate the regression"
+grove new --from release "Backport the login fix"
+grove new --from 'main~2' "Investigate the regression"
 ```
 
 `--from @` starts at the invoking worktree's current branch, or its current
 commit when detached:
 
 ```sh
-grove switch --create --from @ "Follow up on this change"
+grove new --from @ "Follow up on this change"
 ```
 
 New worktrees live at `~/.grove/<repo>-<digest>/<change-id>`. The digest
 identifies the Git repository, so repositories with the same directory name
 cannot collide. Grove still discovers ordinary Git branches and worktrees.
+
+`switch` only navigates to an existing worktree. Without an argument it shows
+the same worktree details as `list`; move the `›` cursor with Up and Down, then
+press Enter. An exact change ID or ordinary branch selects directly. It never
+launches an agent, so inspecting a diff does not begin a session.
 
 ## Agents
 
@@ -106,27 +106,27 @@ default branch. If recorded lineage is incomplete or malformed, the row says
 ## Removing
 
 ```text
-grove remove [branch]
-grove remove --force [branch]
+grove remove [change-id-or-branch]
+grove remove --force [change-id-or-branch]
 ```
 
-With no branch argument, Grove removes the current linked worktree. Safe
-removal refuses a dirty worktree and checks the branch against its recorded
-lineage, falling back to the detected default branch for older branches or a
-rewritten/missing local parent. It accepts changes integrated by a merge,
-rebase or cherry-pick, as well as squash-equivalent changes. Genuine unmerged
-work is refused. `--force` is the explicit escape hatch that discards changes
-and deletes the branch. A live Grove agent session protects its worktree from
-safe removal. Forced removal stops every agent session in the worktree before
-changing Git state.
+With no change ID or branch argument, Grove removes the current linked
+worktree. Safe removal refuses a dirty worktree and checks the branch against
+its recorded lineage, falling back to the detected default branch for older
+branches or a rewritten/missing local parent. It accepts changes integrated by
+a merge, rebase or cherry-pick, as well as squash-equivalent changes. Genuine
+unmerged work is refused. `--force` is the explicit escape hatch that discards
+changes and deletes the branch. A live Grove agent session protects its
+worktree from safe removal. Forced removal stops every agent session in the
+worktree before changing Git state.
 
 Safe squash detection requires Git 2.38 or newer for
 `git merge-tree --write-tree`.
 
 ## Shell setup
 
-The shell wrapper lets `grove switch` change the calling shell's directory and
-adds completions. It does not edit shell configuration.
+The shell wrapper lets `grove new` and `grove switch` change the calling shell's
+directory and adds completions. It does not edit shell configuration.
 
 For Fish:
 

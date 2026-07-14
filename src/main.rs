@@ -39,16 +39,21 @@ enum Cmd {
         /// Configured agent name [default: project, global, then pi]
         name: Option<String>,
     },
+    /// Create a change worktree
+    New {
+        /// Start the change from this revision (`@` means the invoking worktree)
+        #[arg(long, value_name = "REF")]
+        from: Option<String>,
+        /// Optional title for the change
+        title: Option<String>,
+    },
     /// Go to a worktree
     Switch {
-        /// Create a change worktree
-        #[arg(short, long)]
-        create: bool,
-        /// Start a created change from this revision (`@` means the invoking worktree)
-        #[arg(long, requires = "create")]
-        from: Option<String>,
-        /// Change ID or branch, or the title with `--create` [default: choose interactively]
-        #[arg(add = ArgValueCompleter::new(branches))]
+        /// Change ID or branch [default: choose interactively]
+        #[arg(
+            value_name = "CHANGE-ID-OR-BRANCH",
+            add = ArgValueCompleter::new(branches)
+        )]
         target: Option<String>,
     },
     /// List the repository's worktrees
@@ -58,9 +63,12 @@ enum Cmd {
         /// Discard changes and delete an unmerged branch
         #[arg(long)]
         force: bool,
-        /// Branch to remove [default: current]
-        #[arg(add = ArgValueCompleter::new(worktree_branches))]
-        branch: Option<String>,
+        /// Change ID or branch to remove [default: current]
+        #[arg(
+            value_name = "CHANGE-ID-OR-BRANCH",
+            add = ArgValueCompleter::new(worktree_branches)
+        )]
+        target: Option<String>,
     },
     /// Print shell integration and completions
     Init { shell: Shell },
@@ -92,28 +100,21 @@ fn main() -> Result<()> {
             unsafe { std::env::remove_var("GROVE_DIRECTIVE_CD_FILE") };
             agent.attach(&git)
         }
-        Cmd::Switch {
-            create,
-            from,
-            target,
-        } => switch(
-            &Git::discover()?,
-            target.as_deref(),
-            create,
-            from.as_deref(),
-        ),
+        Cmd::New { from, title } => new(&Git::discover()?, from.as_deref(), title.as_deref()),
+        Cmd::Switch { target } => switch(&Git::discover()?, target.as_deref()),
         Cmd::List => list(&Git::discover()?),
-        Cmd::Remove { force, branch } => remove(&Git::discover()?, branch.as_deref(), force),
+        Cmd::Remove { force, target } => remove(&Git::discover()?, target.as_deref(), force),
         Cmd::Init { shell } => init(shell),
     }
 }
 
-fn switch(git: &Git, target: Option<&str>, create: bool, from: Option<&str>) -> Result<()> {
-    if create {
-        let change = git.create_change(from, target)?;
-        eprintln!("✓ Created {} at {}", change.id, change.path.display());
-        return navigate(&change.path);
-    }
+fn new(git: &Git, from: Option<&str>, title: Option<&str>) -> Result<()> {
+    let change = git.create_change(from, title)?;
+    eprintln!("✓ Created {} at {}", change.id, change.path.display());
+    navigate(&change.path)
+}
+
+fn switch(git: &Git, target: Option<&str>) -> Result<()> {
     let branch = target.map(str::to_owned).map_or_else(|| pick(git), Ok)?;
     let path = git.enter(&branch)?;
     eprintln!("✓ Using {branch} at {}", path.display());

@@ -99,7 +99,7 @@ impl TestRepo {
         from: Option<&str>,
     ) -> TestChange {
         let mut command = self.grove_from(directory);
-        command.args(["switch", "--create"]);
+        command.arg("new");
         if let Some(from) = from {
             command.args(["--from", from]);
         }

@@ -372,7 +372,7 @@ impl Git {
             bail!("branch '{branch}' already exists");
         }
         if !create && !branch_exists {
-            bail!("branch '{branch}' does not exist; create a change with `grove switch --create`");
+            bail!("branch '{branch}' does not exist; create a change with `grove new`");
         }
 
         let path = self.worktree_path(branch)?;
