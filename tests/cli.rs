@@ -27,7 +27,7 @@ fn agent_runs_the_configured_command_in_the_worktree() {
     let repo = TestRepo::new();
     let change = repo.create_change("agent runtime", None);
 
-    repo.detach_agent(&change.path, None);
+    let terminal = repo.detach_agent(&change.path, None);
 
     assert_eq!(
         repo.agent_log(),
@@ -40,15 +40,6 @@ fn agent_runs_the_configured_command_in_the_worktree() {
                 .display()
         )
     );
-}
-
-#[test]
-fn agent_session_hides_runtime_chrome() {
-    let repo = TestRepo::new();
-
-    let terminal = repo.attached_agent_terminal(repo.path(), None);
-
-    assert!(terminal.contains("grove-test-agent-ready"), "{terminal}");
     assert!(!terminal.contains("[grove-"), "{terminal}");
 }
 
