@@ -5,7 +5,7 @@ the source of truth, while Grove gives each piece of work an isolated worktree:
 
 ```sh
 grove new "Add passkey login"
-grove switch c-a13f7c45b829
+grove switch
 grove list
 grove remove c-a13f7c45b829
 ```
@@ -13,14 +13,17 @@ grove remove c-a13f7c45b829
 ## Switching and creating
 
 ```text
-grove switch <branch>
+grove switch [change-id-or-branch]
 grove new [--from <ref>] [task]
 ```
 
-`switch` reuses an existing worktree or creates one for an existing local
-branch, then starts the configured coding agent there. `new` creates an
-immutable ID branch such as `c-a13f7c45b829` and starts the agent in its
-worktree. An optional task becomes the change title and is passed to the agent:
+`switch` only navigates to a worktree. Without an argument it shows a small
+interactive picker; an exact change ID or ordinary branch selects directly.
+It never launches an agent, so inspecting a diff does not begin a session.
+
+`new` creates an immutable ID branch such as `c-a13f7c45b829` and starts the
+configured agent in its worktree. An optional task becomes the change title and
+is passed to the agent:
 
 ```sh
 grove new

@@ -27,11 +27,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Go to a branch's worktree
+    /// Go to a worktree
     Switch {
-        /// Branch to use
+        /// Change ID or branch to use [default: choose interactively]
         #[arg(add = ArgValueCompleter::new(branches))]
-        branch: String,
+        branch: Option<String>,
     },
     /// Create a change worktree and start an agent
     New {
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::Switch { branch } => switch(&Git::discover()?, &branch),
+        Cmd::Switch { branch } => switch(&Git::discover()?, branch.as_deref()),
         Cmd::New { from, task } => new(&Git::discover()?, task, from.as_deref()),
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, branch } => remove(&Git::discover()?, branch.as_deref(), force),
@@ -81,12 +81,46 @@ fn main() -> Result<()> {
     }
 }
 
-fn switch(git: &Git, branch: &str) -> Result<()> {
-    let agent = Agent::load(&git.project_root()?)?;
-    let path = git.enter(branch)?;
+fn switch(git: &Git, branch: Option<&str>) -> Result<()> {
+    let branch = branch.map(str::to_owned).map_or_else(|| pick(git), Ok)?;
+    let path = git.enter(&branch)?;
     eprintln!("✓ Using {branch} at {}", path.display());
-    navigate(&path)?;
-    agent.launch(&path, None)
+    navigate(&path)
+}
+
+fn pick(git: &Git) -> Result<String> {
+    let choices = git
+        .inventory()?
+        .into_iter()
+        .filter(|worktree| !worktree.current)
+        .filter_map(|worktree| {
+            let branch = worktree.branch?;
+            let title = if worktree.is_change {
+                worktree.title.unwrap_or_else(|| "(untitled)".to_owned())
+            } else {
+                branch.clone()
+            };
+            Some((branch, ellipsize(&title, 60)))
+        })
+        .collect::<Vec<_>>();
+    if choices.is_empty() {
+        anyhow::bail!("no other worktrees to switch to");
+    }
+    eprintln!("Select a worktree:");
+    for (index, (branch, title)) in choices.iter().enumerate() {
+        eprintln!("  {}. {title}  {branch}", index + 1);
+    }
+    eprint!("> ");
+    std::io::stderr().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let index = input
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|index| (1..=choices.len()).contains(index))
+        .context("select a listed worktree number")?;
+    Ok(choices[index - 1].0.clone())
 }
 
 fn new(git: &Git, task: Option<String>, from: Option<&str>) -> Result<()> {

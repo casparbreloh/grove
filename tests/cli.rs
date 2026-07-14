@@ -116,7 +116,47 @@ fn project_config_overrides_global_agent_selection() {
         "agent = \"unsafe\"\n\n[agents.unsafe]\ncommand = [\"unsafe\"]\n",
     )
     .expect("write unsafe project config");
-    repo.grove().args(["switch", "main"]).assert().failure();
+    repo.grove().args(["new", "unsafe-task"]).assert().failure();
+}
+
+#[test]
+fn switch_navigates_without_launching_an_agent() {
+    let repo = TestRepo::new();
+    let change = repo.create_change("Fix OAuth refresh race", None);
+    let agent_log = repo.agent_log();
+
+    repo.grove().args(["switch", &change.id]).assert().success();
+
+    assert_eq!(
+        repo.navigation(),
+        change.path.canonicalize().expect("canonical worktree")
+    );
+    assert_eq!(repo.agent_log(), agent_log);
+}
+
+#[test]
+fn switch_without_an_id_picks_a_worktree() {
+    let repo = TestRepo::new();
+    let change = repo.create_change("Fix OAuth refresh race", None);
+    let agent_log = repo.agent_log();
+
+    let output = repo
+        .grove()
+        .arg("switch")
+        .write_stdin("1\n")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    assert_eq!(
+        repo.navigation(),
+        change.path.canonicalize().expect("canonical worktree")
+    );
+    assert_eq!(repo.agent_log(), agent_log);
+    let stderr = String::from_utf8(output.stderr).expect("Grove stderr is UTF-8");
+    assert!(stderr.contains("Fix OAuth refresh race"), "{stderr}");
+    assert!(stderr.contains(&change.id), "{stderr}");
 }
 
 #[test]
@@ -152,13 +192,6 @@ fn same_named_repositories_get_distinct_worktree_directories() {
             .canonicalize()
             .expect("canonical legacy worktree path")
     );
-    assert!(repo.agent_log().contains(&format!(
-        "{}|session\n",
-        legacy_worktree
-            .canonicalize()
-            .expect("canonical legacy worktree path")
-            .display()
-    )));
     repo.grove().args(["remove", "legacy"]).assert().success();
     assert!(!legacy_worktree.exists());
 }
