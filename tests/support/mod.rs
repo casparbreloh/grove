@@ -301,6 +301,29 @@ impl TestRepo {
         worktree
     }
 
+    pub fn exit_inferred_new(&self, prompt: &str) -> (Output, PathBuf) {
+        let mut command = self.grove_pty(&self.repo);
+        command.arg("new");
+        let mut agent = PtyProcess::start(&mut command, self._root.path());
+        agent.wait_ready();
+        let worktree = self
+            .agent_log()
+            .lines()
+            .find_map(|line| line.strip_prefix("cwd="))
+            .map(PathBuf::from)
+            .expect("agent logged its worktree");
+        agent.send(format!("{prompt}\n").as_bytes(), "Grove agent prompt");
+        let status = agent.wait_for_exit(Duration::from_secs(5), "Grove agent");
+        (
+            Output {
+                status,
+                stdout: agent.output(),
+                stderr: Vec::new(),
+            },
+            worktree,
+        )
+    }
+
     pub fn detach_unnamed_new_without_prompt(&self) -> Output {
         let mut command = self.grove_pty(&self.repo);
         command.arg("new");
@@ -470,6 +493,17 @@ impl TestRepo {
             ),
         )
         .expect("configure fake Pi");
+    }
+
+    pub fn use_fake_pi_with_new_session_file(&self) {
+        fs::write(
+            self.home.join(".config/grove/grove.toml"),
+            format!(
+                "agent = \"pi\"\n\n[agents.pi]\ncommand = [\"{}\", \"--fake-pi\", \"--new-pi-session\"]\n",
+                self.agent.display()
+            ),
+        )
+        .expect("configure fake Pi with a new session file");
     }
 
     pub fn use_fake_claude(&self) {

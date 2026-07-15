@@ -144,12 +144,22 @@ impl Agent {
     }
 
     pub(crate) fn attach_and_name(mut self, git: &Git, pending: PendingChange) -> Result<()> {
+        let identity = git.worktree_identity()?;
         let source = match self.builtin {
             Some(BuiltinAgent::Pi) => {
                 let session = pi_session_path(pending.path())?;
+                let existing = jsonl_files(
+                    session
+                        .parent()
+                        .context("Pi session has no parent directory")?,
+                )?;
                 self.command
                     .extend(["--session".to_owned(), session.display().to_string()]);
-                PromptSource::Pi(session)
+                PromptSource::Pi {
+                    session,
+                    cwd: identity.root.clone(),
+                    existing,
+                }
             }
             Some(BuiltinAgent::Claude) => {
                 let session_id = session_id()?;
@@ -176,7 +186,6 @@ impl Agent {
                 )
             }
         };
-        let identity = git.worktree_identity()?;
         let (cancel_sender, cancel_receiver) = mpsc::channel();
         let (outcome_sender, outcome_receiver) = mpsc::sync_channel(1);
         thread::spawn(move || {
@@ -283,7 +292,11 @@ enum NamingOutcome {
 }
 
 enum PromptSource {
-    Pi(PathBuf),
+    Pi {
+        session: PathBuf,
+        cwd: PathBuf,
+        existing: HashSet<PathBuf>,
+    },
     Claude {
         root: PathBuf,
         session_id: String,
@@ -298,14 +311,18 @@ enum PromptSource {
 impl PromptSource {
     fn disposable_transcript(&self) -> Option<PathBuf> {
         match self {
-            Self::Pi(path) => Some(path.clone()),
+            Self::Pi { session, .. } => Some(session.clone()),
             Self::Claude { .. } | Self::Codex { .. } => None,
         }
     }
 
     fn wait(self, cancel: &Receiver<()>) -> Result<Option<String>> {
         match self {
-            Self::Pi(path) => wait_for_pi_prompt(&path, cancel),
+            Self::Pi {
+                session,
+                cwd,
+                existing,
+            } => wait_for_pi_prompt(&session, &cwd, &existing, cancel),
             Self::Claude { root, session_id } => wait_for_claude_prompt(&root, &session_id, cancel),
             Self::Codex { root, before, cwd } => {
                 wait_for_codex_prompt(&root, &before, &cwd, cancel)
@@ -355,19 +372,63 @@ fn pi_session_path(worktree: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn wait_for_pi_prompt(path: &Path, cancel: &Receiver<()>) -> Result<Option<String>> {
-    wait_for_jsonl_prompt(path, cancel, |entry| {
-        if entry.get("type").and_then(|value| value.as_str()) == Some("message")
+fn wait_for_pi_prompt(
+    requested: &Path,
+    cwd: &Path,
+    existing: &HashSet<PathBuf>,
+    cancel: &Receiver<()>,
+) -> Result<Option<String>> {
+    let directory = requested.parent().context("Pi session has no parent")?;
+    loop {
+        let mut candidates = vec![requested.to_owned()];
+        candidates.extend(jsonl_files(directory)?.difference(existing).cloned());
+        for candidate in candidates {
+            if let Some(prompt) = pi_prompt_in_file(&candidate, requested, cwd)? {
+                return Ok(Some(prompt));
+            }
+        }
+        if cancelled(cancel) {
+            return Ok(None);
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn pi_prompt_in_file(path: &Path, requested: &Path, cwd: &Path) -> Result<Option<String>> {
+    let contents = match fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read transcript {}", path.display()));
+        }
+    };
+    let mut matches_worktree = path == requested;
+    let mut first_prompt = None;
+    for line in contents.split(|byte| *byte == b'\n') {
+        let Ok(entry) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if entry.get("type").and_then(|value| value.as_str()) == Some("session")
+            && entry
+                .get("cwd")
+                .and_then(|value| value.as_str())
+                .map(Path::new)
+                == Some(cwd)
+        {
+            matches_worktree = true;
+        }
+        if first_prompt.is_none()
+            && entry.get("type").and_then(|value| value.as_str()) == Some("message")
             && entry
                 .pointer("/message/role")
                 .and_then(|value| value.as_str())
                 == Some("user")
         {
-            message_content(&entry["message"]["content"])
-        } else {
-            None
+            first_prompt = message_content(&entry["message"]["content"]);
         }
-    })
+    }
+    Ok(matches_worktree.then_some(first_prompt).flatten())
 }
 
 fn claude_projects_path() -> Result<PathBuf> {

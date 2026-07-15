@@ -184,6 +184,21 @@ fn built_in_agents_name_new_worktrees_from_the_first_prompt() {
 }
 
 #[test]
+fn pi_finds_the_first_prompt_in_a_new_session_file() {
+    let repo = TestRepo::new();
+    repo.use_fake_pi_with_new_session_file();
+
+    let (output, worktree) = repo.exit_inferred_new("Fix moved Pi session");
+    let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
+
+    assert!(output.status.success(), "{terminal}");
+    assert_eq!(
+        repo.git_from(&worktree, ["branch", "--show-current"]),
+        "fix-moved-pi-session"
+    );
+}
+
+#[test]
 fn new_without_a_branch_rejects_unsupported_agents_before_mutation() {
     let repo = TestRepo::new();
 
