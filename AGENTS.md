@@ -11,6 +11,7 @@ safety boundaries; do not add complexity for merely hypothetical edge cases.
 
 - `src/main.rs` owns Clap definitions, rendering, shell integration, and navigation.
 - `src/git.rs` is the deep Git module. It owns workflows, lineage, rollback, and safety policy; keep raw Git operations private there.
+- `src/session.rs` owns Pi session launch, the embedded ZMX runtime, stable identity, extraction, attachment, and termination; `src/pi-extension.ts` captures the first interactive prompt without delaying Pi.
 - `src/shell.fish` and `src/shell.zsh` are thin calling-shell wrappers.
 - `tests/cli.rs` contains compiled-CLI workflows; `tests/support/mod.rs` owns isolated disposable repositories.
 

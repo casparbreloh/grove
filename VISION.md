@@ -17,12 +17,11 @@ a version-control system or an agent framework.
 
 ## Foundation
 
-Grove provides branch-backed worktrees, agent-first switching, lineage-aware
-removal, and one persistent agent session per worktree. Pi is the default, with
-Claude Code, Codex, and global custom commands supported. For the built-in
-agents, bare `grove new` derives the branch from the first typed prompt without
-inventing a fallback name. The embedded rmux runtime provides persistence
-without another multiplexer installation.
+Grove provides branch-backed worktrees, Pi-first switching, lineage-aware
+removal, and one persistent native Pi session per worktree. Bare `grove new`
+derives the branch asynchronously from Pi's first typed prompt without a
+fallback name or a second model call. Embedded ZMX provides the narrow
+persistent-PTY primitive without another installation or a multiplexer UI.
 
 ## Next: shipping a branch
 
@@ -35,9 +34,8 @@ explicit:
   command.
 - Show concise remote, pull-request, and CI state in `grove list`.
 
-Agent differences should remain behind a small capability boundary. Grove asks
-for a persistent interactive session or a narrow one-shot result; each built-in
-preset owns the provider-specific details.
+Keep Pi integration native and narrow. Supporting another agent should require
+clear user demand and a similarly small, reliable native seam.
 
 ## Later
 

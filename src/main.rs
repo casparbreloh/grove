@@ -1,10 +1,9 @@
-mod agent;
 mod git;
-mod runtime;
+mod session;
 
 use std::{
     ffi::OsStr,
-    io::{IsTerminal, Write},
+    io::{IsTerminal, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -19,8 +18,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 
-use crate::agent::Agent;
-use crate::git::{Git, PendingChange, WorktreeState};
+use crate::{
+    git::{Git, PendingChange, WorktreeState},
+    session::Session,
+};
 
 #[derive(Parser)]
 #[command(arg_required_else_help = true)]
@@ -74,6 +75,8 @@ enum Cmd {
     },
     /// Print shell integration and completions
     Init { shell: Shell },
+    #[command(name = "__name", hide = true)]
+    Name,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -83,9 +86,6 @@ enum Shell {
 }
 
 fn main() -> Result<()> {
-    if std::env::args_os().nth(1).as_deref() == Some(rmux_client::INTERNAL_DAEMON_FLAG.as_ref()) {
-        return runtime::run_daemon(std::env::args_os().skip(2));
-    }
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
     if std::env::args_os().len() == 2
@@ -105,58 +105,86 @@ fn main() -> Result<()> {
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, target } => remove(&Git::discover()?, target.as_deref(), force),
         Cmd::Init { shell } => init(shell),
+        Cmd::Name => name_pending(),
     }
 }
 
 fn new(git: &Git, from: Option<&str>, branch: Option<&str>, shell: bool) -> Result<()> {
     if let Some(branch) = branch {
-        let agent = (!shell).then(|| Agent::load_for_launch(git)).transpose()?;
+        if !shell {
+            Session::prepare()?;
+        }
         let change = git.create_change(from, branch)?;
         eprintln!("✓ Created {} at {}", change.branch, change.path.display());
-        return match agent {
-            Some(agent) => open_agent_worktree(&change.path, agent),
-            None => navigate(&change.path),
+        return if shell {
+            navigate(&change.path)
+        } else {
+            open_agent_worktree(git, &change.path)
         };
     }
     if shell {
         bail!("a branch is required with --shell");
     }
-    let agent = Agent::load_for_naming(git)?;
+    Session::prepare()?;
     let pending = git.create_pending_change(from)?;
     let path = pending.path().to_owned();
     eprintln!("✓ Created pending change at {}", path.display());
-    open_pending_worktree(&path, agent, pending)
+    render_pending(&pending, session::start_pending(&pending)?);
+    navigate(&git.primary_path()?)
 }
 
-fn open_pending_worktree(path: &Path, agent: Agent, pending: PendingChange) -> Result<()> {
-    let git = Git::at(path)?;
-    agent.attach_and_name(&git, pending)?;
-    navigate(path)
-}
-
-fn open_agent_worktree(path: &Path, agent: Agent) -> Result<()> {
-    agent.attach(&Git::at(path)?)?;
-    navigate(path)
-}
-
-fn switch(git: &Git, target: Option<&str>, shell: bool) -> Result<()> {
-    let branch = target.map(str::to_owned).map_or_else(|| pick(git), Ok)?;
-    let path = git.enter(&branch)?;
-    eprintln!("✓ Using {branch} at {}", path.display());
-    if shell {
-        navigate(&path)
-    } else {
-        let target_git = Git::at(&path)?;
-        Agent::load_for_switch(&target_git)?.attach(&target_git)?;
-        navigate(&path)
+fn render_pending(pending: &PendingChange, outcome: session::PendingOutcome) {
+    if matches!(outcome, session::PendingOutcome::Preserved) {
+        eprintln!(
+            "○ Pending change preserved at {}; use `grove switch` to return",
+            pending.path().display()
+        );
     }
 }
 
-fn pick(git: &Git) -> Result<String> {
+fn open_agent_worktree(primary: &Git, path: &Path) -> Result<()> {
+    Session::for_launch(&Git::at(path)?)?.attach()?;
+    navigate(&primary.primary_path()?)
+}
+
+fn switch(git: &Git, target: Option<&str>, shell: bool) -> Result<()> {
+    let selected = if let Some(branch) = target {
+        PickedWorktree {
+            branch: Some(branch.to_owned()),
+            pending: false,
+            path: git.enter(branch)?,
+        }
+    } else {
+        pick(git)?
+    };
+    let label = selected.branch.as_deref().unwrap_or(if selected.pending {
+        "(pending)"
+    } else {
+        "(detached)"
+    });
+    eprintln!("✓ Using {label} at {}", selected.path.display());
+    if shell {
+        navigate(&selected.path)
+    } else if selected.pending {
+        let pending = PendingChange::load(Git::at(&selected.path)?)?;
+        render_pending(&pending, session::resume_pending(&pending)?);
+        navigate(&git.primary_path()?)
+    } else {
+        open_agent_worktree(git, &selected.path)
+    }
+}
+
+struct PickedWorktree {
+    branch: Option<String>,
+    pending: bool,
+    path: PathBuf,
+}
+
+fn pick(git: &Git) -> Result<PickedWorktree> {
     let (mut choices, _) = rows(git)?;
-    choices.retain(|row| row.branch.is_some());
+    choices.retain(|row| row.marker != "@");
     if choices.is_empty() {
-        anyhow::bail!("no worktrees to switch to");
+        bail!("no other worktrees to switch to");
     }
     for (index, row) in choices.iter_mut().enumerate() {
         row.marker = if index == 0 { "›" } else { " " }.to_owned();
@@ -169,10 +197,11 @@ fn pick(git: &Git) -> Result<String> {
     print_rows(&choices, &mut output, true, "\r\n")?;
     output.flush()?;
     let selected = select(&mut output, &mut choices)?;
-    Ok(choices[selected]
-        .branch
-        .clone()
-        .expect("picker choices have branches"))
+    Ok(PickedWorktree {
+        branch: choices[selected].branch.clone(),
+        pending: choices[selected].pending,
+        path: choices[selected].worktree_path.clone(),
+    })
 }
 
 fn select(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
@@ -291,7 +320,15 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         } else {
             '+'
         };
-        let branch_label = worktree.branch.as_deref().unwrap_or("(pending)").to_owned();
+        let branch_label = worktree
+            .branch
+            .as_deref()
+            .unwrap_or(if worktree.pending {
+                "(pending)"
+            } else {
+                "(detached)"
+            })
+            .to_owned();
         let changes = match &worktree.state {
             WorktreeState::Missing => "missing".to_owned(),
             WorktreeState::Present(status) => {
@@ -304,6 +341,8 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         rows.push(Row {
             marker: marker.to_string(),
             branch: worktree.branch.clone(),
+            pending: worktree.pending,
+            worktree_path: worktree.path.clone(),
             branch_label,
             base: worktree.base.clone(),
             changes,
@@ -321,6 +360,8 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
 struct Row {
     marker: String,
     branch: Option<String>,
+    pending: bool,
+    worktree_path: PathBuf,
     branch_label: String,
     base: String,
     changes: String,
@@ -452,18 +493,25 @@ fn display_path(path: &Path, current: &Path) -> String {
 
 fn remove(git: &Git, requested: Option<&str>, force: bool) -> Result<()> {
     let prepared = git.prepare_removal(requested, force)?;
-    let active = runtime::active(prepared.identity())?;
-    if active && !force {
-        bail!("worktree has a live agent session; use --force to stop it");
-    }
+    let session = Session::for_worktree(prepared.identity());
     if force {
-        runtime::terminate(prepared.identity())?;
+        session.terminate()?;
+    } else if session.active()? {
+        bail!("worktree has a live agent session; use --force to stop it");
     }
     let removal = git.remove(prepared)?;
     eprintln!("✓ Removed {}", removal.label);
     if let Some(path) = removal.navigate_to {
         navigate(&path)?;
     }
+    Ok(())
+}
+
+fn name_pending() -> Result<()> {
+    let mut prompt = String::new();
+    std::io::stdin().read_to_string(&mut prompt)?;
+    let git = Git::discover()?;
+    git.name_pending_change(&prompt)?;
     Ok(())
 }
 

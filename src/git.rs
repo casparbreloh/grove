@@ -1,13 +1,18 @@
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
-use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+use std::{
+    ffi::OsString,
+    os::unix::{ffi::OsStringExt, fs::OpenOptionsExt},
+};
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
 pub(crate) struct Git {
@@ -15,8 +20,9 @@ pub(crate) struct Git {
 }
 
 pub(crate) struct WorktreeIdentity {
-    pub(crate) common_dir: PathBuf,
+    pub(crate) git_dir: PathBuf,
     pub(crate) root: PathBuf,
+    pub(crate) session_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -48,6 +54,7 @@ pub(crate) struct PendingChange {
     git: Git,
     path: PathBuf,
     base: CreationBase,
+    metadata: PathBuf,
 }
 
 impl PendingChange {
@@ -60,22 +67,67 @@ impl PendingChange {
         if self.git.branch_exists(branch)? {
             bail!("branch '{branch}' already exists");
         }
+        let target = self.git.worktree_path(branch)?;
+        if target.exists() {
+            bail!("worktree path already exists: {}", target.display());
+        }
         self.git.output_at(&self.path, &["switch", "-c", branch])?;
         if let Err(error) = Lineage::record(&self.git, branch, &self.base) {
-            let _ = self.git.output_at(&self.path, &["switch", "--detach"]);
-            let _ = self
-                .git
-                .raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
+            self.rollback_name(branch);
             return Err(error).context("could not record inferred lineage");
+        }
+        if let Err(error) = self.git.worktree_move(&self.path, &target) {
+            self.rollback_name(branch);
+            return Err(error).context("could not rename inferred worktree");
+        }
+        if let Err(cleanup) = std::fs::remove_file(&self.metadata) {
+            self.git
+                .worktree_move(&target, &self.path)
+                .context("could not roll back inferred worktree rename")?;
+            self.rollback_name(branch);
+            return Err(cleanup)
+                .with_context(|| format!("failed to finish naming {}", target.display()));
         }
         Ok(Change {
             branch: branch.to_owned(),
-            path: self.path.clone(),
+            path: target,
         })
     }
 
     pub(crate) fn discard(&self) -> Result<()> {
         self.git.worktree_remove(&self.path, false)
+    }
+
+    pub(crate) fn is_pending(&self) -> bool {
+        self.path.is_dir() && self.metadata.is_file()
+    }
+
+    pub(crate) fn load(git: Git) -> Result<Self> {
+        let identity = git.worktree_identity()?;
+        let metadata = identity.git_dir.join(PENDING_FILE);
+        let contents = std::fs::read(&metadata).with_context(|| {
+            format!(
+                "current worktree is not pending: {}",
+                identity.root.display()
+            )
+        })?;
+        let base = serde_json::from_slice(&contents).with_context(|| {
+            format!("invalid pending worktree metadata: {}", metadata.display())
+        })?;
+        Ok(Self {
+            git,
+            path: identity.root,
+            base,
+            metadata,
+        })
+    }
+
+    fn rollback_name(&self, branch: &str) {
+        let _ = Lineage::clear(&self.git, &self.path, branch);
+        let _ = self.git.output_at(&self.path, &["switch", "--detach"]);
+        let _ = self
+            .git
+            .raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
     }
 }
 
@@ -87,6 +139,7 @@ pub(crate) enum WorktreeState {
 pub(crate) struct WorktreeView {
     pub(crate) path: PathBuf,
     pub(crate) branch: Option<String>,
+    pub(crate) pending: bool,
     pub(crate) base: String,
     pub(crate) divergence: Option<Divergence>,
     pub(crate) state: WorktreeState,
@@ -122,6 +175,7 @@ struct BranchBase {
     valid: bool,
 }
 
+#[derive(Deserialize, Serialize)]
 struct CreationBase {
     display_ref: Option<String>,
     oid: String,
@@ -132,6 +186,8 @@ const BASE_REF_FIELD: &str = "grove-base-ref";
 const BASE_OID_FIELD: &str = "grove-base-oid";
 const PARENT_FIELD: &str = "grove-parent";
 const LINEAGE_FIELDS: [&str; 3] = [BASE_REF_FIELD, BASE_OID_FIELD, PARENT_FIELD];
+const PENDING_FILE: &str = "grove-pending.json";
+const SESSION_ID_FILE: &str = "grove-session-id";
 
 struct Lineage {
     base_ref: Option<String>,
@@ -325,26 +381,48 @@ impl Git {
         Ok(git)
     }
 
-    pub(crate) fn project_root(&self) -> Result<PathBuf> {
-        self.current_root()
-    }
-
     pub(crate) fn worktree_identity(&self) -> Result<WorktreeIdentity> {
-        let common_dir = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
-        let common_dir = if common_dir.is_absolute() {
-            common_dir
+        let git_dir = PathBuf::from(self.text(&["rev-parse", "--git-dir"])?);
+        let git_dir = if git_dir.is_absolute() {
+            git_dir
         } else {
-            self.cwd.join(common_dir)
+            self.cwd.join(git_dir)
         };
+        let git_dir = git_dir
+            .canonicalize()
+            .context("failed to resolve Git worktree directory")?;
         Ok(WorktreeIdentity {
-            common_dir: common_dir
-                .canonicalize()
-                .context("failed to resolve Git common directory")?,
+            session_id: read_session_id(&git_dir)?,
+            git_dir,
             root: self.current_root()?,
         })
     }
 
+    pub(crate) fn session_identity(&self) -> Result<WorktreeIdentity> {
+        let mut identity = self.worktree_identity()?;
+        if identity.session_id.is_none() {
+            identity.session_id = Some(create_session_id(&identity.git_dir)?);
+        }
+        Ok(identity)
+    }
+
+    pub(crate) fn primary_path(&self) -> Result<PathBuf> {
+        self.worktrees()?
+            .into_iter()
+            .next()
+            .map(|worktree| worktree.path)
+            .context("repository has no worktrees")
+    }
+
     pub(crate) fn enter(&self, branch: &str) -> Result<PathBuf> {
+        if branch == "main" {
+            return self
+                .worktrees()?
+                .into_iter()
+                .next()
+                .map(|worktree| worktree.path)
+                .context("repository has no worktrees");
+        }
         self.switch(branch, None)
     }
 
@@ -360,11 +438,26 @@ impl Git {
         }
         std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
         self.output_os(&["worktree", "add", "--detach"], &path, &[&base.oid])?;
+        let metadata = Git::at(&path)?
+            .worktree_identity()?
+            .git_dir
+            .join(PENDING_FILE);
+        let contents = serde_json::to_vec(&base)?;
+        if let Err(error) = std::fs::write(&metadata, contents) {
+            let _ = self.worktree_remove(&path, true);
+            return Err(error).context("could not record pending worktree");
+        }
         Ok(PendingChange {
             git: self.clone(),
             path,
             base,
+            metadata,
         })
+    }
+
+    pub(crate) fn name_pending_change(&self, prompt: &str) -> Result<Change> {
+        let branch = branch_from_prompt(prompt)?;
+        PendingChange::load(self.clone())?.name(&branch)
     }
 
     fn switch(&self, branch: &str, base: Option<&CreationBase>) -> Result<PathBuf> {
@@ -406,6 +499,7 @@ impl Git {
     pub(crate) fn inventory(&self) -> Result<Vec<WorktreeView>> {
         let worktrees = self.worktrees()?;
         let current = self.current_root()?;
+        let common_dir = self.common_dir()?;
         let primary = worktrees
             .first()
             .context("repository has no worktrees")?
@@ -415,6 +509,12 @@ impl Git {
         worktrees
             .into_iter()
             .map(|worktree| {
+                let pending = if worktree.path == primary {
+                    false
+                } else {
+                    linked_git_dir(&common_dir, &worktree.path)?
+                        .is_some_and(|git_dir| git_dir.join(PENDING_FILE).is_file())
+                };
                 let branch = worktree.branch.clone();
                 let lineage = branch
                     .as_deref()
@@ -445,6 +545,7 @@ impl Git {
                     primary: worktree.path == primary,
                     path: worktree.path,
                     branch,
+                    pending,
                     base,
                     divergence,
                     state,
@@ -505,7 +606,7 @@ impl Git {
             }
         }
 
-        let common_dir = self.worktree_identity()?.common_dir;
+        let common_dir = self.common_dir()?;
         let root = if path
             .try_exists()
             .with_context(|| format!("failed to inspect worktree {}", path.display()))?
@@ -515,6 +616,13 @@ impl Git {
         } else {
             path.clone()
         };
+        let git_dir = if root.exists() {
+            Git::at(&root)?.worktree_identity()?.git_dir
+        } else {
+            linked_git_dir(&common_dir, &root)?
+                .with_context(|| format!("could not locate Git metadata for {}", root.display()))?
+        };
+        let session_id = read_session_id(&git_dir)?;
         Ok(PreparedRemoval {
             path,
             branch,
@@ -522,7 +630,11 @@ impl Git {
             current,
             expected_oid,
             force,
-            identity: WorktreeIdentity { common_dir, root },
+            identity: WorktreeIdentity {
+                git_dir,
+                root,
+                session_id,
+            },
         })
     }
 
@@ -611,6 +723,17 @@ impl Git {
 
     fn current_root(&self) -> Result<PathBuf> {
         Ok(PathBuf::from(self.text(&["rev-parse", "--show-toplevel"])?))
+    }
+
+    fn common_dir(&self) -> Result<PathBuf> {
+        let path = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            self.cwd.join(path)
+        };
+        path.canonicalize()
+            .context("failed to resolve Git common directory")
     }
 
     fn worktree_path(&self, branch: &str) -> Result<PathBuf> {
@@ -795,6 +918,18 @@ impl Git {
             &["worktree", "remove"][..]
         };
         self.output_os(before, path, &[])
+    }
+
+    fn worktree_move(&self, source: &Path, target: &Path) -> Result<()> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&self.cwd)
+            .args(["worktree", "move"])
+            .arg(source)
+            .arg(target)
+            .output()
+            .context("could not move git worktree")?;
+        check(output, &["worktree", "move", "<source>", "<target>"]).map(|_| ())
     }
 
     fn delete_branch(&self, cwd: &Path, branch: &str, expected: Option<&str>) -> Result<()> {
@@ -994,6 +1129,103 @@ fn encode_path_segment(value: &str) -> String {
         }
     }
     encoded
+}
+
+fn branch_from_prompt(prompt: &str) -> Result<String> {
+    let mut branch = String::new();
+    let mut separator = false;
+    for character in prompt.trim().chars() {
+        if character.is_ascii_alphanumeric() {
+            let needs_separator = separator && !branch.is_empty();
+            if branch.len() + usize::from(needs_separator) + 1 > 48 {
+                break;
+            }
+            if needs_separator {
+                branch.push('-');
+            }
+            branch.push(character.to_ascii_lowercase());
+            separator = false;
+        } else {
+            separator = true;
+        }
+    }
+    if branch.is_empty() {
+        bail!("the first prompt does not contain a branch name");
+    }
+    Ok(branch)
+}
+
+fn read_session_id(git_dir: &Path) -> Result<Option<String>> {
+    let path = git_dir.join(SESSION_ID_FILE);
+    let value = match std::fs::read_to_string(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read session identity {}", path.display()));
+        }
+    };
+    let value = value.trim();
+    if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("invalid Grove session identity in {}", path.display());
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn create_session_id(git_dir: &Path) -> Result<String> {
+    let path = git_dir.join(SESSION_ID_FILE);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_nanos();
+    let seed = format!("{}:{now}:{}", git_dir.display(), std::process::id());
+    let id = blake3::hash(seed.as_bytes()).to_hex()[..32].to_owned();
+    let temporary = git_dir.join(format!(".{SESSION_ID_FILE}-{}-{now}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(&temporary)
+        .with_context(|| format!("failed to create {}", temporary.display()))?;
+    let result = (|| {
+        file.write_all(id.as_bytes())?;
+        file.sync_all()?;
+        match std::fs::hard_link(&temporary, &path) {
+            Ok(()) => Ok(id),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                read_session_id(git_dir)?
+                    .context("Grove session identity disappeared while it was created")
+            }
+            Err(error) => Err(error)
+                .with_context(|| format!("failed to create session identity {}", path.display())),
+        }
+    })();
+    let _ = std::fs::remove_file(temporary);
+    result
+}
+
+fn linked_git_dir(common_dir: &Path, worktree: &Path) -> Result<Option<PathBuf>> {
+    let directory = common_dir.join("worktrees");
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", directory.display()));
+        }
+    };
+    for entry in entries {
+        let git_dir = entry?.path();
+        let pointer = match std::fs::read_to_string(git_dir.join("gitdir")) {
+            Ok(pointer) => PathBuf::from(pointer.trim()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).context("failed to read linked worktree metadata"),
+        };
+        if pointer.parent() == Some(worktree) {
+            return Ok(Some(git_dir));
+        }
+    }
+    Ok(None)
 }
 
 fn abbreviate_oid(oid: &str) -> String {

@@ -84,6 +84,25 @@ impl TestRepo {
         &self.home
     }
 
+    pub fn worktree(&self, branch: &str) -> PathBuf {
+        self.git(["worktree", "list", "--porcelain"])
+            .split("\n\n")
+            .find_map(|record| {
+                let matches = record
+                    .lines()
+                    .any(|line| line == format!("branch refs/heads/{branch}"));
+                matches.then(|| {
+                    PathBuf::from(
+                        record
+                            .lines()
+                            .find_map(|line| line.strip_prefix("worktree "))
+                            .expect("worktree record has a path"),
+                    )
+                })
+            })
+            .unwrap_or_else(|| panic!("missing worktree for branch {branch}"))
+    }
+
     pub fn grove(&self) -> assert_cmd::Command {
         self.grove_from(&self.repo)
     }
@@ -135,7 +154,7 @@ impl TestRepo {
             .env("GROVE_TEST_AGENT_LOG", &self.agent_log);
         command.env("GROVE_TEST_AGENT_PID", &self.agent_pid);
         command.env("PATH", self.test_path());
-        command.env("GROVE_RUNTIME_SOCKET", &self.runtime_socket);
+        command.env("XDG_RUNTIME_DIR", &self.runtime_socket);
         command
     }
 
@@ -151,6 +170,30 @@ impl TestRepo {
                 "\"$GROVE_TEST_BINARY\" switch --shell\nstatus=$?\nstty -a\nexit \"$status\"",
             ])
             .env("GROVE_TEST_BINARY", binary);
+        let mut picker = PtyProcess::start(&mut command, self._root.path());
+        picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
+        picker.send(input, "Grove switch");
+        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove switch");
+        Output {
+            status,
+            stdout: picker.output(),
+            stderr: Vec::new(),
+        }
+    }
+
+    pub fn detach_picked_switch(&self, ready: &str, input: &[u8]) {
+        let mut command = self.grove_pty(&self.repo);
+        command.arg("switch");
+        let mut picker = PtyProcess::start(&mut command, self._root.path());
+        picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
+        picker.send(input, "Grove switch");
+        picker.wait_ready();
+        picker.detach();
+    }
+
+    pub fn select_agent_in_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.grove_pty(&self.repo);
+        command.arg("switch");
         let mut picker = PtyProcess::start(&mut command, self._root.path());
         picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
         picker.send(input, "Grove switch");
@@ -183,11 +226,7 @@ impl TestRepo {
             .is_ok_and(|status| status.success())
     }
 
-    pub fn terminate_process(&self, pid: u32) {
-        Command::new("kill")
-            .arg(pid.to_string())
-            .status()
-            .expect("terminate agent process");
+    pub fn wait_for_process_exit(&self, pid: u32) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while self.process_running(pid) {
             assert!(Instant::now() < deadline, "agent process did not exit");
@@ -195,24 +234,27 @@ impl TestRepo {
         }
     }
 
+    pub fn stop_process(&self, pid: u32) {
+        let status = Command::new("kill")
+            .arg(pid.to_string())
+            .status()
+            .expect("stop agent process");
+        assert!(status.success(), "could not stop agent process {pid}");
+        self.wait_for_process_exit(pid);
+    }
+
     pub fn runtime_exists(&self) -> bool {
         self.runtime_socket.exists()
     }
 
     pub fn pi_session_files(&self) -> Vec<PathBuf> {
-        let grove = self.home.join(".grove");
-        let Ok(repositories) = fs::read_dir(grove) else {
+        let sessions = self.home.join(".local/state/grove/sessions");
+        let Ok(entries) = fs::read_dir(sessions) else {
             return Vec::new();
         };
-        repositories
+        entries
             .filter_map(Result::ok)
-            .flat_map(|repository| {
-                fs::read_dir(repository.path().join(".sessions"))
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.path())
-            })
+            .map(|entry| entry.path())
             .collect()
     }
 
@@ -238,24 +280,8 @@ impl TestRepo {
             .env("GROVE_TEST_AGENT_LOG", &self.agent_log)
             .env("GROVE_TEST_AGENT_PID", &self.agent_pid)
             .env("PATH", self.test_path())
-            .env("GROVE_RUNTIME_SOCKET", &self.runtime_socket);
+            .env("XDG_RUNTIME_DIR", &self.runtime_socket);
         command
-    }
-
-    pub fn detach_switches_concurrently(&self, branch: &str, count: usize) {
-        let mut agents = (0..count)
-            .map(|_| {
-                let mut command = self.grove_pty(&self.repo);
-                command.args(["switch", branch]);
-                PtyProcess::start(&mut command, self._root.path())
-            })
-            .collect::<Vec<_>>();
-        for agent in &mut agents {
-            agent.wait_ready();
-        }
-        for agent in &mut agents {
-            agent.detach();
-        }
     }
 
     pub fn detach_new(&self, branch: &str) {
@@ -279,17 +305,36 @@ impl TestRepo {
         command.arg("new");
         let mut agent = PtyProcess::start(&mut command, self._root.path());
         agent.wait_ready();
-        let worktree = self
+        let pending = self
             .agent_log()
             .lines()
             .find_map(|line| line.strip_prefix("cwd="))
             .map(PathBuf::from)
             .expect("agent logged its worktree");
         agent.send(format!("{prompt}\n").as_bytes(), "Grove agent prompt");
+        agent.wait_for(
+            "grove-test-prompt-received",
+            Duration::from_secs(5),
+            "Grove agent prompt",
+        );
+        agent.detach();
+        let branch = prompt
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
         let deadline = Instant::now() + Duration::from_secs(10);
-        while self
-            .git_from(&worktree, ["branch", "--show-current"])
-            .is_empty()
+        while !self.branch_exists(&branch)
+            || self.worktree(&branch).file_name() != Some(OsStr::new(&branch))
         {
             assert!(
                 Instant::now() < deadline,
@@ -297,11 +342,12 @@ impl TestRepo {
             );
             thread::sleep(Duration::from_millis(20));
         }
-        agent.detach();
+        let worktree = self.worktree(&branch);
+        assert!(!pending.exists(), "pending directory was not renamed");
         worktree
     }
 
-    pub fn exit_inferred_new(&self, prompt: &str) -> (Output, PathBuf) {
+    pub fn detach_unnamed_new_without_prompt(&self) -> (Output, PathBuf) {
         let mut command = self.grove_pty(&self.repo);
         command.arg("new");
         let mut agent = PtyProcess::start(&mut command, self._root.path());
@@ -312,7 +358,7 @@ impl TestRepo {
             .find_map(|line| line.strip_prefix("cwd="))
             .map(PathBuf::from)
             .expect("agent logged its worktree");
-        agent.send(format!("{prompt}\n").as_bytes(), "Grove agent prompt");
+        agent.send(b"\x1c", "Grove agent");
         let status = agent.wait_for_exit(Duration::from_secs(5), "Grove agent");
         (
             Output {
@@ -324,12 +370,12 @@ impl TestRepo {
         )
     }
 
-    pub fn detach_unnamed_new_without_prompt(&self) -> Output {
+    pub fn exit_unnamed_new_without_prompt(&self) -> Output {
         let mut command = self.grove_pty(&self.repo);
         command.arg("new");
         let mut agent = PtyProcess::start(&mut command, self._root.path());
         agent.wait_ready();
-        agent.send(b"\x02d", "Grove agent");
+        agent.send(b"\x04", "Grove agent");
         let status = agent.wait_for_exit(Duration::from_secs(5), "Grove agent");
         Output {
             status,
@@ -351,7 +397,7 @@ impl TestRepo {
             .expect("agent logged its worktree");
         fs::write(worktree.join("agent-created.txt"), "keep me")
             .expect("write an agent-created file");
-        agent.send(b"\x02d", "Grove agent");
+        agent.send(b"\x1c", "Grove agent");
         let status = agent.wait_for_exit(Duration::from_secs(5), "Grove agent");
         (
             Output {
@@ -439,7 +485,7 @@ impl PtyProcess {
     }
 
     fn detach(&mut self) {
-        self.send(b"\x02d", "Grove agent");
+        self.send(b"\x1c", "Grove agent");
         let status = self.wait_for_exit(Duration::from_secs(5), "Grove agent");
         assert!(status.success(), "Grove agent detach failed: {status}");
     }
@@ -455,77 +501,8 @@ impl Drop for PtyProcess {
 }
 
 impl TestRepo {
-    pub fn select_project_agent(&self, directory: &Path, name: &str) {
-        fs::write(
-            directory.join("grove.toml"),
-            format!("agent = \"{name}\"\n"),
-        )
-        .expect("write project Grove config");
-    }
-
-    pub fn select_missing_project_agent(&self) {
-        self.select_project_agent(&self.repo, "missing");
-    }
-
-    pub fn use_missing_agent_command(&self) {
-        fs::write(
-            self.home.join(".config/grove/grove.toml"),
-            "agent = \"missing\"\n\n[agents.missing]\ncommand = [\"/grove-test/missing-agent\"]\n",
-        )
-        .expect("write missing agent config");
-    }
-
-    pub fn remove_configured_agent_executable(&self) {
-        fs::remove_file(&self.agent).expect("remove configured agent executable");
-    }
-
-    pub fn use_builtin_defaults(&self) {
-        fs::remove_file(self.home.join(".config/grove/grove.toml"))
-            .expect("remove global Grove config");
-    }
-
-    pub fn use_fake_pi(&self) {
-        fs::write(
-            self.home.join(".config/grove/grove.toml"),
-            format!(
-                "agent = \"pi\"\n\n[agents.pi]\ncommand = [\"{}\", \"--fake-pi\"]\n",
-                self.agent.display()
-            ),
-        )
-        .expect("configure fake Pi");
-    }
-
-    pub fn use_fake_pi_with_new_session_file(&self) {
-        fs::write(
-            self.home.join(".config/grove/grove.toml"),
-            format!(
-                "agent = \"pi\"\n\n[agents.pi]\ncommand = [\"{}\", \"--fake-pi\", \"--new-pi-session\"]\n",
-                self.agent.display()
-            ),
-        )
-        .expect("configure fake Pi with a new session file");
-    }
-
-    pub fn use_fake_claude(&self) {
-        fs::write(
-            self.home.join(".config/grove/grove.toml"),
-            format!(
-                "agent = \"claude\"\n\n[agents.claude]\ncommand = [\"{}\", \"--fake-claude\"]\n",
-                self.agent.display()
-            ),
-        )
-        .expect("configure fake Claude");
-    }
-
-    pub fn use_fake_codex(&self) {
-        fs::write(
-            self.home.join(".config/grove/grove.toml"),
-            format!(
-                "agent = \"codex\"\n\n[agents.codex]\ncommand = [\"{}\", \"--fake-codex\"]\n",
-                self.agent.display()
-            ),
-        )
-        .expect("configure fake Codex");
+    pub fn remove_pi(&self) {
+        fs::remove_file(self.home.join("bin/pi")).expect("remove fake Pi executable");
     }
 
     pub fn git<I, S>(&self, args: I) -> String
@@ -650,32 +627,22 @@ impl TestRepo {
         let bin = self.home.join("bin");
         fs::create_dir(&bin).expect("create test bin directory");
         fs::copy(&self.agent, bin.join("pi")).expect("install fake Pi executable");
-        let config_dir = self.home.join(".config/grove");
-        fs::create_dir_all(&config_dir).expect("create global Grove config directory");
-        fs::write(
-            config_dir.join("grove.toml"),
-            format!(
-                "agent = \"test\"\n\n[agents.test]\ncommand = [\"{}\", \"session\", \"space value\", \"quote'\\\"\", \"\"]\n\n[agents.project]\ncommand = [\"{}\", \"project-session\"]\n",
-                self.agent.display(),
-                self.agent.display()
-            ),
-        )
-        .expect("write global Grove config");
     }
 
     fn test_path(&self) -> std::ffi::OsString {
-        let mut paths = vec![self.home.join("bin")];
-        paths.extend(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
-        ));
+        let paths = vec![
+            self.home.join("bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+        ];
         std::env::join_paths(paths).expect("build test PATH")
     }
 }
 
 impl Drop for TestRepo {
     fn drop(&mut self) {
-        if let Ok(mut connection) = rmux_client::connect(&self.runtime_socket) {
-            let _ = connection.kill_server();
+        for pid in self.agent_pids() {
+            let _ = Command::new("kill").arg(pid.to_string()).status();
         }
     }
 }

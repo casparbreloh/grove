@@ -6,8 +6,13 @@ use support::TestRepo;
 fn new_and_switch_manage_one_agent_lifecycle_per_worktree() {
     let repo = TestRepo::new();
     repo.detach_new("auth");
-    let worktree = repo.navigation();
+    let worktree = repo.worktree("auth");
     let first = repo.agent_pids()[0];
+
+    assert_eq!(
+        repo.navigation().canonicalize().expect("primary checkout"),
+        repo.path().canonicalize().expect("primary repository")
+    );
 
     assert_eq!(
         repo.git_from(&worktree, ["branch", "--show-current"]),
@@ -24,57 +29,50 @@ fn new_and_switch_manage_one_agent_lifecycle_per_worktree() {
         "{}",
         repo.agent_log()
     );
-    assert_eq!(repo.agent_log().matches("arg=<session>").count(), 1);
-
-    repo.select_project_agent(&worktree, "project");
     repo.detach_switch("auth");
     assert_eq!(repo.agent_pids(), vec![first], "{}", repo.agent_log());
-    assert!(!repo.agent_log().contains("arg=<project-session>"));
 
-    repo.terminate_process(first);
-    repo.detach_switch("auth");
-    let pids = repo.agent_pids();
-    assert_eq!(pids.len(), 2, "{}", repo.agent_log());
-    assert!(!repo.process_running(first));
-    assert!(repo.process_running(pids[1]));
-    assert!(repo.agent_log().contains("arg=<project-session>"));
-}
-
-#[test]
-fn new_validates_agent_configuration_before_mutation() {
-    for configure in [
-        TestRepo::select_missing_project_agent as fn(&TestRepo),
-        TestRepo::use_missing_agent_command,
-    ] {
-        let repo = TestRepo::new();
-        configure(&repo);
-        let before = repo.git(["worktree", "list", "--porcelain"]);
-
-        repo.grove().args(["new", "created"]).assert().failure();
-
-        assert!(!repo.branch_exists("created"));
-        assert_eq!(repo.git(["worktree", "list", "--porcelain"]), before);
-    }
-}
-
-#[test]
-fn concurrent_switches_reuse_one_session() {
-    let repo = TestRepo::new();
-    let change = repo.create_change("concurrent agents", None);
-
-    repo.detach_switches_concurrently(&change.branch, 8);
-
-    assert_eq!(repo.agent_pids().len(), 1, "{}", repo.agent_log());
     repo.grove()
-        .args(["remove", "--force", &change.branch])
+        .args(["remove", "--force", "auth"])
+        .assert()
+        .success();
+    repo.wait_for_process_exit(first);
+    assert!(!repo.process_running(first));
+
+    repo.detach_new("auth");
+    let second = repo.agent_pids()[1];
+    assert_eq!(repo.pi_session_files().len(), 2);
+    repo.stop_process(second);
+    repo.grove()
+        .args(["remove", "--force", "auth"])
         .assert()
         .success();
 }
 
 #[test]
+fn new_validates_pi_before_mutation() {
+    let repo = TestRepo::new();
+    repo.remove_pi();
+    let before = repo.git(["worktree", "list", "--porcelain"]);
+
+    let stderr = repo
+        .grove()
+        .args(["new", "created"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(String::from_utf8_lossy(&stderr).contains("Pi executable"));
+    assert!(!repo.branch_exists("created"));
+    assert_eq!(repo.git(["worktree", "list", "--porcelain"]), before);
+}
+
+#[test]
 fn switch_requires_an_executable_only_when_starting_the_agent() {
     let missing = TestRepo::new();
-    missing.use_missing_agent_command();
+    missing.remove_pi();
     let stderr = missing
         .grove()
         .args(["switch", "main"])
@@ -86,28 +84,20 @@ fn switch_requires_an_executable_only_when_starting_the_agent() {
     assert!(
         String::from_utf8(stderr)
             .expect("Grove stderr is UTF-8")
-            .contains("missing-agent")
+            .contains("Pi executable")
+    );
+    assert!(
+        !missing.path().join(".git/grove-session-id").exists(),
+        "failed validation must not create session metadata"
     );
 
     let running = TestRepo::new();
     running.detach_switch("main");
     let pid = running.agent_pids()[0];
-    running.remove_configured_agent_executable();
+    running.remove_pi();
     running.detach_switch("main");
     assert_eq!(running.agent_pids(), vec![pid], "{}", running.agent_log());
     assert!(running.process_running(pid));
-}
-
-#[test]
-fn switch_defaults_to_pi_without_configuration() {
-    let repo = TestRepo::new();
-    repo.use_builtin_defaults();
-
-    repo.detach_switch("main");
-
-    let log = repo.agent_log();
-    assert!(log.contains("directive=absent"), "{log}");
-    assert!(!log.contains("arg=<"), "{log}");
 }
 
 #[test]
@@ -145,109 +135,129 @@ fn shell_mode_creates_and_switches_without_starting_an_agent() {
 }
 
 #[test]
-fn built_in_agents_name_new_worktrees_from_the_first_prompt() {
-    let cases = [
-        (
-            TestRepo::use_fake_pi as fn(&TestRepo),
-            "Fix login redirect",
-            "fix-login-redirect",
-        ),
-        (
-            TestRepo::use_fake_claude,
-            "Repair token refresh",
-            "repair-token-refresh",
-        ),
-        (
-            TestRepo::use_fake_codex,
-            "Improve error rendering",
-            "improve-error-rendering",
-        ),
-    ];
-    for (configure, prompt, branch) in cases {
-        let repo = TestRepo::new();
-        configure(&repo);
+fn switch_main_returns_to_the_primary_checkout_without_creating_a_worktree() {
+    let repo = TestRepo::new();
+    repo.git(["switch", "-c", "local"]);
+    let change = repo.create_change("topic", Some("main"));
+    let worktrees_before = repo.git(["worktree", "list", "--porcelain"]);
 
-        let worktree = repo.detach_inferred_new(prompt);
+    repo.grove_from(&change.path)
+        .args(["switch", "--shell", "main"])
+        .assert()
+        .success();
 
-        assert_eq!(
-            repo.git_from(&worktree, ["branch", "--show-current"]),
-            branch
-        );
-        assert_eq!(
-            repo.git(["branch", "--format=%(refname:short)"])
-                .lines()
-                .count(),
-            2,
-            "nameless creation must not create a fallback branch"
-        );
-    }
+    assert_eq!(
+        repo.navigation().canonicalize().expect("primary checkout"),
+        repo.path().canonicalize().expect("primary repository")
+    );
+    assert_eq!(repo.git(["branch", "--show-current"]), "local");
+    assert_eq!(
+        repo.git(["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
 }
 
 #[test]
-fn pi_finds_the_first_prompt_in_a_new_session_file() {
+fn pi_names_and_moves_a_pending_worktree_from_the_first_prompt() {
     let repo = TestRepo::new();
-    repo.use_fake_pi_with_new_session_file();
+    let worktree = repo.detach_inferred_new("Fix login redirect");
+    let pid = repo.agent_pids()[0];
 
-    let (output, worktree) = repo.exit_inferred_new("Fix moved Pi session");
-    let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
-
-    assert!(output.status.success(), "{terminal}");
     assert_eq!(
         repo.git_from(&worktree, ["branch", "--show-current"]),
-        "fix-moved-pi-session"
+        "fix-login-redirect"
     );
-}
-
-#[test]
-fn new_without_a_branch_rejects_unsupported_agents_before_mutation() {
-    let repo = TestRepo::new();
-
-    let stderr = repo
-        .grove()
-        .arg("new")
-        .assert()
-        .failure()
-        .get_output()
-        .stderr
-        .clone();
-    let stderr = String::from_utf8(stderr).expect("Grove stderr is UTF-8");
-
-    assert!(stderr.contains("automatic branch naming"), "{stderr}");
     assert_eq!(
-        repo.git(["worktree", "list", "--porcelain"])
-            .matches("worktree ")
-            .count(),
-        1,
-        "unsupported inference must not create a pending worktree"
+        worktree.file_name(),
+        Some(std::ffi::OsStr::new("fix-login-redirect"))
     );
+    assert_eq!(
+        repo.navigation().canonicalize().expect("primary checkout"),
+        repo.path().canonicalize().expect("primary repository")
+    );
+    assert_eq!(
+        repo.git(["branch", "--format=%(refname:short)"])
+            .lines()
+            .count(),
+        2,
+        "nameless creation must not create a fallback branch"
+    );
+
+    repo.detach_switch("fix-login-redirect");
+    assert_eq!(repo.agent_pids(), vec![pid]);
 }
 
 #[test]
-fn detaching_before_the_first_prompt_discards_only_an_untouched_worktree() {
+fn detaching_before_the_first_prompt_preserves_a_reachable_pending_session() {
     let clean = TestRepo::new();
-    clean.use_fake_pi();
-    let output = clean.detach_unnamed_new_without_prompt();
+    let (output, worktree) = clean.detach_unnamed_new_without_prompt();
     let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
-    assert!(!output.status.success(), "{terminal}");
-    assert!(terminal.contains("first prompt"), "{terminal}");
+    assert!(output.status.success(), "{terminal}");
+    assert!(terminal.contains("Pending change preserved"), "{terminal}");
     assert_eq!(
         clean
             .git(["worktree", "list", "--porcelain"])
             .matches("worktree ")
             .count(),
-        1,
+        2,
         "{terminal}"
     );
-    assert!(clean.pi_session_files().is_empty());
+    assert_eq!(clean.pi_session_files().len(), 1);
+    let output = clean.switch_in_pty("(pending)", b"\r");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        clean.navigation().canonicalize().expect("pending worktree"),
+        worktree.canonicalize().expect("pending worktree")
+    );
+    clean.stop_process(clean.agent_pids()[0]);
+    clean.remove_pi();
+    let output = clean.select_agent_in_pty("(pending)", b"\r");
+    let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
+    assert!(!output.status.success(), "{terminal}");
+    assert!(terminal.contains("Pi executable"), "{terminal}");
+    assert!(
+        worktree.exists(),
+        "failed reattachment must preserve pending worktree"
+    );
+    clean
+        .grove_from(&worktree)
+        .args(["remove", "--force"])
+        .assert()
+        .success();
 
     let dirty = TestRepo::new();
-    dirty.use_fake_pi();
     let (output, worktree) = dirty.detach_dirty_unnamed_new_without_prompt();
-    assert!(!output.status.success());
+    assert!(output.status.success());
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("preserved"), "{output}");
     assert!(worktree.join("agent-created.txt").exists());
     assert!(dirty.process_running(dirty.agent_pids()[0]));
+    dirty
+        .grove_from(&worktree)
+        .args(["remove", "--force"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn exiting_before_the_first_prompt_discards_the_untouched_pending_worktree() {
+    let repo = TestRepo::new();
+    let output = repo.exit_unnamed_new_without_prompt();
+    let terminal = String::from_utf8(output.stdout).expect("Grove terminal is UTF-8");
+
+    assert!(!output.status.success(), "{terminal}");
+    assert!(
+        terminal.contains("exited before the first prompt"),
+        "{terminal}"
+    );
+    assert_eq!(
+        repo.git(["worktree", "list", "--porcelain"])
+            .matches("worktree ")
+            .count(),
+        1,
+        "{terminal}"
+    );
+    assert!(repo.pi_session_files().is_empty());
 }
 
 #[test]
@@ -364,6 +374,29 @@ fn worktree_picker_selects_and_cancels_without_leaking_terminal_state() {
         assert_eq!(repo.navigation(), before);
         assert_terminal_restored(&terminal);
     }
+}
+
+#[test]
+fn worktree_picker_opens_an_ordinary_detached_worktrees_agent() {
+    let repo = TestRepo::new();
+    let detached = repo.home().join("detached");
+    repo.git([
+        "worktree",
+        "add",
+        "--detach",
+        detached.to_str().expect("UTF-8 worktree path"),
+    ]);
+
+    repo.detach_picked_switch("(detached)", b"\r");
+
+    assert!(repo.agent_log().contains(&format!(
+        "cwd={}",
+        detached.canonicalize().expect("canonical worktree").display()
+    )));
+    repo.grove_from(&detached)
+        .args(["remove", "--force"])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -833,25 +866,18 @@ fn agent_sessions_are_isolated_by_worktree_during_removal() {
     assert!(!repo.process_running(pids[0]));
     assert!(repo.process_running(pids[1]));
 
-    let output = repo
-        .grove()
-        .args(["remove", &second.branch])
-        .assert()
-        .failure()
-        .get_output()
-        .stderr
-        .clone();
-    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
-    assert!(stderr.contains("a live agent session"), "{stderr}");
-    assert!(second.path.exists());
+    let missing = second.path.with_extension("missing");
+    std::fs::rename(&second.path, &missing).expect("make linked worktree path missing");
     repo.grove()
         .args(["remove", "--force", &second.branch])
         .assert()
         .success();
+    repo.wait_for_process_exit(pids[1]);
+    assert!(!repo.process_running(pids[1]));
 }
 
 #[test]
-fn remove_does_not_start_the_runtime_and_runtime_errors_preserve_git_state() {
+fn remove_without_a_session_does_not_start_the_runtime() {
     let repo = TestRepo::new();
     let removable = repo.create_change("no runtime", None);
 
@@ -860,25 +886,6 @@ fn remove_does_not_start_the_runtime_and_runtime_errors_preserve_git_state() {
         .assert()
         .success();
     assert!(!repo.runtime_exists());
-
-    let protected = repo.create_change("runtime failure", None);
-    let endpoint = repo.home().join("x".repeat(200));
-    let output = repo
-        .grove()
-        .env("GROVE_RUNTIME_SOCKET", endpoint)
-        .args(["remove", "--force", &protected.branch])
-        .assert()
-        .failure()
-        .get_output()
-        .stderr
-        .clone();
-    let stderr = String::from_utf8(output).expect("Grove stderr is UTF-8");
-    assert!(
-        stderr.contains("failed to inspect embedded agent runtime"),
-        "{stderr}"
-    );
-    assert!(protected.path.exists());
-    assert!(repo.branch_exists(&protected.branch));
 }
 
 fn row_for_value<'a>(lines: &'a [&str], value: &str) -> &'a str {
