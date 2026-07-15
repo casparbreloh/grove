@@ -1,83 +1,93 @@
 # grove
 
-Grove is a small worktree and Git manager for terminal coding agents. Git stays
-the source of truth, while Grove gives each piece of work an isolated worktree:
+Grove is a small worktree manager for terminal coding agents. Git remains the
+source of truth. Each branch gets an isolated worktree and one persistent agent
+session.
 
 ```sh
-grove new "Add passkey login"
-grove agent
+grove new auth-refresh
+# work in the agent, then detach with Ctrl-b d
+
 grove switch
 grove list
-grove remove c-a13f7c45b829
+grove remove auth-refresh
 ```
 
-See [VISION.md](VISION.md) for the product direction and upcoming phases.
+See [VISION.md](VISION.md) for the product direction.
 
-## Creating and switching
+## Creating worktrees
 
 ```text
-grove new [--from <ref>] [title]
-grove switch [change-id-or-branch]
+grove new [OPTIONS] [BRANCH]
 ```
 
-`new` creates an immutable ID branch such as `c-a13f7c45b829` and navigates to
-its worktree. An optional title describes the change:
+With a branch, `new` creates the branch and its worktree, then opens that
+worktree's agent:
 
 ```sh
-grove new
-grove new "Add passkey login"
+grove new auth-refresh
+grove new --from release backport-auth
 ```
 
-Without a title, Grove records an untitled change. Creation never launches an
-agent or opens the picker. The ID remains stable even as the title evolves and
-can later serve as the backing branch for a pull request.
+Without a branch, Grove opens the configured agent in a pending detached
+worktree. The first typed prompt becomes a lowercase, hyphenated branch name.
+There is no random fallback. Automatic naming supports Pi, Claude Code, and
+Codex through their native session files.
 
-Without `--from`, the new branch starts at the repository's detected default
-branch. `--from` accepts any revision that resolves to a commit, including a
-local branch, remote-tracking branch, tag, commit expression, or commit ID:
+Detaching before the first prompt cancels an untouched pending worktree. If the
+agent has already changed files, or naming fails, Grove preserves the worktree
+and reports its path instead of discarding work.
+
+`--from` accepts any revision that resolves to a commit. `--from @` starts at
+the invoking worktree's current branch, or at its current commit when detached.
+Without `--from`, Grove starts from the detected default branch.
+
+Use `--shell` when you only want the worktree:
 
 ```sh
-grove new --from release "Backport the login fix"
-grove new --from 'main~2' "Investigate the regression"
+grove new --shell auth-refresh
 ```
 
-`--from @` starts at the invoking worktree's current branch, or its current
-commit when detached:
+A branch is required with `new --shell`, because there is no agent prompt from
+which to infer one.
+
+Managed worktrees live at `~/.grove/<repo>-<digest>/<branch>`. The repository
+digest prevents equal directory names from colliding. A worktree created by
+bare `grove new` keeps its temporary directory after the branch is inferred;
+the branch remains its public identity.
+
+## Switching
+
+```text
+grove switch [OPTIONS] [BRANCH]
+```
+
+`switch` opens the worktree's sole agent session. If that session already
+exists it is reused. Without a branch, Grove shows a picker that includes the
+current worktree. Use Up and Down, then Enter.
+
+To enter a worktree without its agent:
 
 ```sh
-grove new --from @ "Follow up on this change"
+grove switch --shell auth-refresh
 ```
 
-New worktrees live at `~/.grove/<repo>-<digest>/<change-id>`. The digest
-identifies the Git repository, so repositories with the same directory name
-cannot collide. Grove still discovers ordinary Git branches and worktrees.
-
-`switch` only navigates to an existing worktree. Without an argument it shows
-the same worktree details as `list`; move the `›` cursor with Up and Down, then
-press Enter. An exact change ID or ordinary branch selects directly. It never
-launches an agent, so inspecting a diff does not begin a session.
+Grove embeds rmux, so nothing else needs to be installed. Detach from the agent
+with the standard tmux binding, `Ctrl-b d`. After detaching, the shell wrapper
+moves the calling shell into that worktree. Running `grove switch` again is all
+that is needed to return to the agent.
 
 ## Agents
 
-```text
-grove agent [agent-name]
-```
-
-`agent` opens a persistent terminal session in the current worktree. Detach
-with `Ctrl-b d`; running the same command again reattaches. Different agent
-names have separate sessions. Grove embeds rmux, so there is no multiplexer to
-install or run separately.
-
-Pi is the default. `claude`, `claude-code`, and `codex` are also built in. A
-project can select one in `grove.toml`:
+Pi is the default. Claude Code and Codex are built in. Select one per project in
+`grove.toml`:
 
 ```toml
 agent = "codex"
 ```
 
-The project setting overrides the global setting in
-`~/.config/grove/grove.toml` or `$XDG_CONFIG_HOME/grove/grove.toml`. Custom
-commands are global-only and use a direct argument array rather than a shell:
+The project setting overrides `~/.config/grove/grove.toml` or
+`$XDG_CONFIG_HOME/grove/grove.toml`. Custom commands are configured globally:
 
 ```toml
 agent = "opencode"
@@ -86,47 +96,35 @@ agent = "opencode"
 command = ["opencode", "--mode", "agent"]
 ```
 
-Arguments, including spaces and empty values, are passed unchanged. The old
-`{prompt}` placeholder is no longer supported because Grove does not capture
-or forward agent prompts.
+Custom agents work with explicitly named branches. Bare `grove new` rejects
+them because Grove cannot reliably observe their first prompt. Command
+arguments, including spaces and empty values, are passed directly without a
+shell. `{prompt}` has no special meaning.
 
-## Listing
+## Listing and removal
 
-`grove list` shows each change's title, stable ID, base, uncommitted line
-changes, divergence from its base, and path. Untitled changes are shown as
-`(untitled)`. Ordinary Git worktrees remain visible using their branch name. In
-`Base↕`, `↑` means commits ahead of the base and `↓` means commits behind it.
-
-For a branch created from a local branch, Grove follows that parent while it
-still contains the original creation point. Other bases remain fixed at their
-recorded creation commit. Older branches without Grove lineage use the detected
-default branch. If recorded lineage is incomplete or malformed, the row says
-`invalid metadata`; listing continues, but safe removal refuses that branch.
-
-## Removing
+`grove list` shows branch, base, uncommitted line changes, divergence from the
+base, and path. In `Base↕`, `↑` means commits ahead and `↓` means commits behind.
 
 ```text
-grove remove [change-id-or-branch]
-grove remove --force [change-id-or-branch]
+grove remove [--force] [BRANCH]
 ```
 
-With no change ID or branch argument, Grove removes the current linked
-worktree. Safe removal refuses a dirty worktree and checks the branch against
-its recorded lineage, falling back to the detected default branch for older
-branches or a rewritten/missing local parent. It accepts changes integrated by
-a merge, rebase or cherry-pick, as well as squash-equivalent changes. Genuine
-unmerged work is refused. `--force` is the explicit escape hatch that discards
-changes and deletes the branch. A live Grove agent session protects its
-worktree from safe removal. Forced removal stops every agent session in the
-worktree before changing Git state.
+`grove delete` is an alias of `grove remove`.
 
-Safe squash detection requires Git 2.38 or newer for
-`git merge-tree --write-tree`.
+Without a branch, `remove` targets the current linked worktree. Safe removal
+refuses dirty or genuinely unmerged work and follows the recorded creation
+base. It accepts work integrated by merge, rebase, cherry-pick, or an equivalent
+squash. `--force` explicitly discards changes and deletes an unmerged branch.
+
+A live agent protects its worktree from safe removal. Forced removal stops that
+worktree's session before changing Git state. Safe squash detection requires
+Git 2.38 or newer.
 
 ## Shell setup
 
-The shell wrapper lets `grove new` and `grove switch` change the calling shell's
-directory and adds completions. It does not edit shell configuration.
+The wrapper lets `new` and `switch` change the calling shell's directory and
+adds completions. It does not edit shell configuration.
 
 For Fish:
 

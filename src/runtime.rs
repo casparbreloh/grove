@@ -7,17 +7,13 @@ use rmux_client::{
 };
 use rmux_proto::{
     OptionName, ProcessCommand, Response, ScopeSelector, SessionName, SetOptionMode,
-    request::{KillSessionRequest, ListSessionsRequest, NewSessionExtRequest},
+    request::{KillSessionRequest, NewSessionExtRequest},
 };
 use rmux_server::{DaemonConfig, ServerDaemon};
 
 use crate::git::WorktreeIdentity;
 
-pub(crate) fn attach(
-    identity: &WorktreeIdentity,
-    agent_name: &str,
-    command: Vec<String>,
-) -> Result<()> {
+pub(crate) fn attach(identity: &WorktreeIdentity, command: Vec<String>) -> Result<()> {
     let endpoint = endpoint()?;
     if let Some(parent) = endpoint.parent() {
         std::fs::create_dir_all(parent)
@@ -26,16 +22,16 @@ pub(crate) fn attach(
     let config = AutoStartConfig::disabled().with_binary_override(std::env::current_exe()?);
     let mut connection = ensure_server_running_with_config(&endpoint, config)
         .context("failed to start the embedded agent runtime")?;
-    let session = session_name(identity, agent_name)?;
+    let session = session_name(identity)?;
     let executable = command.first().cloned().context("agent command is empty")?;
-    let request = |attach_if_exists| NewSessionExtRequest {
+    let request = NewSessionExtRequest {
         session_name: Some(session.clone()),
         working_directory: Some(identity.root.display().to_string()),
         detached: true,
         size: None,
         environment: None,
         group_target: None,
-        attach_if_exists,
+        attach_if_exists: true,
         detach_other_clients: false,
         kill_other_clients: false,
         flags: None,
@@ -43,26 +39,14 @@ pub(crate) fn attach(
         print_session_info: false,
         print_format: None,
         command: None,
-        process_command: Some(ProcessCommand::Argv(command.clone())),
+        process_command: Some(ProcessCommand::Argv(command)),
         client_environment: Some(environment()),
         skip_environment_update: false,
     };
-    match connection.new_session_extended(request(false))? {
+    match connection.new_session_extended(request)? {
         Response::NewSession(_) => {}
         Response::Error(response)
-            if matches!(response.error, rmux_proto::RmuxError::DuplicateSession(_)) =>
-        {
-            match connection.new_session_extended(request(true))? {
-                Response::NewSession(_) => {}
-                Response::Error(response) => {
-                    return Err(response.error)
-                        .with_context(|| format!("failed to launch agent '{executable}'"));
-                }
-                response => {
-                    bail!("agent runtime returned an unexpected response: {response:?}")
-                }
-            }
-        }
+            if matches!(response.error, rmux_proto::RmuxError::DuplicateSession(_)) => {}
         Response::Error(response) => {
             return Err(response.error)
                 .with_context(|| format!("failed to launch agent '{executable}'"));
@@ -128,56 +112,36 @@ pub(crate) fn run_daemon(args: impl Iterator<Item = OsString>) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn sessions(identity: &WorktreeIdentity) -> Result<Vec<SessionName>> {
+pub(crate) fn active(identity: &WorktreeIdentity) -> Result<bool> {
     let endpoint = endpoint()?;
     let ConnectResult::Connected(mut connection) = rmux_client::connect_or_absent(&endpoint)
         .context("failed to inspect embedded agent runtime")?
     else {
-        return Ok(Vec::new());
+        return Ok(false);
     };
-    let response = connection.list_sessions(ListSessionsRequest {
-        format: Some("#{session_name}".to_owned()),
-        filter: None,
-        sort_order: None,
-        reversed: false,
-    })?;
-    let output = match response {
-        Response::ListSessions(response) => response.output.stdout,
-        Response::Error(response) => return Err(response.error.into()),
+    match connection.has_session(session_name(identity)?)? {
+        Response::HasSession(response) => Ok(response.exists),
+        Response::Error(response) => Err(response.error.into()),
         response => bail!("agent runtime returned an unexpected response: {response:?}"),
-    };
-    let prefix = session_prefix(identity);
-    String::from_utf8(output)
-        .context("agent runtime returned invalid session names")?
-        .lines()
-        .filter(|name| name.starts_with(&prefix))
-        .map(|name| SessionName::new(name.to_owned()).map_err(Into::into))
-        .collect()
+    }
 }
 
-pub(crate) fn terminate(sessions: Vec<SessionName>) -> Result<()> {
-    if sessions.is_empty() {
-        return Ok(());
-    }
+pub(crate) fn terminate(identity: &WorktreeIdentity) -> Result<()> {
     let endpoint = endpoint()?;
     let ConnectResult::Connected(mut connection) = rmux_client::connect_or_absent(&endpoint)
         .context("failed to connect to embedded agent runtime")?
     else {
-        bail!("embedded agent runtime stopped before agent cleanup");
+        return Ok(());
     };
-    for session in sessions {
-        match connection.kill_session(KillSessionRequest {
-            target: session,
-            kill_all_except_target: false,
-            clear_alerts: false,
-        })? {
-            Response::KillSession(response) if response.existed => {}
-            Response::KillSession(_) => bail!("agent session ended before cleanup completed"),
-            Response::Error(response) => return Err(response.error.into()),
-            response => bail!("agent runtime returned an unexpected response: {response:?}"),
-        }
+    match connection.kill_session(KillSessionRequest {
+        target: session_name(identity)?,
+        kill_all_except_target: false,
+        clear_alerts: false,
+    })? {
+        Response::KillSession(_) => Ok(()),
+        Response::Error(response) => Err(response.error.into()),
+        response => bail!("agent runtime returned an unexpected response: {response:?}"),
     }
-    Ok(())
 }
 
 fn endpoint() -> Result<PathBuf> {
@@ -187,21 +151,17 @@ fn endpoint() -> Result<PathBuf> {
     rmux_client::socket_path_for_label("grove").map_err(Into::into)
 }
 
-fn session_name(identity: &WorktreeIdentity, agent_name: &str) -> Result<SessionName> {
-    let prefix = session_prefix(identity);
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(agent_name.as_bytes());
-    let digest = hasher.finalize().to_hex();
-    SessionName::new(format!("{prefix}{}", &digest[..20])).map_err(Into::into)
+fn session_name(identity: &WorktreeIdentity) -> Result<SessionName> {
+    SessionName::new(session_key(identity)).map_err(Into::into)
 }
 
-fn session_prefix(identity: &WorktreeIdentity) -> String {
+fn session_key(identity: &WorktreeIdentity) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(identity.common_dir.as_os_str().as_encoded_bytes());
     hasher.update(&[0]);
     hasher.update(identity.root.as_os_str().as_encoded_bytes());
     let digest = hasher.finalize().to_hex();
-    format!("grove-{}-", &digest[..20])
+    format!("grove-{}", &digest[..20])
 }
 
 fn environment() -> Vec<String> {

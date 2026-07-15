@@ -9,7 +9,8 @@ use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
 use anyhow::{Context, Result, bail};
 
-pub struct Git {
+#[derive(Clone)]
+pub(crate) struct Git {
     cwd: PathBuf,
 }
 
@@ -26,43 +27,76 @@ struct Worktree {
     prunable: bool,
 }
 
-pub struct Status {
-    pub changed: bool,
-    pub added: usize,
-    pub deleted: usize,
-    pub conflicts: usize,
+pub(crate) struct Status {
+    pub(crate) changed: bool,
+    pub(crate) added: usize,
+    pub(crate) deleted: usize,
+    pub(crate) conflicts: usize,
 }
 
-pub struct Divergence {
-    pub ahead: usize,
-    pub behind: usize,
+pub(crate) struct Divergence {
+    pub(crate) ahead: usize,
+    pub(crate) behind: usize,
 }
 
-pub struct Change {
-    pub id: String,
-    pub path: PathBuf,
+pub(crate) struct Change {
+    pub(crate) branch: String,
+    pub(crate) path: PathBuf,
 }
 
-pub enum WorktreeState {
+pub(crate) struct PendingChange {
+    git: Git,
+    path: PathBuf,
+    base: CreationBase,
+}
+
+impl PendingChange {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn name(&self, branch: &str) -> Result<Change> {
+        self.git.validate_branch(branch)?;
+        if self.git.branch_exists(branch)? {
+            bail!("branch '{branch}' already exists");
+        }
+        self.git.output_at(&self.path, &["switch", "-c", branch])?;
+        if let Err(error) = Lineage::record(&self.git, branch, &self.base) {
+            let _ = self.git.output_at(&self.path, &["switch", "--detach"]);
+            let _ = self
+                .git
+                .raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
+            return Err(error).context("could not record inferred lineage");
+        }
+        Ok(Change {
+            branch: branch.to_owned(),
+            path: self.path.clone(),
+        })
+    }
+
+    pub(crate) fn discard(&self) -> Result<()> {
+        self.git.worktree_remove(&self.path, false)
+    }
+}
+
+pub(crate) enum WorktreeState {
     Present(Status),
     Missing,
 }
 
-pub struct WorktreeView {
-    pub path: PathBuf,
-    pub branch: Option<String>,
-    pub is_change: bool,
-    pub title: Option<String>,
-    pub base: String,
-    pub divergence: Option<Divergence>,
-    pub state: WorktreeState,
-    pub current: bool,
-    pub primary: bool,
+pub(crate) struct WorktreeView {
+    pub(crate) path: PathBuf,
+    pub(crate) branch: Option<String>,
+    pub(crate) base: String,
+    pub(crate) divergence: Option<Divergence>,
+    pub(crate) state: WorktreeState,
+    pub(crate) current: bool,
+    pub(crate) primary: bool,
 }
 
-pub struct Removal {
-    pub label: String,
-    pub navigate_to: Option<PathBuf>,
+pub(crate) struct Removal {
+    pub(crate) label: String,
+    pub(crate) navigate_to: Option<PathBuf>,
 }
 
 pub(crate) struct PreparedRemoval {
@@ -94,37 +128,29 @@ struct CreationBase {
     parent: Option<String>,
 }
 
-const CHANGE_MARKER_FIELD: &str = "grove-change";
-const DESCRIPTION_FIELD: &str = "description";
 const BASE_REF_FIELD: &str = "grove-base-ref";
 const BASE_OID_FIELD: &str = "grove-base-oid";
 const PARENT_FIELD: &str = "grove-parent";
-const CHANGE_METADATA_FIELDS: [&str; 5] = [
-    CHANGE_MARKER_FIELD,
-    DESCRIPTION_FIELD,
-    BASE_REF_FIELD,
-    BASE_OID_FIELD,
-    PARENT_FIELD,
-];
+const LINEAGE_FIELDS: [&str; 3] = [BASE_REF_FIELD, BASE_OID_FIELD, PARENT_FIELD];
 
-struct ChangeMetadata {
-    is_change: bool,
-    description: Option<String>,
+struct Lineage {
     base_ref: Option<String>,
     base_oid: Option<String>,
     parent: Option<String>,
 }
 
-impl ChangeMetadata {
-    fn create(git: &Git, source: Option<&str>, description: Option<&str>) -> Result<Change> {
+impl Lineage {
+    fn create(git: &Git, source: Option<&str>, branch: &str) -> Result<Change> {
         let base = Self::resolve_creation_base(git, source)?;
-        let id = git.change_id()?;
-        let path = git.switch(&id, Some(&base))?;
-        if let Err(error) = Self::record(git, &id, &base, description) {
-            git.rollback_created_worktree(&path, &id);
-            return Err(error).context("could not record change metadata");
+        let path = git.switch(branch, Some(&base))?;
+        if let Err(error) = Self::record(git, branch, &base) {
+            git.rollback_created_worktree(&path, branch);
+            return Err(error).context("could not record lineage");
         }
-        Ok(Change { id, path })
+        Ok(Change {
+            branch: branch.to_owned(),
+            path,
+        })
     }
 
     fn resolve_creation_base(git: &Git, source: Option<&str>) -> Result<CreationBase> {
@@ -158,12 +184,7 @@ impl ChangeMetadata {
         })
     }
 
-    fn record(
-        git: &Git,
-        branch: &str,
-        base: &CreationBase,
-        description: Option<&str>,
-    ) -> Result<()> {
+    fn record(git: &Git, branch: &str, base: &CreationBase) -> Result<()> {
         let (base_ref, base_oid, parent) = match &base.display_ref {
             Some(base_ref) => (
                 Some(base_ref.as_str()),
@@ -173,36 +194,23 @@ impl ChangeMetadata {
             None => (None, None, None),
         };
         let fields = [
-            (CHANGE_MARKER_FIELD, Some("true")),
-            (DESCRIPTION_FIELD, description),
             (BASE_REF_FIELD, base_ref),
             (BASE_OID_FIELD, base_oid),
             (PARENT_FIELD, parent),
         ];
         for (field, value) in fields {
             if let Some(value) = value {
-                git.output(&["config", "--local", &metadata_key(branch, field), value])?;
+                git.output(&["config", "--local", &lineage_key(branch, field), value])?;
             }
         }
         Ok(())
     }
 
     fn load(git: &Git, branch: &str) -> Result<Self> {
-        let is_change = git
-            .config_value(&metadata_key(branch, CHANGE_MARKER_FIELD))?
-            .as_deref()
-            == Some("true");
-        let description = if is_change {
-            git.config_value(&metadata_key(branch, DESCRIPTION_FIELD))?
-        } else {
-            None
-        };
-        let base_ref = git.config_value(&metadata_key(branch, BASE_REF_FIELD))?;
-        let base_oid = git.config_value(&metadata_key(branch, BASE_OID_FIELD))?;
-        let parent = git.config_value(&metadata_key(branch, PARENT_FIELD))?;
+        let base_ref = git.config_value(&lineage_key(branch, BASE_REF_FIELD))?;
+        let base_oid = git.config_value(&lineage_key(branch, BASE_OID_FIELD))?;
+        let parent = git.config_value(&lineage_key(branch, PARENT_FIELD))?;
         Ok(Self {
-            is_change,
-            description,
             base_ref,
             base_oid,
             parent,
@@ -210,27 +218,14 @@ impl ChangeMetadata {
     }
 
     fn clear(git: &Git, cwd: &Path, branch: &str) -> Result<()> {
-        for field in CHANGE_METADATA_FIELDS {
-            let key = metadata_key(branch, field);
+        for field in LINEAGE_FIELDS {
+            let key = lineage_key(branch, field);
             let output = git.raw_at(cwd, &["config", "--local", "--unset-all", &key])?;
             if !output.status.success() && output.status.code() != Some(5) {
                 check(output, &["config", "--local", "--unset-all", "<key>"])?;
             }
         }
         Ok(())
-    }
-
-    fn title(&self) -> Option<String> {
-        if !self.is_change {
-            return None;
-        }
-        self.description.as_deref().and_then(|description| {
-            description
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .map(str::to_owned)
-        })
     }
 
     fn base(&self, git: &Git, branch: &str) -> Result<BranchBase> {
@@ -264,7 +259,7 @@ impl ChangeMetadata {
             && self.parent.as_deref().is_none_or(|value| !value.is_empty());
         if !lineage_is_valid {
             return Ok(BranchBase {
-                display: "invalid metadata".to_owned(),
+                display: "invalid lineage".to_owned(),
                 divergence_ref: None,
                 removal_ref: None,
                 valid: false,
@@ -310,13 +305,17 @@ impl ChangeMetadata {
     }
 }
 
-fn metadata_key(branch: &str, field: &str) -> String {
+fn lineage_key(branch: &str, field: &str) -> String {
     format!("branch.{branch}.{field}")
 }
 
 impl Git {
-    pub fn discover() -> Result<Self> {
-        let cwd = std::env::current_dir()?;
+    pub(crate) fn discover() -> Result<Self> {
+        Self::at(&std::env::current_dir()?)
+    }
+
+    pub(crate) fn at(cwd: &Path) -> Result<Self> {
+        let cwd = cwd.to_owned();
         let git = Self { cwd };
         git.text(&["rev-parse", "--git-dir"])
             .context("not inside a Git repository")?;
@@ -326,11 +325,11 @@ impl Git {
         Ok(git)
     }
 
-    pub fn project_root(&self) -> Result<PathBuf> {
+    pub(crate) fn project_root(&self) -> Result<PathBuf> {
         self.current_root()
     }
 
-    pub fn worktree_identity(&self) -> Result<WorktreeIdentity> {
+    pub(crate) fn worktree_identity(&self) -> Result<WorktreeIdentity> {
         let common_dir = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
         let common_dir = if common_dir.is_absolute() {
             common_dir
@@ -345,12 +344,27 @@ impl Git {
         })
     }
 
-    pub fn enter(&self, branch: &str) -> Result<PathBuf> {
+    pub(crate) fn enter(&self, branch: &str) -> Result<PathBuf> {
         self.switch(branch, None)
     }
 
-    pub fn create_change(&self, from: Option<&str>, description: Option<&str>) -> Result<Change> {
-        ChangeMetadata::create(self, from, description)
+    pub(crate) fn create_change(&self, from: Option<&str>, branch: &str) -> Result<Change> {
+        Lineage::create(self, from, branch)
+    }
+
+    pub(crate) fn create_pending_change(&self, from: Option<&str>) -> Result<PendingChange> {
+        let base = Lineage::resolve_creation_base(self, from)?;
+        let path = self.worktree_path(&self.pending_id()?)?;
+        if path.exists() {
+            bail!("worktree path already exists: {}", path.display());
+        }
+        std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
+        self.output_os(&["worktree", "add", "--detach"], &path, &[&base.oid])?;
+        Ok(PendingChange {
+            git: self.clone(),
+            path,
+            base,
+        })
     }
 
     fn switch(&self, branch: &str, base: Option<&CreationBase>) -> Result<PathBuf> {
@@ -389,7 +403,7 @@ impl Git {
         Ok(path)
     }
 
-    pub fn inventory(&self) -> Result<Vec<WorktreeView>> {
+    pub(crate) fn inventory(&self) -> Result<Vec<WorktreeView>> {
         let worktrees = self.worktrees()?;
         let current = self.current_root()?;
         let primary = worktrees
@@ -402,19 +416,17 @@ impl Git {
             .into_iter()
             .map(|worktree| {
                 let branch = worktree.branch.clone();
-                let metadata = branch
+                let lineage = branch
                     .as_deref()
-                    .map(|branch| ChangeMetadata::load(self, branch))
+                    .map(|branch| Lineage::load(self, branch))
                     .transpose()?;
-                let is_change = metadata.as_ref().is_some_and(|metadata| metadata.is_change);
-                let title = metadata.as_ref().and_then(ChangeMetadata::title);
                 let (base, divergence) = if worktree.prunable || branch.is_none() {
                     (String::new(), None)
                 } else {
                     let branch = branch.as_deref().context("branch is missing")?;
-                    let base = metadata
+                    let base = lineage
                         .as_ref()
-                        .context("branch metadata is missing")?
+                        .context("branch lineage is missing")?
                         .base(self, branch)?;
                     let divergence = base
                         .divergence_ref
@@ -433,8 +445,6 @@ impl Git {
                     primary: worktree.path == primary,
                     path: worktree.path,
                     branch,
-                    is_change,
-                    title,
                     base,
                     divergence,
                     state,
@@ -489,7 +499,7 @@ impl Git {
                 .transpose()?
         };
         if !force && let Some(branch) = &branch {
-            let base = ChangeMetadata::load(self, branch)?.base(self, branch)?;
+            let base = Lineage::load(self, branch)?.base(self, branch)?;
             if !self.branch_integrated(branch, &base)? {
                 bail!("branch '{branch}' is not merged; use --force to discard it");
             }
@@ -528,7 +538,7 @@ impl Git {
         })
     }
 
-    pub fn branch_names(&self, worktrees_only: bool) -> Result<Vec<String>> {
+    pub(crate) fn branch_names(&self, worktrees_only: bool) -> Result<Vec<String>> {
         if worktrees_only {
             return Ok(self
                 .worktrees()?
@@ -544,7 +554,7 @@ impl Git {
         Ok(())
     }
 
-    fn change_id(&self) -> Result<String> {
+    fn pending_id(&self) -> Result<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before the Unix epoch")?
@@ -556,12 +566,12 @@ impl Git {
                 std::process::id()
             );
             let digest = blake3::hash(seed.as_bytes()).to_hex();
-            let id = format!("c-{}", &digest[..12]);
-            if !self.branch_exists(&id)? {
-                return Ok(id);
+            let name = format!("pending-{}", &digest[..12]);
+            if !self.worktree_path(&name)?.exists() {
+                return Ok(name);
             }
         }
-        bail!("could not generate a unique change ID")
+        bail!("could not create a unique pending worktree path")
     }
 
     fn branch_exists(&self, branch: &str) -> Result<bool> {
@@ -742,7 +752,7 @@ impl Git {
 
     fn branch_integrated(&self, branch: &str, base: &BranchBase) -> Result<bool> {
         if !base.valid {
-            bail!("branch '{branch}' has invalid Grove base metadata; use --force to discard it");
+            bail!("branch '{branch}' has invalid Grove lineage; use --force to discard it");
         }
         let comparison = base
             .removal_ref
@@ -807,8 +817,8 @@ impl Git {
                 format!("branch '{branch}' could not be deleted")
             }
         })?;
-        ChangeMetadata::clear(self, cwd, branch)
-            .context("branch was deleted, but its Grove change metadata could not be cleared")
+        Lineage::clear(self, cwd, branch)
+            .context("branch was deleted, but its Grove lineage could not be cleared")
     }
 
     fn text(&self, args: &[&str]) -> Result<String> {
@@ -902,7 +912,7 @@ impl Git {
     }
 
     fn rollback_created_worktree(&self, path: &Path, branch: &str) {
-        let _ = ChangeMetadata::clear(self, &self.cwd, branch);
+        let _ = Lineage::clear(self, &self.cwd, branch);
         let _ = self.worktree_remove(path, true);
         let _ = self.raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
     }
@@ -914,6 +924,10 @@ impl Git {
 
     fn output(&self, args: &[&str]) -> Result<()> {
         self.checked_at(&self.cwd, args).map(|_| ())
+    }
+
+    fn output_at(&self, cwd: &Path, args: &[&str]) -> Result<()> {
+        self.checked_at(cwd, args).map(|_| ())
     }
 
     fn output_bytes(&self, args: &[&str]) -> Result<Vec<u8>> {

@@ -14,13 +14,13 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 use crossterm::{
     QueueableCommand,
-    cursor::{RestorePosition, SavePosition},
+    cursor::{MoveDown, MoveToColumn, MoveUp},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 
 use crate::agent::Agent;
-use crate::git::{Git, WorktreeState};
+use crate::git::{Git, PendingChange, WorktreeState};
 
 #[derive(Parser)]
 #[command(arg_required_else_help = true)]
@@ -34,24 +34,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Open a persistent agent session
-    Agent {
-        /// Configured agent name [default: project, global, then pi]
-        name: Option<String>,
-    },
     /// Create a change worktree
     New {
         /// Start the change from this revision (`@` means the invoking worktree)
         #[arg(long, value_name = "REF")]
         from: Option<String>,
-        /// Optional title for the change
-        title: Option<String>,
+        /// Enter the worktree without opening its agent
+        #[arg(long)]
+        shell: bool,
+        /// Branch for the change
+        branch: Option<String>,
     },
     /// Go to a worktree
     Switch {
-        /// Change ID or branch [default: choose interactively]
+        /// Enter the worktree without opening its agent
+        #[arg(long)]
+        shell: bool,
+        /// Branch [default: choose interactively]
         #[arg(
-            value_name = "CHANGE-ID-OR-BRANCH",
+            value_name = "BRANCH",
             add = ArgValueCompleter::new(branches)
         )]
         target: Option<String>,
@@ -59,13 +60,14 @@ enum Cmd {
     /// List the repository's worktrees
     List,
     /// Remove a linked worktree
+    #[command(visible_alias = "delete")]
     Remove {
         /// Discard changes and delete an unmerged branch
         #[arg(long)]
         force: bool,
-        /// Change ID or branch to remove [default: current]
+        /// Branch to remove [default: current]
         #[arg(
-            value_name = "CHANGE-ID-OR-BRANCH",
+            value_name = "BRANCH",
             add = ArgValueCompleter::new(worktree_branches)
         )]
         target: Option<String>,
@@ -94,38 +96,67 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::Agent { name } => {
-            let git = Git::discover()?;
-            let agent = Agent::load(&git, name.as_deref())?;
-            unsafe { std::env::remove_var("GROVE_DIRECTIVE_CD_FILE") };
-            agent.attach(&git)
-        }
-        Cmd::New { from, title } => new(&Git::discover()?, from.as_deref(), title.as_deref()),
-        Cmd::Switch { target } => switch(&Git::discover()?, target.as_deref()),
+        Cmd::New {
+            from,
+            shell,
+            branch,
+        } => new(&Git::discover()?, from.as_deref(), branch.as_deref(), shell),
+        Cmd::Switch { shell, target } => switch(&Git::discover()?, target.as_deref(), shell),
         Cmd::List => list(&Git::discover()?),
         Cmd::Remove { force, target } => remove(&Git::discover()?, target.as_deref(), force),
         Cmd::Init { shell } => init(shell),
     }
 }
 
-fn new(git: &Git, from: Option<&str>, title: Option<&str>) -> Result<()> {
-    let change = git.create_change(from, title)?;
-    eprintln!("✓ Created {} at {}", change.id, change.path.display());
-    navigate(&change.path)
+fn new(git: &Git, from: Option<&str>, branch: Option<&str>, shell: bool) -> Result<()> {
+    if let Some(branch) = branch {
+        let agent = (!shell).then(|| Agent::load_for_launch(git)).transpose()?;
+        let change = git.create_change(from, branch)?;
+        eprintln!("✓ Created {} at {}", change.branch, change.path.display());
+        return match agent {
+            Some(agent) => open_agent_worktree(&change.path, agent),
+            None => navigate(&change.path),
+        };
+    }
+    if shell {
+        bail!("a branch is required with --shell");
+    }
+    let agent = Agent::load_for_naming(git)?;
+    let pending = git.create_pending_change(from)?;
+    let path = pending.path().to_owned();
+    eprintln!("✓ Created pending change at {}", path.display());
+    open_pending_worktree(&path, agent, pending)
 }
 
-fn switch(git: &Git, target: Option<&str>) -> Result<()> {
+fn open_pending_worktree(path: &Path, agent: Agent, pending: PendingChange) -> Result<()> {
+    let git = Git::at(path)?;
+    agent.attach_and_name(&git, pending)?;
+    navigate(path)
+}
+
+fn open_agent_worktree(path: &Path, agent: Agent) -> Result<()> {
+    agent.attach(&Git::at(path)?)?;
+    navigate(path)
+}
+
+fn switch(git: &Git, target: Option<&str>, shell: bool) -> Result<()> {
     let branch = target.map(str::to_owned).map_or_else(|| pick(git), Ok)?;
     let path = git.enter(&branch)?;
     eprintln!("✓ Using {branch} at {}", path.display());
-    navigate(&path)
+    if shell {
+        navigate(&path)
+    } else {
+        let target_git = Git::at(&path)?;
+        Agent::load_for_switch(&target_git)?.attach(&target_git)?;
+        navigate(&path)
+    }
 }
 
 fn pick(git: &Git) -> Result<String> {
     let (mut choices, _) = rows(git)?;
-    choices.retain(|row| !row.current && row.branch.is_some());
+    choices.retain(|row| row.branch.is_some());
     if choices.is_empty() {
-        anyhow::bail!("no other worktrees to switch to");
+        anyhow::bail!("no worktrees to switch to");
     }
     for (index, row) in choices.iter_mut().enumerate() {
         row.marker = if index == 0 { "›" } else { " " }.to_owned();
@@ -135,7 +166,6 @@ fn pick(git: &Git) -> Result<String> {
         bail!("interactive worktree selection requires a terminal");
     }
     let mut output = stderr.lock();
-    output.queue(SavePosition)?;
     print_rows(&choices, &mut output, true, "\r\n")?;
     output.flush()?;
     let selected = select(&mut output, &mut choices)?;
@@ -172,20 +202,36 @@ fn select_raw(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
             _ => continue,
         };
         if next != selected {
+            redraw_picker(output, choices.len(), selected, next)?;
             choices[selected].marker = " ".to_owned();
             choices[next].marker = "›".to_owned();
-            redraw_picker(output, choices)?;
             selected = next;
         }
     }
 }
 
-fn redraw_picker(output: &mut impl Write, rows: &[Row]) -> std::io::Result<()> {
-    output
-        .queue(RestorePosition)?
-        .queue(Clear(ClearType::FromCursorDown))?;
-    print_rows(rows, output, true, "\r\n")?;
+fn redraw_picker(
+    output: &mut impl Write,
+    row_count: usize,
+    previous: usize,
+    next: usize,
+) -> std::io::Result<()> {
+    move_picker_marker(output, row_count, previous, " ")?;
+    move_picker_marker(output, row_count, next, "›")?;
     output.flush()
+}
+
+fn move_picker_marker(
+    output: &mut impl Write,
+    row_count: usize,
+    row: usize,
+    marker: &str,
+) -> std::io::Result<()> {
+    let distance = u16::try_from(row_count - row).unwrap_or(u16::MAX);
+    output.queue(MoveUp(distance))?.queue(MoveToColumn(0))?;
+    write!(output, "{marker}")?;
+    output.queue(MoveDown(distance))?.queue(MoveToColumn(0))?;
+    Ok(())
 }
 
 struct RawMode {
@@ -245,23 +291,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         } else {
             '+'
         };
-        let branch = worktree
-            .branch
-            .as_deref()
-            .unwrap_or("(detached)")
-            .to_owned();
-        let (change, id) = if worktree.is_change {
-            (
-                worktree
-                    .title
-                    .as_deref()
-                    .map(|title| ellipsize(title, 60))
-                    .unwrap_or_else(|| "(untitled)".to_owned()),
-                branch,
-            )
-        } else {
-            (branch, String::new())
-        };
+        let branch_label = worktree.branch.as_deref().unwrap_or("(pending)").to_owned();
         let changes = match &worktree.state {
             WorktreeState::Missing => "missing".to_owned(),
             WorktreeState::Present(status) => {
@@ -274,9 +304,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         rows.push(Row {
             marker: marker.to_string(),
             branch: worktree.branch.clone(),
-            current: worktree.current,
-            change,
-            id,
+            branch_label,
             base: worktree.base.clone(),
             changes,
             divergence: worktree
@@ -293,9 +321,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
 struct Row {
     marker: String,
     branch: Option<String>,
-    current: bool,
-    change: String,
-    id: String,
+    branch_label: String,
     base: String,
     changes: String,
     divergence: String,
@@ -337,14 +363,13 @@ fn print_rows(
     newline: &str,
 ) -> std::io::Result<()> {
     let marker_width = width(rows, "", |row| &row.marker);
-    let change_width = width(rows, "Change", |row| &row.change);
-    let id_width = width(rows, "ID", |row| &row.id);
+    let branch_width = width(rows, "Branch", |row| &row.branch_label);
     let base_width = width(rows, "Base", |row| &row.base);
     let changes_width = width(rows, "Changes", |row| &row.changes);
     let divergence_width = width(rows, "Base↕", |row| &row.divergence);
     let header = format!(
-        "{:<marker_width$} {:<change_width$}  {:<id_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
-        "", "Change", "ID", "Base", "Changes", "Base↕"
+        "{:<marker_width$} {:<branch_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
+        "", "Branch", "Base", "Changes", "Base↕"
     );
     write!(output, "{}{newline}", bold(&header, terminal))?;
     for row in rows {
@@ -353,8 +378,8 @@ fn print_rows(
         let divergence = format!("{:<divergence_width$}", row.divergence);
         write!(
             output,
-            "{:<marker_width$} {:<change_width$}  {:<id_width$}  {base}  {changes}  {divergence}  {}{newline}",
-            row.marker, row.change, row.id, row.path,
+            "{:<marker_width$} {:<branch_width$}  {base}  {changes}  {divergence}  {}{newline}",
+            row.marker, row.branch_label, row.path,
         )?;
     }
     Ok(())
@@ -375,13 +400,6 @@ fn width<'a>(rows: &'a [Row], header: &str, value: impl Fn(&'a Row) -> &'a str) 
         .max()
         .unwrap_or(0)
         .max(header.chars().count())
-}
-
-fn ellipsize(value: &str, width: usize) -> String {
-    if value.chars().count() <= width {
-        return value.to_owned();
-    }
-    value.chars().take(width - 1).chain(['…']).collect()
 }
 
 fn init(shell: Shell) -> Result<()> {
@@ -434,16 +452,12 @@ fn display_path(path: &Path, current: &Path) -> String {
 
 fn remove(git: &Git, requested: Option<&str>, force: bool) -> Result<()> {
     let prepared = git.prepare_removal(requested, force)?;
-    let sessions = runtime::sessions(prepared.identity())?;
-    if !sessions.is_empty() && !force {
-        bail!(
-            "worktree has {} live agent session{}; use --force to stop them",
-            sessions.len(),
-            if sessions.len() == 1 { "" } else { "s" }
-        );
+    let active = runtime::active(prepared.identity())?;
+    if active && !force {
+        bail!("worktree has a live agent session; use --force to stop it");
     }
     if force {
-        runtime::terminate(sessions)?;
+        runtime::terminate(prepared.identity())?;
     }
     let removal = git.remove(prepared)?;
     eprintln!("✓ Removed {}", removal.label);

@@ -561,6 +561,7 @@ dependencies = [
  "rmux-proto",
  "rmux-server",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "toml",
