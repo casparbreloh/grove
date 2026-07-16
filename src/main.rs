@@ -15,7 +15,7 @@ use crossterm::{
     QueueableCommand,
     cursor::{MoveDown, MoveToColumn, MoveUp},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{disable_raw_mode, enable_raw_mode},
+    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
 
 use crate::{
@@ -115,7 +115,9 @@ fn title(change_id: &str, session_id: &str) -> Result<()> {
 }
 
 fn new(git: &Git, from: Option<&str>, shell: bool) -> Result<()> {
-    if !shell {
+    if shell {
+        require_shell_navigation()?;
+    } else {
         Session::prepare()?;
     }
     let change = git.create_change(from)?;
@@ -133,6 +135,9 @@ fn open_agent_worktree(path: &Path) -> Result<()> {
 }
 
 fn switch(git: &Git, shell: bool) -> Result<()> {
+    if shell {
+        require_shell_navigation()?;
+    }
     let selected = pick(git)?;
     eprintln!("✓ Using {} at {}", selected.title, selected.path.display());
     if shell {
@@ -149,36 +154,36 @@ struct PickedWorktree {
 }
 
 fn pick(git: &Git) -> Result<PickedWorktree> {
-    let (mut choices, _) = rows(git)?;
+    let (choices, _) = rows(git)?;
     if choices.is_empty() {
         bail!("no active changes to switch to");
-    }
-    for (index, row) in choices.iter_mut().enumerate() {
-        row.marker = if index == 0 { "›" } else { " " }.to_owned();
     }
     let stderr = std::io::stderr();
     if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
         bail!("interactive worktree selection requires a terminal");
     }
     let mut output = stderr.lock();
-    print_rows(&choices, &mut output, true, "\r\n")?;
-    output.flush()?;
-    let selected = select(&mut output, &mut choices)?;
+    let selected = select(&mut output, &choices)?;
     Ok(PickedWorktree {
-        id: choices[selected].id.clone(),
-        title: choices[selected].title_label.clone(),
-        path: choices[selected].worktree_path.clone(),
+        id: selected.id,
+        title: selected.title_label,
+        path: selected.worktree_path,
     })
 }
 
-fn select(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
+fn select(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
     let mut raw_mode = RawMode::enter()?;
     let selection = select_raw(output, choices);
     raw_mode.restore()?;
     selection
 }
 
-fn select_raw(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
+fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
+    let mut filter = String::new();
+    let mut visible = filtered_rows(choices, &filter);
+    mark_first(&mut visible);
+    print_picker(&visible, &filter, output)?;
+    output.flush()?;
     let mut selected: usize = 0;
     loop {
         let Event::Key(key) = event::read().context("read picker input")? else {
@@ -189,21 +194,75 @@ fn select_raw(output: &mut impl Write, choices: &mut [Row]) -> Result<usize> {
         }
         let next = match key.code {
             KeyCode::Up => selected.saturating_sub(1),
-            KeyCode::Down => (selected + 1).min(choices.len() - 1),
-            KeyCode::Enter => return Ok(selected),
+            KeyCode::Down => (selected + 1).min(visible.len().saturating_sub(1)),
+            KeyCode::Enter if !visible.is_empty() => return Ok(visible[selected].clone()),
             KeyCode::Esc => bail!("selection cancelled"),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 bail!("selection cancelled")
             }
+            KeyCode::Backspace if !filter.is_empty() => {
+                filter.pop();
+                visible = replace_picker(output, visible.len(), choices, &filter)?;
+                selected = 0;
+                continue;
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                filter.push(character);
+                visible = replace_picker(output, visible.len(), choices, &filter)?;
+                selected = 0;
+                continue;
+            }
             _ => continue,
         };
         if next != selected {
-            redraw_picker(output, choices.len(), selected, next)?;
-            choices[selected].marker = " ".to_owned();
-            choices[next].marker = "›".to_owned();
+            redraw_picker(output, visible.len(), selected, next)?;
+            visible[selected].marker = " ".to_owned();
+            visible[next].marker = "›".to_owned();
             selected = next;
         }
     }
+}
+
+fn filtered_rows(choices: &[Row], filter: &str) -> Vec<Row> {
+    let filter = filter.to_lowercase();
+    choices
+        .iter()
+        .filter(|row| row.title_label.to_lowercase().contains(&filter))
+        .cloned()
+        .collect()
+}
+
+fn mark_first(rows: &mut [Row]) {
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.marker = if index == 0 { "›" } else { " " }.to_owned();
+    }
+}
+
+fn print_picker(rows: &[Row], filter: &str, output: &mut impl Write) -> std::io::Result<()> {
+    writeln!(output, "Filter: {filter}\r")?;
+    print_rows(rows, output, true, "\r\n")
+}
+
+fn replace_picker(
+    output: &mut impl Write,
+    previous_rows: usize,
+    choices: &[Row],
+    filter: &str,
+) -> std::io::Result<Vec<Row>> {
+    let distance = u16::try_from(previous_rows + 2).unwrap_or(u16::MAX);
+    output
+        .queue(MoveUp(distance))?
+        .queue(MoveToColumn(0))?
+        .queue(Clear(ClearType::FromCursorDown))?;
+    let mut rows = filtered_rows(choices, filter);
+    mark_first(&mut rows);
+    print_picker(&rows, filter, output)?;
+    output.flush()?;
+    Ok(rows)
 }
 
 fn redraw_picker(
@@ -316,6 +375,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
     Ok((rows, changed))
 }
 
+#[derive(Clone)]
 struct Row {
     marker: String,
     id: String,
@@ -455,6 +515,7 @@ fn remove(git: &Git, force: bool) -> Result<()> {
         eprintln!("✓ Finished {recovered} interrupted removal(s)");
         return Ok(());
     }
+    let current = git.current_path()?;
     let (rows, _) = rows(git)?;
     let selected = if let Some(current) = rows.into_iter().find(|row| row.marker == "@") {
         PickedWorktree {
@@ -462,11 +523,14 @@ fn remove(git: &Git, force: bool) -> Result<()> {
             title: current.title_label,
             path: current.worktree_path,
         }
-    } else if git.current_path()? == git.primary_path()? {
+    } else if current == git.primary_path()? {
         pick(git)?
     } else {
         bail!("current worktree is not a managed Grove change");
     };
+    if selected.path == current {
+        require_shell_navigation()?;
+    }
     let session = Session::for_worktree(&selected.path)?;
     let _lock = session.lock()?;
     let prepared = git.prepare_removal(&selected.id, force)?;
@@ -479,14 +543,36 @@ fn remove(git: &Git, force: bool) -> Result<()> {
 }
 
 fn navigate(path: &Path) -> Result<()> {
-    if let Some(file) = std::env::var_os("GROVE_DIRECTIVE_CD_FILE") {
-        let file = PathBuf::from(file);
-        std::fs::write(&file, path.as_os_str().as_encoded_bytes()).with_context(|| {
+    let file = shell_navigation_file()?;
+    std::fs::write(&file, path.as_os_str().as_encoded_bytes()).with_context(|| {
+        format!(
+            "failed to write shell navigation directive {}",
+            file.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn require_shell_navigation() -> Result<()> {
+    let file = shell_navigation_file()?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+        .with_context(|| {
             format!(
-                "failed to write shell navigation directive {}",
+                "failed to open shell navigation directive {}",
                 file.display()
             )
         })?;
-    }
     Ok(())
+}
+
+fn shell_navigation_file() -> Result<PathBuf> {
+    std::env::var_os("GROVE_DIRECTIVE_CD_FILE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .context(
+            "shell integration is not loaded; add `grove init fish | source` or `eval \"$(grove init zsh)\"` to your shell configuration",
+        )
 }

@@ -17,8 +17,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::change::{
-    Change, Closure, Creation, Outcome, Record, Reserved, lock as lock_change, mark_archived,
-    mark_closing, restore_active,
+    Change, Closure, Creation, Outcome, Record, Reserved, claim_repository, locate_repository,
+    lock as lock_change, mark_archived, mark_closing, restore_active,
 };
 
 #[derive(Clone)]
@@ -289,8 +289,9 @@ impl Git {
 
     pub(crate) fn create_change(&self, from: Option<&str>) -> Result<Change> {
         let creation = Lineage::resolve_creation_base(self, from)?;
-        let root = self.changes_root()?;
         let common_dir = self.common_dir()?;
+        let (repositories, name) = self.repository_storage()?;
+        let root = claim_repository(&repositories, &name, &common_dir)?;
         for _ in 0..100 {
             let reserved = Reserved::create(&root, &common_dir, creation.clone())?;
             let id = reserved.id().to_owned();
@@ -806,15 +807,12 @@ impl Git {
     }
 
     fn changes_root(&self) -> Result<PathBuf> {
-        let common_dir = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
-        let common_dir = if common_dir.is_absolute() {
-            common_dir
-        } else {
-            self.cwd.join(common_dir)
-        };
-        let common_dir = common_dir
-            .canonicalize()
-            .context("failed to resolve Git common directory")?;
+        let common_dir = self.common_dir()?;
+        let (repositories, name) = self.repository_storage()?;
+        locate_repository(&repositories, &name, &common_dir)
+    }
+
+    fn repository_storage(&self) -> Result<(PathBuf, String)> {
         let primary = self
             .worktrees()?
             .into_iter()
@@ -824,15 +822,10 @@ impl Git {
             .path
             .file_name()
             .context("primary worktree has no directory name")?
-            .to_string_lossy();
-        let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
+            .to_string_lossy()
+            .into_owned();
         let home = std::env::var_os("HOME").context("HOME is not set")?;
-
-        Ok(PathBuf::from(home).join(".grove").join(format!(
-            "{}-{}",
-            encode_path_segment(&repo),
-            &digest[..12]
-        )))
+        Ok((PathBuf::from(home).join(".grove/repositories"), repo))
     }
 
     fn worktrees(&self) -> Result<Vec<Worktree>> {
@@ -1161,19 +1154,6 @@ impl Git {
         shown.extend_from_slice(after);
         check(output, &shown).map(|_| ())
     }
-}
-
-fn encode_path_segment(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
-        {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
 }
 
 fn abbreviate_oid(oid: &str) -> String {

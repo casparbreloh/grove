@@ -17,14 +17,18 @@ inspect or analyze later.
 
 ## Decision
 
-Each Grove Change receives an immutable random 32-hex Change ID at creation.
+Each Grove Change receives an immutable random 8-hex Change ID at creation,
+atomically checked for capsule and branch collisions within its repository.
 The ID is the exact local Git branch and the leaf capsule directory, but normal
 commands expose a stable human Title instead. There is no semantic branch name,
 pending naming state, branch rename, or worktree move.
 
-All state is colocated at
-`~/.grove/<repository-key>/<change-id>/`: the versioned `change.json`,
-`worktree/`, Pi-owned `sessions/pi/`, and Grove-owned `artifacts/`.
+All state is colocated below
+`~/.grove/repositories/<repository-name>/`. A versioned `repository.json`
+identifies the canonical Git common directory, and a short repository suffix is
+used only for a real same-name collision. Each `<change-id>/` capsule contains
+the versioned `change.json`, `worktree/`, Pi-owned `sessions/pi/`, and
+Grove-owned `artifacts/`.
 
 Grove launches Pi directly and waits for it. It passes the capsule's native
 session directory with `--continue` and a managed extension. Grove owns no PTY,

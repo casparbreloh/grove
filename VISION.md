@@ -20,7 +20,7 @@ version-control system, agent framework, or terminal multiplexer.
 
 Grove provides ID-backed Git worktrees, title-based list and picker navigation,
 direct Pi launch/resume, recorded creation lineage, and archive-before-delete
-safety. A Change's hidden 32-hex ID is also its durable local Git branch. Its
+safety. A Change's hidden repository-scoped 8-hex ID is also its durable local Git branch. Its
 capsule groups the record, worktree, Pi-native sessions, and final Git
 artifacts beneath one `~/.grove` path.
 

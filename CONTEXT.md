@@ -3,10 +3,11 @@
 ## Glossary
 
 - **Change** — Grove's durable unit of work, from creation through archival.
-- **Change ID** — Grove-owned immutable 32-character lowercase hexadecimal identity. It is also the exact local Git branch and capsule directory name, but is normally hidden from users.
+- **Change ID** — Grove-owned immutable 8-character lowercase hexadecimal identity, unique within its repository. It is also the exact local Git branch and capsule directory name, but is normally hidden from users.
 - **Title** — The Change's only human-facing name. The first successful inference initializes it once.
 - **Pi session** — A native Pi conversation with a Pi-owned ID, JSONL file, and optional native name. A Change may contain multiple Pi sessions.
-- **Capsule** — `~/.grove/<repository-key>/<change-id>/`, containing all local Change state.
+- **Repository directory** — `~/.grove/repositories/<repository-name>/` in the normal case, identified by `repository.json`; a short suffix is added only when an unrelated repository already owns the name.
+- **Capsule** — `<repository-directory>/<change-id>/`, containing all local Change state.
 - **Creation base** — The ref, commit OID, and optional parent branch recorded when the Change is created.
 - **Archive** — The durable base-to-final patch and statistics captured before worktree and branch deletion.
 

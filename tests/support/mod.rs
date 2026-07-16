@@ -1,4 +1,5 @@
 use std::{
+    env,
     ffi::OsStr,
     fs,
     io::Write,
@@ -79,7 +80,7 @@ impl TestRepo {
     }
 
     pub fn change_capsules(&self) -> Vec<PathBuf> {
-        let root = self.home.join(".grove");
+        let root = self.home.join(".grove/repositories");
         let Ok(repositories) = fs::read_dir(root) else {
             return Vec::new();
         };
@@ -97,6 +98,13 @@ impl TestRepo {
             .collect::<Vec<_>>();
         capsules.sort();
         capsules
+    }
+
+    pub fn repository_record(&self, path: &Path) -> serde_json::Value {
+        serde_json::from_slice(
+            &fs::read(path.join("repository.json")).expect("read repository record"),
+        )
+        .expect("valid repository record")
     }
 
     pub fn grove(&self) -> assert_cmd::Command {
@@ -150,10 +158,11 @@ impl TestRepo {
     }
 
     pub fn switch_in_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let binary = assert_cmd::Command::cargo_bin("grove")
-            .expect("compiled grove binary")
-            .get_program()
-            .to_owned();
+        let binary = PathBuf::from(
+            assert_cmd::Command::cargo_bin("grove")
+                .expect("compiled grove binary")
+                .get_program(),
+        );
         let mut command = self.pty(&self.repo, OsStr::new("/bin/sh"));
         command
             .args([
@@ -165,6 +174,39 @@ impl TestRepo {
         picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
         picker.send(input, "Grove switch");
         let status = picker.wait_for_exit(Duration::from_secs(5), "Grove switch");
+        Output {
+            status,
+            stdout: picker.output(),
+            stderr: Vec::new(),
+        }
+    }
+
+    pub fn switch_with_shell_in_pty(&self, shell: &str, ready: &str, input: &[u8]) -> Output {
+        let binary = PathBuf::from(
+            assert_cmd::Command::cargo_bin("grove")
+                .expect("compiled grove binary")
+                .get_program(),
+        );
+        let shell_path = find_executable(shell);
+        let script = match shell {
+            "fish" => {
+                "\"$GROVE_TEST_BINARY\" init fish | source\ngrove switch --shell\nset status_code $status\nprintf '__PWD__%s\\n' $PWD\nstty -a\nexit $status_code"
+            }
+            "zsh" => {
+                "eval \"$(\"$GROVE_TEST_BINARY\" init zsh)\"\ngrove switch --shell\nstatus_code=$?\nprintf '__PWD__%s\\n' \"$PWD\"\nstty -a\nexit $status_code"
+            }
+            _ => panic!("unsupported test shell {shell}"),
+        };
+        let mut command = self.pty(&self.repo, shell_path.as_os_str());
+        command
+            .args(["-c", script])
+            .env("GROVE_TEST_BINARY", &binary)
+            .env("PATH", self.test_path_with(binary.parent().unwrap()))
+            .env_remove("GROVE_DIRECTIVE_CD_FILE");
+        let mut picker = PtyProcess::start(&mut command, self._root.path());
+        picker.wait_for(ready, Duration::from_secs(10), "Grove shell switch");
+        picker.send(input, "Grove shell switch");
+        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove shell switch");
         Output {
             status,
             stdout: picker.output(),
@@ -552,13 +594,31 @@ impl TestRepo {
     }
 
     fn test_path(&self) -> std::ffi::OsString {
-        let paths = vec![
+        self.test_path_from(Vec::new())
+    }
+
+    fn test_path_with(&self, directory: &Path) -> std::ffi::OsString {
+        self.test_path_from(vec![directory.to_owned()])
+    }
+
+    fn test_path_from(&self, mut paths: Vec<PathBuf>) -> std::ffi::OsString {
+        paths.extend([
             self.home.join("bin"),
             PathBuf::from("/usr/bin"),
             PathBuf::from("/bin"),
-        ];
+        ]);
         std::env::join_paths(paths).expect("build test PATH")
     }
+}
+
+fn find_executable(name: &str) -> PathBuf {
+    env::var_os("PATH")
+        .and_then(|path| {
+            env::split_paths(&path)
+                .map(|directory| directory.join(name))
+                .find(|path| path.is_file())
+        })
+        .unwrap_or_else(|| panic!("{name} is required for the shell integration test"))
 }
 
 fn assert_git_success(directory: &Path, args: &[std::ffi::OsString], output: &Output) {

@@ -3,6 +3,7 @@ mod support;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
+    path::Path,
     thread,
     time::{Duration, Instant},
 };
@@ -60,6 +61,83 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         assert!(script.contains("COMPLETE"), "{script}");
     }
 
+    let missing_wrapper = TestRepo::new();
+    let output = missing_wrapper
+        .grove()
+        .env_remove("GROVE_DIRECTIVE_CD_FILE")
+        .args(["new", "--shell"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(
+        stderr(&output).contains("shell integration is not loaded"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(missing_wrapper.change_capsules().is_empty());
+    assert_eq!(
+        missing_wrapper.git(["branch", "--format=%(refname:short)"]),
+        "main"
+    );
+
+    let invalid_target = TestRepo::new();
+    let output = invalid_target
+        .grove()
+        .env("GROVE_DIRECTIVE_CD_FILE", invalid_target.path())
+        .args(["new", "--shell"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(stderr(&output).contains("shell navigation directive"));
+    assert!(invalid_target.change_capsules().is_empty());
+    assert_eq!(
+        invalid_target.git(["branch", "--format=%(refname:short)"]),
+        "main"
+    );
+
+    let change = missing_wrapper.create_change(None);
+    let output = missing_wrapper
+        .grove_from(&change.path)
+        .env_remove("GROVE_DIRECTIVE_CD_FILE")
+        .arg("remove")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(stderr(&output).contains("shell integration is not loaded"));
+    assert!(change.path.exists());
+    assert!(missing_wrapper.branch_exists(&change.branch));
+
+    let change = invalid_target.create_change(None);
+    let output = invalid_target
+        .grove_from(&change.path)
+        .env("GROVE_DIRECTIVE_CD_FILE", invalid_target.path())
+        .arg("remove")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(stderr(&output).contains("shell navigation directive"));
+    assert!(change.path.exists());
+    assert!(invalid_target.branch_exists(&change.branch));
+
+    for shell in ["fish", "zsh"] {
+        let shell_repo = TestRepo::new();
+        let change = shell_repo.create_change(None);
+        shell_repo.set_change_title(&change, "Navigate With Shell");
+        let output = shell_repo.switch_with_shell_in_pty(shell, "Navigate With Shell", b"\r");
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let terminal = stdout(&output);
+        let expected = change.path.canonicalize().unwrap();
+        assert!(
+            terminal.contains(&format!("__PWD__{}", expected.display())),
+            "{shell}: {terminal}"
+        );
+        assert_terminal_restored(&terminal);
+    }
+
     let commands = repo
         .grove()
         .env("COMPLETE", "fish")
@@ -89,14 +167,41 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     let repo = TestRepo::new();
     repo.remove_pi();
     let original = repo.git(["rev-parse", "main"]);
-    repo.grove().args(["new", "--shell"]).assert().success();
+    let repository_root = repo.home().join(".grove/repositories");
+    fs::create_dir_all(&repository_root).unwrap();
+    let claim_lock = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(repository_root.join(".lock"))
+        .unwrap();
+    claim_lock.lock().unwrap();
+    let mut creation = repo.spawn_grove_from(repo.path(), ["new", "--shell"]);
+    thread::sleep(Duration::from_secs(1));
+    assert!(creation.try_wait().unwrap().is_none());
+    claim_lock.unlock().unwrap();
+    assert!(creation.wait().unwrap().success());
 
     let capsule = repo.change_capsules().pop().expect("created capsule");
     let id = capsule.file_name().unwrap().to_str().unwrap();
-    assert_eq!(id.len(), 32);
+    assert_eq!(id.len(), 8);
     assert!(
         id.bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    let repository = capsule.parent().expect("repository directory");
+    assert_eq!(repository.file_name().unwrap(), "repo");
+    assert_eq!(
+        repository.parent().unwrap(),
+        repo.home().join(".grove/repositories")
+    );
+    let repository_record = repo.repository_record(repository);
+    assert_eq!(repository_record["version"], 1);
+    assert_eq!(repository_record["name"], "repo");
+    assert_eq!(
+        Path::new(repository_record["git_common_dir"].as_str().unwrap()),
+        repo.path().join(".git").canonicalize().unwrap()
     );
     let record = repo.change_record(&capsule);
     assert_eq!(record["version"], 1);
@@ -179,6 +284,34 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     assert_eq!(
         repo.git_from(&second.path, ["branch", "--show-current"]),
         second.branch
+    );
+    let first_repository = first.path.parent().unwrap().parent().unwrap();
+    let second_repository = second.path.parent().unwrap().parent().unwrap();
+    assert_eq!(first_repository.file_name().unwrap(), "repo");
+    let collision_name = second_repository.file_name().unwrap().to_str().unwrap();
+    assert!(collision_name.starts_with("repo-"), "{collision_name}");
+    assert_eq!(collision_name.len(), "repo-".len() + 8);
+    assert_eq!(
+        Path::new(
+            repo.repository_record(second_repository)["git_common_dir"]
+                .as_str()
+                .unwrap()
+        ),
+        other.join(".git").canonicalize().unwrap()
+    );
+
+    let readable = repo.create_repo("named/Project Name");
+    let readable_change = repo.create_change_from(&readable, None);
+    assert_eq!(
+        readable_change
+            .path
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap(),
+        "Project Name"
     );
 
     let blocked = TestRepo::new();
@@ -388,13 +521,16 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         repo.create_change(None),
         repo.create_change(None),
         repo.create_change(None),
+        repo.create_change(None),
     ];
     changes.sort_by(|left, right| left.branch.cmp(&right.branch));
     let named = &changes[0];
     let duplicate = &changes[1];
     let untitled = &changes[2];
+    let searchable = &changes[3];
     repo.set_change_title(named, "Capture Native Sessions");
     repo.set_change_title(duplicate, "Capture Native Sessions");
+    repo.set_change_title(searchable, "Search Active Changes");
     let ordinary = repo.home().join("ordinary");
     repo.git(["branch", "ordinary"]);
     repo.git(["worktree", "add", ordinary.to_str().unwrap(), "ordinary"]);
@@ -421,31 +557,15 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         !table.contains("ordinary") && !table.contains("detached"),
         "{table}"
     );
-    assert!(stderr(&listed).contains("Showing 3 changes"));
+    assert!(table.contains("Search Active Changes"), "{table}");
+    assert!(stderr(&listed).contains("Showing 4 changes"));
 
-    let (named_row_index, named_row) = table
-        .lines()
-        .skip(1)
-        .enumerate()
-        .find(|(_, line)| line.contains("Capture Native Sessions"))
-        .expect("named picker row");
-    let expected_path = changes
-        .iter()
-        .find(|change| named_row.contains(&change.branch[..8]))
-        .expect("named row Change")
-        .path
-        .canonicalize()
-        .unwrap();
-    let mut picker_input = Vec::new();
-    for _ in 0..named_row_index {
-        picker_input.extend_from_slice(b"\x1b[B");
-    }
-    picker_input.push(b'\r');
-    let selected = repo.switch_in_pty("Capture Native Sessions", &picker_input);
+    let expected_path = searchable.path.canonicalize().unwrap();
+    let selected = repo.switch_in_pty("Capture Native Sessions", b"active\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
     assert!(
-        terminal.contains("✓ Using Capture Native Sessions"),
+        terminal.contains("✓ Using Search Active Changes"),
         "{terminal}"
     );
     assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));

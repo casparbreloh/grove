@@ -34,8 +34,9 @@ the repository's detected default branch.
 `switch` always opens a terminal picker containing active Grove Changes. The
 picker and `list` lead with each Change's stable inferred title. Until naming
 succeeds, Grove shows `Untitled`; duplicate and untitled rows include a short
-opaque ID only to disambiguate them. Ordinary, detached, and otherwise
-unmanaged Git worktrees are not included.
+opaque ID only to disambiguate them. Type to filter titles, use the arrow keys,
+and press Enter to select. Ordinary, detached, and otherwise unmanaged Git
+worktrees are not included.
 
 `remove` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe removal accepts work integrated by merge, cherry-pick or
@@ -85,25 +86,33 @@ terms.
 
 ## Change identity and storage
 
-Each Change has one immutable Grove-owned 32-character lowercase hexadecimal
-ID. Git uses that exact ID as a local branch name, but the normal UI hides it.
+Each Change has one immutable Grove-owned 8-character lowercase hexadecimal ID,
+unique within its repository. Git uses that exact ID as a local branch name, but the normal UI hides it.
 The human title and Pi session IDs are separate identities; neither renames the
 branch or capsule.
 
 Everything local to a Change lives together:
 
 ```text
-~/.grove/<repo-name>-<common-dir-digest>/<change-id>/
-  change.json
-  worktree/
-  sessions/pi/
-    <Pi-native session>.jsonl
-  artifacts/
-    change.patch
-    stats.json
+~/.grove/
+  repositories/
+    <repository-name>/
+      repository.json
+      <change-id>/
+        change.json
+        worktree/
+        sessions/pi/
+          <Pi-native session>.jsonl
+        artifacts/
+          change.patch
+          stats.json
+  runtime/
 ```
 
-`change.json` records Grove-owned identity, creation lineage, stable title, and
+The normal repository directory is its readable name. `repository.json`
+records the canonical Git common directory; only an unrelated repository that
+already shares the name receives a short suffix. `change.json` records
+Grove-owned identity, creation lineage, stable title, and
 the `active` → `closing` → `archived` lifecycle. Pi JSONL is the canonical
 conversation, usage, and tool history. Before deletion, Grove snapshots the
 authoritative base-to-final worktree as a binary-capable patch and machine-
@@ -125,15 +134,17 @@ versions. Retain or remove that old data manually.
 The wrapper lets Grove change the calling shell's directory and supplies
 command/flag completion. It does not edit shell configuration and does not
 complete Change titles as positional arguments because `switch` and primary
-`remove` use the picker.
+`remove` use the picker. Add the appropriate line to your shell configuration
+so it loads in every terminal; `--shell` fails before mutation when the wrapper
+is not loaded.
 
-For Fish:
+For Fish, add this to `~/.config/fish/config.fish`:
 
 ```fish
 grove init fish | source
 ```
 
-For Zsh:
+For Zsh, add this to `~/.zshrc`:
 
 ```sh
 eval "$(grove init zsh)"

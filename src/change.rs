@@ -12,6 +12,132 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 const RECORD_VERSION: u8 = 1;
+const REPOSITORY_RECORD_VERSION: u8 = 1;
+
+#[derive(Deserialize, Serialize)]
+struct RepositoryRecord {
+    version: u8,
+    name: String,
+    git_common_dir: String,
+}
+
+pub(crate) fn locate_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
+    let candidates = repository_candidates(root, name, common_dir);
+    for candidate in &candidates {
+        if repository_matches(candidate, common_dir)? {
+            return Ok(candidate.clone());
+        }
+    }
+    if !candidates[0].exists() {
+        Ok(candidates[0].clone())
+    } else {
+        Ok(candidates[1].clone())
+    }
+}
+
+pub(crate) fn claim_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
+    create_private_directory_all(root)
+        .with_context(|| format!("failed to create Grove repositories {}", root.display()))?;
+    let _claim_lock = repository_claim_lock(root)?;
+    let record = RepositoryRecord {
+        version: REPOSITORY_RECORD_VERSION,
+        name: name.to_owned(),
+        git_common_dir: common_dir.to_string_lossy().into_owned(),
+    };
+    for candidate in repository_candidates(root, name, common_dir) {
+        loop {
+            if repository_matches(&candidate, common_dir)? {
+                return Ok(candidate);
+            }
+            if candidate.exists() {
+                break;
+            }
+            match create_private_directory(&candidate) {
+                Ok(()) => {
+                    if let Err(error) = install_repository_record(&candidate, &record) {
+                        let _ = fs::remove_dir_all(&candidate);
+                        return Err(error);
+                    }
+                    return Ok(candidate);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to claim Grove repository {}", candidate.display())
+                    });
+                }
+            }
+        }
+    }
+    bail!("could not isolate Grove repository '{name}'")
+}
+
+fn repository_claim_lock(root: &Path) -> Result<File> {
+    let path = root.join(".lock");
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options
+        .open(&path)
+        .with_context(|| format!("failed to open repository claim lock {}", path.display()))?;
+    file.lock()
+        .with_context(|| format!("failed to lock Grove repositories {}", root.display()))?;
+    Ok(file)
+}
+
+fn install_repository_record(path: &Path, record: &RepositoryRecord) -> Result<()> {
+    let installed = path.join("repository.json");
+    let temporary = path.join(format!(
+        ".repository.json-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    if let Err(error) = write_json(&temporary, record) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary, &installed) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to install repository record {}",
+                installed.display()
+            )
+        });
+    }
+    sync_parent(&installed)
+}
+
+fn repository_candidates(root: &Path, name: &str, common_dir: &Path) -> [PathBuf; 2] {
+    let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
+    [
+        root.join(name),
+        root.join(format!("{name}-{}", &digest[..8])),
+    ]
+}
+
+fn repository_matches(path: &Path, common_dir: &Path) -> Result<bool> {
+    let manifest = path.join("repository.json");
+    let bytes = match fs::read(&manifest) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to read repository record {}", manifest.display())
+            });
+        }
+    };
+    let record: RepositoryRecord = serde_json::from_slice(&bytes)
+        .with_context(|| format!("invalid repository record {}", manifest.display()))?;
+    if record.version != REPOSITORY_RECORD_VERSION {
+        bail!("unsupported repository record {}", manifest.display());
+    }
+    Ok(Path::new(&record.git_common_dir) == common_dir)
+}
 
 pub(crate) struct Lock {
     _file: File,
@@ -335,11 +461,11 @@ fn generate_id(root: &Path, nonce: u8) -> Result<String> {
         .context("system clock is before the Unix epoch")?
         .as_nanos();
     let seed = format!("{}:{now}:{}:{nonce}", root.display(), std::process::id());
-    Ok(blake3::hash(seed.as_bytes()).to_hex()[..32].to_owned())
+    Ok(blake3::hash(seed.as_bytes()).to_hex()[..8].to_owned())
 }
 
 fn valid_id(id: &str) -> bool {
-    id.len() == 32
+    id.len() == 8
         && id
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -352,29 +478,41 @@ fn create_private_directory(path: &Path) -> std::io::Result<()> {
     builder.create(path)
 }
 
+fn create_private_directory_all(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path)
+}
+
 fn write_record(path: &Path, record: &Record) -> Result<()> {
+    write_json(path, record)
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options
         .open(path)
-        .with_context(|| format!("failed to create change record {}", path.display()))?;
-    serde_json::to_writer_pretty(&mut file, record)
-        .with_context(|| format!("failed to serialize change record {}", path.display()))?;
+        .with_context(|| format!("failed to create Grove record {}", path.display()))?;
+    serde_json::to_writer_pretty(&mut file, value)
+        .with_context(|| format!("failed to serialize Grove record {}", path.display()))?;
     file.write_all(b"\n")
-        .with_context(|| format!("failed to finish change record {}", path.display()))?;
+        .with_context(|| format!("failed to finish Grove record {}", path.display()))?;
     file.sync_all()
-        .with_context(|| format!("failed to sync change record {}", path.display()))?;
+        .with_context(|| format!("failed to sync Grove record {}", path.display()))?;
     sync_parent(path)?;
     Ok(())
 }
 
 fn sync_parent(path: &Path) -> Result<()> {
-    let parent = path.parent().context("change record has no parent")?;
+    let parent = path.parent().context("Grove record has no parent")?;
     File::open(parent)
-        .with_context(|| format!("failed to open change directory {}", parent.display()))?
+        .with_context(|| format!("failed to open Grove directory {}", parent.display()))?
         .sync_all()
-        .with_context(|| format!("failed to sync change directory {}", parent.display()))?;
+        .with_context(|| format!("failed to sync Grove directory {}", parent.display()))?;
     Ok(())
 }
