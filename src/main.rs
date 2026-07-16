@@ -134,7 +134,25 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
     if shell {
         require_shell_navigation()?;
     }
-    let selected = pick(git)?;
+    let (mut choices, _) = rows(git)?;
+    if shell && choices.iter().any(|row| row.current) {
+        let current = git.current_path()?;
+        let primary = git.primary_path()?;
+        choices.insert(
+            0,
+            Row {
+                current: false,
+                change_id: None,
+                worktree_path: primary.clone(),
+                title_label: "Main repository".to_owned(),
+                base: String::new(),
+                changes: String::new(),
+                divergence: String::new(),
+                path: display_path(&primary, &current),
+            },
+        );
+    }
+    let selected = pick(choices)?;
     eprintln!(
         "✓ Using {} at {}",
         selected.title_label,
@@ -147,8 +165,7 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
     }
 }
 
-fn pick(git: &Git) -> Result<Row> {
-    let (choices, _) = rows(git)?;
+fn pick(choices: Vec<Row>) -> Result<Row> {
     if choices.is_empty() {
         bail!("no active changes to switch to");
     }
@@ -228,7 +245,7 @@ fn print_picker(
     selected: usize,
     output: &mut impl Write,
 ) -> std::io::Result<()> {
-    writeln!(output, "Filter: {filter}\r")?;
+    writeln!(output, "Search  {filter}\r")?;
     print_rows(rows, output, true, "\r\n", Some(selected))
 }
 
@@ -319,7 +336,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         };
         rows.push(Row {
             current: worktree.current,
-            id: worktree.id.clone(),
+            change_id: Some(worktree.id.clone()),
             worktree_path: worktree.path.clone(),
             title_label,
             base: worktree.base.clone(),
@@ -338,7 +355,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
 #[derive(Clone)]
 struct Row {
     current: bool,
-    id: String,
+    change_id: Option<String>,
     worktree_path: PathBuf,
     title_label: String,
     base: String,
@@ -485,10 +502,10 @@ fn remove(git: &Git, force: bool) -> Result<()> {
     }
     let current = git.current_path()?;
     let (rows, _) = rows(git)?;
-    let selected = if let Some(current) = rows.into_iter().find(|row| row.current) {
-        current
+    let selected = if let Some(current) = rows.iter().find(|row| row.current) {
+        current.clone()
     } else if current == git.primary_path()? {
-        pick(git)?
+        pick(rows)?
     } else {
         bail!("current worktree is not a managed Grove change");
     };
@@ -497,7 +514,11 @@ fn remove(git: &Git, force: bool) -> Result<()> {
     }
     let session = Session::for_worktree(&selected.worktree_path)?;
     let _lock = session.lock()?;
-    let prepared = git.prepare_removal(&selected.id, force)?;
+    let change_id = selected
+        .change_id
+        .as_deref()
+        .context("selected destination is not a Change")?;
+    let prepared = git.prepare_removal(change_id, force)?;
     let removal = git.remove(prepared)?;
     eprintln!("✓ Removed {}", selected.title_label);
     if let Some(path) = removal.navigate_to {

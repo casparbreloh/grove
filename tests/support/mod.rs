@@ -157,16 +157,22 @@ impl TestRepo {
             .expect("spawn compiled Grove binary")
     }
 
-    pub fn switch_in_pty(&self, ready: &str, input: &[u8]) -> Output {
+    pub fn switch_in_pty(&self, directory: &Path, ready: &str, input: &[u8]) -> Output {
         self.run_pty(
-            self.sh_picker("switch --shell"),
+            self.sh_picker(directory, "switch --shell"),
             ready,
             input,
             "Grove switch",
         )
     }
 
-    pub fn switch_with_shell_in_pty(&self, shell: &str, ready: &str, input: &[u8]) -> Output {
+    pub fn switch_with_shell_in_pty(
+        &self,
+        directory: &Path,
+        shell: &str,
+        ready: &str,
+        input: &[u8],
+    ) -> Output {
         let binary = self.compiled_binary();
         let shell_path = find_executable(shell);
         let script = match shell {
@@ -178,7 +184,7 @@ impl TestRepo {
             }
             _ => panic!("unsupported test shell {shell}"),
         };
-        let mut command = self.pty(&self.repo, shell_path.as_os_str());
+        let mut command = self.pty(directory, shell_path.as_os_str());
         command
             .args(["-c", script])
             .env("GROVE_TEST_BINARY", &binary)
@@ -188,7 +194,12 @@ impl TestRepo {
     }
 
     pub fn remove_in_pty(&self, ready: &str, input: &[u8]) -> Output {
-        self.run_pty(self.sh_picker("remove"), ready, input, "Grove remove")
+        self.run_pty(
+            self.sh_picker(&self.repo, "remove"),
+            ready,
+            input,
+            "Grove remove",
+        )
     }
 
     pub fn select_agent_in_pty(&self, ready: &str, input: &[u8]) -> Output {
@@ -321,8 +332,8 @@ impl TestRepo {
         }
     }
 
-    fn sh_picker(&self, action: &str) -> Command {
-        let mut command = self.pty(&self.repo, OsStr::new("/bin/sh"));
+    fn sh_picker(&self, directory: &Path, action: &str) -> Command {
+        let mut command = self.pty(directory, OsStr::new("/bin/sh"));
         command
             .args([
                 "-c",

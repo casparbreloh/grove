@@ -31,12 +31,13 @@ argument. `--from` accepts any revision that resolves to a commit; `--from @`
 uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
-`switch` always opens a terminal picker containing active Grove Changes. The
-picker and `list` lead with each Change's stable inferred title. Until naming
-succeeds, Grove shows `Untitled`; duplicate and untitled rows include a short
-opaque ID only to disambiguate them. Type to filter titles, use the arrow keys,
-and press Enter to select. Ordinary, detached, and otherwise unmanaged Git
-worktrees are not included.
+`switch` always opens a terminal picker containing active Grove Changes. From a
+Change, `switch --shell` also offers the main repository first. The picker and
+`list` lead with each Change's stable inferred title. Until naming succeeds,
+Grove shows `Untitled`; duplicate and untitled rows include a short opaque ID
+only to disambiguate them. Type to search titles, use the arrow keys, and press
+Enter to select. Ordinary, detached, and otherwise unmanaged Git worktrees are
+not included.
 
 `remove` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe removal accepts work integrated by merge, cherry-pick or
