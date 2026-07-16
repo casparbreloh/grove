@@ -138,7 +138,9 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
     if choices.iter().any(|row| row.current) {
         choices.insert(0, main_row(git)?);
     }
-    let selected = pick(choices)?;
+    let Some(selected) = pick(choices)? else {
+        return Ok(());
+    };
     eprintln!(
         "✓ Using {} at {}",
         selected.title_label,
@@ -151,7 +153,7 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
     }
 }
 
-fn pick(choices: Vec<Row>) -> Result<Row> {
+fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
     if choices.is_empty() {
         bail!("no active changes to switch to");
     }
@@ -163,14 +165,14 @@ fn pick(choices: Vec<Row>) -> Result<Row> {
     select(&mut output, &choices)
 }
 
-fn select(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
+fn select(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
     let mut mode = PickerMode::enter(output)?;
     let selection = select_raw(mode.output(), choices);
     mode.restore()?;
     selection
 }
 
-fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
+fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
     print_picker(choices, 0, output)?;
     output.flush()?;
     let mut selected: usize = 0;
@@ -184,10 +186,10 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
         let next = match key.code {
             KeyCode::Up => selected.saturating_sub(1),
             KeyCode::Down => (selected + 1).min(choices.len().saturating_sub(1)),
-            KeyCode::Enter => return Ok(choices[selected].clone()),
-            KeyCode::Esc => bail!("selection cancelled"),
+            KeyCode::Enter => return Ok(Some(choices[selected].clone())),
+            KeyCode::Esc => return Ok(None),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                bail!("selection cancelled")
+                return Ok(None);
             }
             _ => continue,
         };
@@ -483,11 +485,14 @@ fn remove(git: &Git, force: bool) -> Result<()> {
     let current = git.current_path()?;
     let (rows, _) = change_rows(git)?;
     let selected = if let Some(current) = rows.iter().find(|row| row.current) {
-        current.clone()
+        Some(current.clone())
     } else if current == git.primary_path()? {
         pick(rows)?
     } else {
         bail!("current worktree is not a managed Grove change");
+    };
+    let Some(selected) = selected else {
+        return Ok(());
     };
     if selected.worktree_path == current {
         require_shell_navigation()?;

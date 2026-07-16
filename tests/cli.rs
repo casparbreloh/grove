@@ -634,18 +634,19 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
 
     let before = repo.navigation();
     let unmanaged = repo.switch_in_pty(&ordinary, "Capture Native Sessions", b"\x1b");
-    assert!(!unmanaged.status.success(), "{unmanaged:?}");
+    assert!(unmanaged.status.success(), "{unmanaged:?}");
     let terminal = stdout(&unmanaged);
     assert!(!terminal.contains("Main repository"), "{terminal}");
+    assert!(!terminal.contains("Error:"), "{terminal}");
     assert_eq!(repo.navigation(), before);
     assert_terminal_restored(&terminal);
 
     for input in [b"\x1b".as_slice(), b"\x03".as_slice()] {
         let before = repo.navigation();
         let cancelled = repo.switch_in_pty(repo.path(), "Capture Native Sessions", input);
-        assert!(!cancelled.status.success());
+        assert!(cancelled.status.success(), "{cancelled:?}");
         let terminal = stdout(&cancelled);
-        assert!(terminal.contains("selection cancelled"), "{terminal}");
+        assert!(!terminal.contains("Error:"), "{terminal}");
         assert_eq!(repo.navigation(), before);
         assert_terminal_restored(&terminal);
     }
@@ -671,6 +672,13 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let removable = TestRepo::new();
     let change = removable.create_change(None);
     removable.set_change_title(&change, "Remove Finished Change");
+    let cancelled = removable.remove_in_pty("Remove Finished Change", b"\x1b");
+    assert!(cancelled.status.success(), "{cancelled:?}");
+    let terminal = stdout(&cancelled);
+    assert!(!terminal.contains("Error:"), "{terminal}");
+    assert!(change.path.exists() && removable.branch_exists(&change.branch));
+    assert_terminal_restored(&terminal);
+
     let removed = removable.remove_in_pty("Remove Finished Change", b"\r");
     assert!(removed.status.success(), "{removed:?}");
     let terminal = stdout(&removed);
