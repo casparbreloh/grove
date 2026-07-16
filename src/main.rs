@@ -171,9 +171,7 @@ fn select(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
 }
 
 fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
-    let mut filter = String::new();
-    let mut visible = filtered_rows(choices, &filter);
-    print_picker(&visible, &filter, 0, output)?;
+    print_picker(choices, 0, output)?;
     output.flush()?;
     let mut selected: usize = 0;
     loop {
@@ -185,72 +183,33 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
         }
         let next = match key.code {
             KeyCode::Up => selected.saturating_sub(1),
-            KeyCode::Down => (selected + 1).min(visible.len().saturating_sub(1)),
-            KeyCode::Enter if !visible.is_empty() => return Ok(visible[selected].clone()),
+            KeyCode::Down => (selected + 1).min(choices.len().saturating_sub(1)),
+            KeyCode::Enter => return Ok(choices[selected].clone()),
             KeyCode::Esc => bail!("selection cancelled"),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 bail!("selection cancelled")
             }
-            KeyCode::Backspace if !filter.is_empty() => {
-                filter.pop();
-                visible = replace_picker(output, visible.len(), choices, &filter, 0)?;
-                selected = 0;
-                continue;
-            }
-            KeyCode::Char(character)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                filter.push(character);
-                visible = replace_picker(output, visible.len(), choices, &filter, 0)?;
-                selected = 0;
-                continue;
-            }
             _ => continue,
         };
         if next != selected {
-            visible = replace_picker(output, visible.len(), choices, &filter, next)?;
+            redraw_picker(output, choices, next)?;
             selected = next;
         }
     }
 }
 
-fn filtered_rows(choices: &[Row], filter: &str) -> Vec<Row> {
-    let filter = filter.to_lowercase();
-    choices
-        .iter()
-        .filter(|row| row.title_label.to_lowercase().contains(&filter))
-        .cloned()
-        .collect()
-}
-
-fn print_picker(
-    rows: &[Row],
-    filter: &str,
-    selected: usize,
-    output: &mut impl Write,
-) -> std::io::Result<()> {
-    writeln!(output, "⌕  {filter}\r")?;
+fn print_picker(rows: &[Row], selected: usize, output: &mut impl Write) -> std::io::Result<()> {
     print_rows(rows, output, true, "\r\n", Some(selected))
 }
 
-fn replace_picker(
-    output: &mut impl Write,
-    previous_rows: usize,
-    choices: &[Row],
-    filter: &str,
-    selected: usize,
-) -> std::io::Result<Vec<Row>> {
-    let distance = u16::try_from(previous_rows + 2).unwrap_or(u16::MAX);
+fn redraw_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> std::io::Result<()> {
+    let distance = u16::try_from(rows.len() + 1).unwrap_or(u16::MAX);
     output
         .queue(MoveUp(distance))?
         .queue(MoveToColumn(0))?
         .queue(Clear(ClearType::FromCursorDown))?;
-    let rows = filtered_rows(choices, filter);
-    print_picker(&rows, filter, selected, output)?;
-    output.flush()?;
-    Ok(rows)
+    print_picker(rows, selected, output)?;
+    output.flush()
 }
 
 struct RawMode {

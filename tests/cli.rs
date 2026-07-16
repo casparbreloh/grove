@@ -148,12 +148,28 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
             shell,
             "grove switch --shell",
             "Navigate With Shell",
-            b"\r",
+            b"x\r\x1b",
         );
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
         let expected = shell_repo.path().canonicalize().unwrap();
         assert!(terminal.contains("Main repository"), "{shell}: {terminal}");
+        assert!(
+            terminal.contains(&format!("__PWD__{}", expected.display())),
+            "{shell}: {terminal}"
+        );
+        assert_terminal_restored(&terminal);
+
+        let output = shell_repo.switch_from_shell_in_pty(
+            &change.path,
+            shell,
+            "grove switch --shell",
+            "Navigate With Shell",
+            b"\x1b[B\r",
+        );
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let terminal = stdout(&output);
+        let expected = change.path.canonicalize().unwrap();
         assert!(
             terminal.contains(&format!("__PWD__{}", expected.display())),
             "{shell}: {terminal}"
@@ -567,10 +583,10 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let named = &changes[0];
     let duplicate = &changes[1];
     let untitled = &changes[2];
-    let searchable = &changes[3];
+    let fourth = &changes[3];
     repo.set_change_title(named, "Capture Native Sessions");
     repo.set_change_title(duplicate, "Capture Native Sessions");
-    repo.set_change_title(searchable, "Search Active Changes");
+    repo.set_change_title(fourth, "Review Active Changes");
     let ordinary = repo.home().join("ordinary");
     repo.git(["branch", "ordinary"]);
     repo.git(["worktree", "add", ordinary.to_str().unwrap(), "ordinary"]);
@@ -597,25 +613,27 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         !table.contains("ordinary") && !table.contains("detached"),
         "{table}"
     );
-    assert!(table.contains("Search Active Changes"), "{table}");
+    assert!(table.contains("Review Active Changes"), "{table}");
     assert!(stderr(&listed).contains("Showing 4 changes"));
 
-    let expected_path = searchable.path.canonicalize().unwrap();
-    let selected = repo.switch_in_pty(repo.path(), "Capture Native Sessions", b"active\r");
+    let selected = repo.switch_in_pty(repo.path(), "Capture Native Sessions", b"\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    assert!(terminal.contains("⌕  active"), "{terminal}");
-    assert!(!terminal.contains("Search  active"), "{terminal}");
-    assert!(
-        terminal.contains("✓ Using Search Active Changes"),
-        "{terminal}"
-    );
+    assert!(!terminal.contains('⌕'), "{terminal}");
+    assert!(terminal.contains("✓ Using"), "{terminal}");
     assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
-    assert_eq!(repo.navigation(), expected_path);
+    let selected_path = repo.navigation();
+    assert!(
+        changes
+            .iter()
+            .any(|change| change.path.canonicalize().unwrap() == selected_path),
+        "{}",
+        selected_path.display()
+    );
     assert_terminal_restored(&terminal);
 
     let before = repo.navigation();
-    let unmanaged = repo.switch_in_pty(&ordinary, "Capture Native Sessions", b"main\r\x1b");
+    let unmanaged = repo.switch_in_pty(&ordinary, "Capture Native Sessions", b"\x1b");
     assert!(!unmanaged.status.success(), "{unmanaged:?}");
     let terminal = stdout(&unmanaged);
     assert!(!terminal.contains("Main repository"), "{terminal}");

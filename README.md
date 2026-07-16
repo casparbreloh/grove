@@ -36,9 +36,9 @@ Change it also offers the main repository first; selecting main returns the
 calling shell there without opening Pi. `list` always includes main without
 counting it as a Change. The picker and `list` lead with each Change's stable
 inferred title. Until naming succeeds, Grove shows `Untitled`; duplicate and
-untitled rows include a short opaque ID only to disambiguate them. Type to
-search titles, use the arrow keys, and press Enter to select. Ordinary,
-detached, and otherwise unmanaged Git worktrees are not included.
+untitled rows include a short opaque ID only to disambiguate them. Use the arrow
+keys and press Enter to select. Ordinary, detached, and otherwise unmanaged Git
+worktrees are not included.
 
 `remove` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe removal accepts work integrated by merge, cherry-pick or
