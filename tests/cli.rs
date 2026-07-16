@@ -1125,4 +1125,7 @@ fn assert_terminal_restored(terminal: &str) {
     let flags = terminal.split_whitespace().collect::<Vec<_>>();
     assert!(flags.contains(&"icanon"), "{terminal:?}");
     assert!(flags.contains(&"echo"), "{terminal:?}");
+    let hidden = terminal.rfind("\x1b[?25l").expect("picker hides cursor");
+    let shown = terminal.rfind("\x1b[?25h").expect("picker restores cursor");
+    assert!(hidden < shown, "{terminal:?}");
 }

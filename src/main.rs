@@ -13,7 +13,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 use crossterm::{
     QueueableCommand,
-    cursor::{MoveToColumn, MoveUp},
+    cursor::{Hide, MoveToColumn, MoveUp, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
@@ -164,9 +164,9 @@ fn pick(choices: Vec<Row>) -> Result<Row> {
 }
 
 fn select(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
-    let mut raw_mode = RawMode::enter()?;
-    let selection = select_raw(output, choices);
-    raw_mode.restore()?;
+    let mut mode = PickerMode::enter(output)?;
+    let selection = select_raw(mode.output(), choices);
+    mode.restore()?;
     selection
 }
 
@@ -212,26 +212,44 @@ fn redraw_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> std:
     output.flush()
 }
 
-struct RawMode {
+struct PickerMode<'a, W: Write> {
+    output: &'a mut W,
     active: bool,
 }
 
-impl RawMode {
-    fn enter() -> Result<Self> {
+impl<'a, W: Write> PickerMode<'a, W> {
+    fn enter(output: &'a mut W) -> Result<Self> {
         enable_raw_mode().context("enable raw mode for worktree picker")?;
-        Ok(Self { active: true })
+        if let Err(error) = output.queue(Hide).and_then(|output| output.flush()) {
+            let _ = output.queue(Show).and_then(|output| output.flush());
+            let _ = disable_raw_mode();
+            return Err(error).context("hide cursor for worktree picker");
+        }
+        Ok(Self {
+            output,
+            active: true,
+        })
+    }
+
+    fn output(&mut self) -> &mut W {
+        self.output
     }
 
     fn restore(&mut self) -> Result<()> {
+        self.output
+            .queue(Show)
+            .and_then(|output| output.flush())
+            .context("restore cursor after worktree picker")?;
         disable_raw_mode().context("restore terminal mode after worktree picker")?;
         self.active = false;
         Ok(())
     }
 }
 
-impl Drop for RawMode {
+impl<W: Write> Drop for PickerMode<'_, W> {
     fn drop(&mut self) {
         if self.active {
+            let _ = self.output.queue(Show).and_then(|output| output.flush());
             let _ = disable_raw_mode();
         }
     }
