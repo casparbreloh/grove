@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -8,21 +10,20 @@ use std::{
 #[cfg(unix)]
 use std::{
     ffi::OsString,
-    os::unix::{ffi::OsStringExt, fs::OpenOptionsExt},
+    os::unix::{ffi::OsStringExt, fs::DirBuilderExt, fs::OpenOptionsExt},
 };
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+
+use crate::change::{
+    Change, Closure, Creation, Outcome, Record, Reserved, lock as lock_change, mark_archived,
+    mark_closing, restore_active,
+};
 
 #[derive(Clone)]
 pub(crate) struct Git {
     cwd: PathBuf,
-}
-
-pub(crate) struct WorktreeIdentity {
-    pub(crate) git_dir: PathBuf,
-    pub(crate) root: PathBuf,
-    pub(crate) session_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -45,127 +46,71 @@ pub(crate) struct Divergence {
     pub(crate) behind: usize,
 }
 
-pub(crate) struct Change {
-    pub(crate) branch: String,
-    pub(crate) path: PathBuf,
-}
-
-pub(crate) struct PendingChange {
-    git: Git,
-    path: PathBuf,
-    base: CreationBase,
-    metadata: PathBuf,
-}
-
-impl PendingChange {
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub(crate) fn name(&self, branch: &str) -> Result<Change> {
-        self.git.validate_branch(branch)?;
-        if self.git.branch_exists(branch)? {
-            bail!("branch '{branch}' already exists");
-        }
-        let target = self.git.worktree_path(branch)?;
-        if target.exists() {
-            bail!("worktree path already exists: {}", target.display());
-        }
-        self.git.output_at(&self.path, &["switch", "-c", branch])?;
-        if let Err(error) = Lineage::record(&self.git, branch, &self.base) {
-            self.rollback_name(branch);
-            return Err(error).context("could not record inferred lineage");
-        }
-        if let Err(error) = self.git.worktree_move(&self.path, &target) {
-            self.rollback_name(branch);
-            return Err(error).context("could not rename inferred worktree");
-        }
-        if let Err(cleanup) = std::fs::remove_file(&self.metadata) {
-            self.git
-                .worktree_move(&target, &self.path)
-                .context("could not roll back inferred worktree rename")?;
-            self.rollback_name(branch);
-            return Err(cleanup)
-                .with_context(|| format!("failed to finish naming {}", target.display()));
-        }
-        Ok(Change {
-            branch: branch.to_owned(),
-            path: target,
-        })
-    }
-
-    pub(crate) fn discard(&self) -> Result<()> {
-        self.git.worktree_remove(&self.path, false)
-    }
-
-    pub(crate) fn is_pending(&self) -> bool {
-        self.path.is_dir() && self.metadata.is_file()
-    }
-
-    pub(crate) fn load(git: Git) -> Result<Self> {
-        let identity = git.worktree_identity()?;
-        let metadata = identity.git_dir.join(PENDING_FILE);
-        let contents = std::fs::read(&metadata).with_context(|| {
-            format!(
-                "current worktree is not pending: {}",
-                identity.root.display()
-            )
-        })?;
-        let base = serde_json::from_slice(&contents).with_context(|| {
-            format!("invalid pending worktree metadata: {}", metadata.display())
-        })?;
-        Ok(Self {
-            git,
-            path: identity.root,
-            base,
-            metadata,
-        })
-    }
-
-    fn rollback_name(&self, branch: &str) {
-        let _ = Lineage::clear(&self.git, &self.path, branch);
-        let _ = self.git.output_at(&self.path, &["switch", "--detach"]);
-        let _ = self
-            .git
-            .raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
-    }
-}
-
 pub(crate) enum WorktreeState {
     Present(Status),
     Missing,
 }
 
 pub(crate) struct WorktreeView {
+    pub(crate) id: String,
+    pub(crate) title: Option<String>,
     pub(crate) path: PathBuf,
-    pub(crate) branch: Option<String>,
-    pub(crate) pending: bool,
     pub(crate) base: String,
     pub(crate) divergence: Option<Divergence>,
     pub(crate) state: WorktreeState,
     pub(crate) current: bool,
-    pub(crate) primary: bool,
 }
 
 pub(crate) struct Removal {
-    pub(crate) label: String,
     pub(crate) navigate_to: Option<PathBuf>,
 }
 
 pub(crate) struct PreparedRemoval {
     path: PathBuf,
-    branch: Option<String>,
+    branch: String,
+    capsule: PathBuf,
+    base_oid: String,
     primary: PathBuf,
     current: PathBuf,
-    expected_oid: Option<String>,
+    expected_oid: String,
+    target_oid: Option<String>,
+    target_ref: Option<String>,
+    integration: String,
     force: bool,
-    identity: WorktreeIdentity,
 }
 
-impl PreparedRemoval {
-    pub(crate) fn identity(&self) -> &WorktreeIdentity {
-        &self.identity
-    }
+#[derive(Serialize)]
+struct ArchiveStats {
+    version: u8,
+    base_oid: String,
+    final_tree: String,
+    patch_digest: String,
+    summary: FileSummary,
+    files: Vec<ArchiveFile>,
+}
+
+#[derive(Default, Serialize)]
+struct FileSummary {
+    files_changed: usize,
+    additions: u64,
+    deletions: u64,
+    added: usize,
+    modified: usize,
+    deleted: usize,
+    renamed: usize,
+    copied: usize,
+    binary: usize,
+}
+
+#[derive(Serialize)]
+struct ArchiveFile {
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    old_path: Option<String>,
+    status: String,
+    additions: Option<u64>,
+    deletions: Option<u64>,
+    binary: bool,
 }
 
 struct BranchBase {
@@ -175,113 +120,61 @@ struct BranchBase {
     valid: bool,
 }
 
-#[derive(Deserialize, Serialize)]
-struct CreationBase {
-    display_ref: Option<String>,
-    oid: String,
-    parent: Option<String>,
-}
-
-const BASE_REF_FIELD: &str = "grove-base-ref";
-const BASE_OID_FIELD: &str = "grove-base-oid";
-const PARENT_FIELD: &str = "grove-parent";
-const LINEAGE_FIELDS: [&str; 3] = [BASE_REF_FIELD, BASE_OID_FIELD, PARENT_FIELD];
-const PENDING_FILE: &str = "grove-pending.json";
-const SESSION_ID_FILE: &str = "grove-session-id";
-
 struct Lineage {
     base_ref: Option<String>,
     base_oid: Option<String>,
     parent: Option<String>,
+    default: bool,
 }
 
 impl Lineage {
-    fn create(git: &Git, source: Option<&str>, branch: &str) -> Result<Change> {
-        let base = Self::resolve_creation_base(git, source)?;
-        let path = git.switch(branch, Some(&base))?;
-        if let Err(error) = Self::record(git, branch, &base) {
-            git.rollback_created_worktree(&path, branch);
-            return Err(error).context("could not record lineage");
-        }
-        Ok(Change {
-            branch: branch.to_owned(),
-            path,
-        })
-    }
-
-    fn resolve_creation_base(git: &Git, source: Option<&str>) -> Result<CreationBase> {
+    fn resolve_creation_base(git: &Git, source: Option<&str>) -> Result<Creation> {
         let Some(source) = source else {
             let default = git.default_branch()?;
-            return Ok(CreationBase {
-                oid: git.peel_commit(&default)?,
-                display_ref: None,
-                parent: None,
+            return Ok(Creation {
+                base_oid: git.peel_commit(&default)?,
+                base_ref: None,
+                parent: Some(default),
             });
         };
 
         if source == "@" {
-            let oid = git.peel_commit("HEAD")?;
+            let base_oid = git.peel_commit("HEAD")?;
             let parent = git
                 .text(&["symbolic-ref", "--quiet", "--short", "HEAD"])
                 .ok();
-            return Ok(CreationBase {
-                display_ref: Some(source.to_owned()),
-                oid,
+            return Ok(Creation {
+                base_ref: Some(source.to_owned()),
+                base_oid,
                 parent,
             });
         }
 
-        let oid = git.peel_commit(source)?;
+        let base_oid = git.peel_commit(source)?;
         let parent = git.local_branch(source)?;
-        Ok(CreationBase {
-            display_ref: Some(source.to_owned()),
-            oid,
-            parent,
-        })
-    }
-
-    fn record(git: &Git, branch: &str, base: &CreationBase) -> Result<()> {
-        let (base_ref, base_oid, parent) = match &base.display_ref {
-            Some(base_ref) => (
-                Some(base_ref.as_str()),
-                Some(base.oid.as_str()),
-                base.parent.as_deref(),
-            ),
-            None => (None, None, None),
-        };
-        let fields = [
-            (BASE_REF_FIELD, base_ref),
-            (BASE_OID_FIELD, base_oid),
-            (PARENT_FIELD, parent),
-        ];
-        for (field, value) in fields {
-            if let Some(value) = value {
-                git.output(&["config", "--local", &lineage_key(branch, field), value])?;
-            }
-        }
-        Ok(())
-    }
-
-    fn load(git: &Git, branch: &str) -> Result<Self> {
-        let base_ref = git.config_value(&lineage_key(branch, BASE_REF_FIELD))?;
-        let base_oid = git.config_value(&lineage_key(branch, BASE_OID_FIELD))?;
-        let parent = git.config_value(&lineage_key(branch, PARENT_FIELD))?;
-        Ok(Self {
-            base_ref,
+        Ok(Creation {
+            base_ref: Some(source.to_owned()),
             base_oid,
             parent,
         })
     }
 
-    fn clear(git: &Git, cwd: &Path, branch: &str) -> Result<()> {
-        for field in LINEAGE_FIELDS {
-            let key = lineage_key(branch, field);
-            let output = git.raw_at(cwd, &["config", "--local", "--unset-all", &key])?;
-            if !output.status.success() && output.status.code() != Some(5) {
-                check(output, &["config", "--local", "--unset-all", "<key>"])?;
-            }
-        }
-        Ok(())
+    fn load(git: &Git, branch: &str) -> Result<Self> {
+        let path = git.changes_root()?.join(branch).join("change.json");
+        let Some(record) = Record::load_optional(&path)? else {
+            return Ok(Self {
+                base_ref: None,
+                base_oid: None,
+                parent: None,
+                default: false,
+            });
+        };
+        Ok(Self {
+            default: record.creation.base_ref.is_none(),
+            base_ref: record.creation.base_ref,
+            base_oid: Some(record.creation.base_oid),
+            parent: record.creation.parent,
+        })
     }
 
     fn base(&self, git: &Git, branch: &str) -> Result<BranchBase> {
@@ -291,6 +184,15 @@ impl Lineage {
                 display: String::new(),
                 divergence_ref: None,
                 removal_ref: None,
+                valid: true,
+            });
+        }
+
+        if self.default {
+            return Ok(BranchBase {
+                display: default_name,
+                divergence_ref: Some(default_ref.clone()),
+                removal_ref: Some(default_ref),
                 valid: true,
             });
         }
@@ -361,10 +263,6 @@ impl Lineage {
     }
 }
 
-fn lineage_key(branch: &str, field: &str) -> String {
-    format!("branch.{branch}.{field}")
-}
-
 impl Git {
     pub(crate) fn discover() -> Result<Self> {
         Self::at(&std::env::current_dir()?)
@@ -381,31 +279,6 @@ impl Git {
         Ok(git)
     }
 
-    pub(crate) fn worktree_identity(&self) -> Result<WorktreeIdentity> {
-        let git_dir = PathBuf::from(self.text(&["rev-parse", "--git-dir"])?);
-        let git_dir = if git_dir.is_absolute() {
-            git_dir
-        } else {
-            self.cwd.join(git_dir)
-        };
-        let git_dir = git_dir
-            .canonicalize()
-            .context("failed to resolve Git worktree directory")?;
-        Ok(WorktreeIdentity {
-            session_id: read_session_id(&git_dir)?,
-            git_dir,
-            root: self.current_root()?,
-        })
-    }
-
-    pub(crate) fn session_identity(&self) -> Result<WorktreeIdentity> {
-        let mut identity = self.worktree_identity()?;
-        if identity.session_id.is_none() {
-            identity.session_id = Some(create_session_id(&identity.git_dir)?);
-        }
-        Ok(identity)
-    }
-
     pub(crate) fn primary_path(&self) -> Result<PathBuf> {
         self.worktrees()?
             .into_iter()
@@ -414,139 +287,130 @@ impl Git {
             .context("repository has no worktrees")
     }
 
-    pub(crate) fn enter(&self, branch: &str) -> Result<PathBuf> {
-        if branch == "main" {
-            return self
-                .worktrees()?
-                .into_iter()
-                .next()
-                .map(|worktree| worktree.path)
-                .context("repository has no worktrees");
-        }
-        self.switch(branch, None)
-    }
-
-    pub(crate) fn create_change(&self, from: Option<&str>, branch: &str) -> Result<Change> {
-        Lineage::create(self, from, branch)
-    }
-
-    pub(crate) fn create_pending_change(&self, from: Option<&str>) -> Result<PendingChange> {
-        let base = Lineage::resolve_creation_base(self, from)?;
-        let path = self.worktree_path(&self.pending_id()?)?;
-        if path.exists() {
-            bail!("worktree path already exists: {}", path.display());
-        }
-        std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
-        self.output_os(&["worktree", "add", "--detach"], &path, &[&base.oid])?;
-        let metadata = Git::at(&path)?
-            .worktree_identity()?
-            .git_dir
-            .join(PENDING_FILE);
-        let contents = serde_json::to_vec(&base)?;
-        if let Err(error) = std::fs::write(&metadata, contents) {
-            let _ = self.worktree_remove(&path, true);
-            return Err(error).context("could not record pending worktree");
-        }
-        Ok(PendingChange {
-            git: self.clone(),
-            path,
-            base,
-            metadata,
-        })
-    }
-
-    pub(crate) fn name_pending_change(&self, prompt: &str) -> Result<Change> {
-        let branch = branch_from_prompt(prompt)?;
-        PendingChange::load(self.clone())?.name(&branch)
-    }
-
-    fn switch(&self, branch: &str, base: Option<&CreationBase>) -> Result<PathBuf> {
-        self.validate_branch(branch)?;
-        let create = base.is_some();
-        let worktrees = self.worktrees()?;
-        if let Some(worktree) = worktrees
-            .iter()
-            .find(|worktree| worktree.branch.as_deref() == Some(branch))
-        {
-            if create {
-                bail!("branch '{branch}' already exists");
+    pub(crate) fn create_change(&self, from: Option<&str>) -> Result<Change> {
+        let creation = Lineage::resolve_creation_base(self, from)?;
+        let root = self.changes_root()?;
+        let common_dir = self.common_dir()?;
+        for _ in 0..100 {
+            let reserved = Reserved::create(&root, &common_dir, creation.clone())?;
+            let id = reserved.id().to_owned();
+            match self.branch_exists(&id) {
+                Ok(true) => {
+                    reserved.rollback()?;
+                    continue;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    reserved.rollback()?;
+                    return Err(error).context("could not inspect reserved change branch");
+                }
             }
-            return Ok(worktree.path.clone());
+            if let Err(error) = self.reserve_branch(&id, &creation.base_oid) {
+                if let Err(rollback_error) = reserved.rollback() {
+                    return Err(error).context(format!(
+                        "branch reservation failed and capsule rollback also failed: {rollback_error:#}"
+                    ));
+                }
+                let collision = self.branch_exists(&id)?;
+                if collision {
+                    continue;
+                }
+                return Err(error).context("could not reserve change branch");
+            }
+            let path = reserved.worktree();
+            if let Err(error) = self.worktree_add(&path, &id) {
+                let git_rollback = self.rollback_created_worktree(&path, &id);
+                let capsule_rollback = reserved.rollback();
+                if let Err(rollback_error) = git_rollback {
+                    return Err(error).context(format!(
+                        "worktree creation failed and Git rollback also failed: {rollback_error:#}"
+                    ));
+                }
+                if let Err(rollback_error) = capsule_rollback {
+                    return Err(error).context(format!(
+                        "worktree creation failed and capsule rollback also failed: {rollback_error:#}"
+                    ));
+                }
+                return Err(error).context("could not create change worktree");
+            }
+            return Ok(reserved.finish());
         }
-
-        let branch_exists = self.branch_exists(branch)?;
-        if create && branch_exists {
-            bail!("branch '{branch}' already exists");
-        }
-        if !create && !branch_exists {
-            bail!("branch '{branch}' does not exist; create a change with `grove new`");
-        }
-
-        let path = self.worktree_path(branch)?;
-        if path.exists() {
-            bail!("worktree path already exists: {}", path.display());
-        }
-        std::fs::create_dir_all(path.parent().context("worktree path has no parent")?)?;
-
-        if let Some(base) = base {
-            self.worktree_add_new(&path, branch, base)?;
-        } else {
-            self.worktree_add(&path, branch)?;
-        }
-        Ok(path)
+        bail!("could not reserve a unique Grove change branch")
     }
 
     pub(crate) fn inventory(&self) -> Result<Vec<WorktreeView>> {
         let worktrees = self.worktrees()?;
         let current = self.current_root()?;
         let common_dir = self.common_dir()?;
-        let primary = worktrees
-            .first()
-            .context("repository has no worktrees")?
-            .path
-            .clone();
+        let changes_root = self.changes_root()?;
+        let mut records = Vec::new();
+        for (capsule, record) in Record::load_all(&changes_root)? {
+            if !record.state.is_active() {
+                continue;
+            }
+            if Path::new(&record.repository) != common_dir {
+                bail!(
+                    "change record {} belongs to a different repository",
+                    capsule.join("change.json").display()
+                );
+            }
+            records.push((record.created_at, capsule, record));
+        }
+        records.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.2.id.cmp(&right.2.id))
+        });
 
-        worktrees
+        records
             .into_iter()
-            .map(|worktree| {
-                let pending = if worktree.path == primary {
-                    false
+            .map(|(_, capsule, record)| {
+                let expected_path = capsule.join("worktree");
+                let worktree = worktrees
+                    .iter()
+                    .find(|worktree| worktree.branch.as_deref() == Some(&record.id))
+                    .with_context(|| {
+                        format!("active change {} has no linked worktree", record.id)
+                    })?;
+                let actual_path = if worktree.path.exists() {
+                    worktree.path.canonicalize().with_context(|| {
+                        format!("failed to resolve worktree {}", worktree.path.display())
+                    })?
                 } else {
-                    linked_git_dir(&common_dir, &worktree.path)?
-                        .is_some_and(|git_dir| git_dir.join(PENDING_FILE).is_file())
+                    worktree.path.clone()
                 };
-                let branch = worktree.branch.clone();
-                let lineage = branch
+                let expected_path = if expected_path.exists() {
+                    expected_path.canonicalize().with_context(|| {
+                        format!("failed to resolve worktree {}", expected_path.display())
+                    })?
+                } else {
+                    expected_path
+                };
+                if actual_path != expected_path {
+                    bail!(
+                        "active change {} is linked at unexpected worktree {}",
+                        record.id,
+                        worktree.path.display()
+                    );
+                }
+
+                let base = Lineage::load(self, &record.id)?.base(self, &record.id)?;
+                let divergence = base
+                    .divergence_ref
                     .as_deref()
-                    .map(|branch| Lineage::load(self, branch))
+                    .map(|reference| self.divergence(&worktree.path, reference))
                     .transpose()?;
-                let (base, divergence) = if worktree.prunable || branch.is_none() {
-                    (String::new(), None)
-                } else {
-                    let branch = branch.as_deref().context("branch is missing")?;
-                    let base = lineage
-                        .as_ref()
-                        .context("branch lineage is missing")?
-                        .base(self, branch)?;
-                    let divergence = base
-                        .divergence_ref
-                        .as_deref()
-                        .map(|reference| self.divergence(&worktree.path, reference))
-                        .transpose()?;
-                    (base.display, divergence)
-                };
                 let state = if worktree.prunable {
                     WorktreeState::Missing
                 } else {
                     WorktreeState::Present(self.status(&worktree.path)?)
                 };
                 Ok(WorktreeView {
+                    id: record.id,
+                    title: record.title,
                     current: worktree.path == current,
-                    primary: worktree.path == primary,
-                    path: worktree.path,
-                    branch,
-                    pending,
-                    base,
+                    path: worktree.path.clone(),
+                    base: base.display,
                     divergence,
                     state,
                 })
@@ -554,11 +418,68 @@ impl Git {
             .collect()
     }
 
-    pub(crate) fn prepare_removal(
-        &self,
-        requested: Option<&str>,
-        force: bool,
-    ) -> Result<PreparedRemoval> {
+    pub(crate) fn current_path(&self) -> Result<PathBuf> {
+        self.current_root()
+    }
+
+    pub(crate) fn recover_closing_removals(&self) -> Result<usize> {
+        let worktrees = self.worktrees()?;
+        let primary = worktrees
+            .first()
+            .context("repository has no worktrees")?
+            .path
+            .clone();
+        let root = self.changes_root()?;
+        let mut finalized = 0;
+        for (capsule, record) in Record::load_all(&root)? {
+            if !record.state.is_closing() {
+                continue;
+            }
+            let _lock = lock_change(&capsule)?;
+            let Some(record) = Record::load_optional(&capsule.join("change.json"))? else {
+                continue;
+            };
+            if !record.state.is_closing() {
+                continue;
+            }
+            let closure = record
+                .closure
+                .context("closing change has no closure facts")?;
+            if let Some(worktree) = worktrees
+                .iter()
+                .find(|worktree| worktree.branch.as_deref() == Some(&record.id))
+            {
+                if !worktree.path.exists() {
+                    bail!("closing change {} has an invalid worktree", record.id);
+                }
+                restore_active(&capsule, &record.id)?;
+                continue;
+            }
+
+            if self.branch_exists(&record.id)? {
+                let live_oid = self.branch_oid(&record.id)?;
+                if live_oid != closure.tip_oid {
+                    bail!(
+                        "closing change '{}' branch changed before recovery",
+                        record.id
+                    );
+                }
+                self.validate_target_snapshot(
+                    &primary,
+                    closure.target_ref.as_deref(),
+                    closure.target_oid.as_deref(),
+                )?;
+                self.delete_branch(&primary, &record.id, &closure.tip_oid)
+                    .context("could not finish interrupted branch cleanup")?;
+            }
+            mark_archived(&capsule, &record.id)
+                .context("could not finish interrupted archive record")?;
+            finalized += 1;
+        }
+        Ok(finalized)
+    }
+
+    pub(crate) fn prepare_removal(&self, branch: &str, force: bool) -> Result<PreparedRemoval> {
         let worktrees = self.worktrees()?;
         let primary = worktrees
             .first()
@@ -566,16 +487,10 @@ impl Git {
             .path
             .clone();
         let current = self.current_root()?;
-        let target = match requested {
-            Some(branch) => worktrees
-                .iter()
-                .find(|worktree| worktree.branch.as_deref() == Some(branch))
-                .with_context(|| format!("branch '{branch}' has no worktree"))?,
-            None => worktrees
-                .iter()
-                .find(|worktree| worktree.path == current)
-                .context("current directory is not in a worktree")?,
-        };
+        let target = worktrees
+            .iter()
+            .find(|worktree| worktree.branch.as_deref() == Some(branch))
+            .with_context(|| format!("branch '{branch}' has no worktree"))?;
         if target.path == primary {
             bail!("cannot remove the primary worktree");
         }
@@ -590,100 +505,254 @@ impl Git {
         }
 
         let path = target.path.clone();
-        let branch = target.branch.clone();
-        let expected_oid = if force {
-            None
+        let branch = branch.to_owned();
+        let capsule = self.changes_root()?.join(&branch);
+        let record_path = capsule.join("change.json");
+        let record = Record::load_optional(&record_path)?
+            .with_context(|| format!("change record is missing from {}", capsule.display()))?;
+        if record.id != branch || !record.state.is_active() {
+            bail!("change '{branch}' is not active");
+        }
+        let expected_oid = self.branch_oid(&branch)?;
+        let base = Lineage::load(self, &branch)?.base(self, &branch)?;
+        let target_ref = base.removal_ref.clone();
+        let target_oid = target_ref
+            .as_deref()
+            .map(|reference| self.peel_commit(reference))
+            .transpose()?;
+        let integration = if force {
+            "forced".to_owned()
         } else {
-            branch
-                .as_deref()
-                .map(|branch| self.branch_oid(branch))
-                .transpose()?
-        };
-        if !force && let Some(branch) = &branch {
-            let base = Lineage::load(self, branch)?.base(self, branch)?;
-            if !self.branch_integrated(branch, &base)? {
+            if !self.branch_integrated(&branch, &base)? {
                 bail!("branch '{branch}' is not merged; use --force to discard it");
             }
-        }
+            let target = base
+                .removal_ref
+                .as_deref()
+                .context("the default branch cannot be removed as a linked worktree")?;
+            if self.is_ancestor(&branch, target)? {
+                "ancestor".to_owned()
+            } else if self.same_tree(&branch, target)? {
+                "same-tree".to_owned()
+            } else {
+                "merge-equivalent".to_owned()
+            }
+        };
 
-        let common_dir = self.common_dir()?;
-        let root = if path
-            .try_exists()
-            .with_context(|| format!("failed to inspect worktree {}", path.display()))?
-        {
-            path.canonicalize()
-                .with_context(|| format!("failed to resolve worktree {}", path.display()))?
-        } else {
-            path.clone()
-        };
-        let git_dir = if root.exists() {
-            Git::at(&root)?.worktree_identity()?.git_dir
-        } else {
-            linked_git_dir(&common_dir, &root)?
-                .with_context(|| format!("could not locate Git metadata for {}", root.display()))?
-        };
-        let session_id = read_session_id(&git_dir)?;
         Ok(PreparedRemoval {
             path,
             branch,
+            capsule,
+            base_oid: record.creation.base_oid,
             primary,
             current,
             expected_oid,
+            target_oid,
+            target_ref,
+            integration,
             force,
-            identity: WorktreeIdentity {
-                git_dir,
-                root,
-                session_id,
-            },
         })
     }
 
     pub(crate) fn remove(&self, prepared: PreparedRemoval) -> Result<Removal> {
+        self.archive(&prepared)?;
+        mark_closing(
+            &prepared.capsule,
+            &prepared.branch,
+            Closure {
+                closed_at: None,
+                outcome: if prepared.force {
+                    Outcome::Discarded
+                } else {
+                    Outcome::Integrated
+                },
+                tip_oid: prepared.expected_oid.clone(),
+                target_oid: prepared.target_oid.clone(),
+                target_ref: prepared.target_ref.clone(),
+                integration: prepared.integration.clone(),
+            },
+        )?;
+        self.validate_removal_refs(&prepared)?;
         self.worktree_remove(&prepared.path, prepared.force)?;
-        if let Some(branch) = &prepared.branch {
-            self.delete_branch(&prepared.primary, branch, prepared.expected_oid.as_deref())
-                .context("worktree was removed, but branch cleanup did not complete")?;
-        }
+        self.delete_branch(&prepared.primary, &prepared.branch, &prepared.expected_oid)
+            .context("worktree was removed, but branch cleanup did not complete")?;
+        mark_archived(&prepared.capsule, &prepared.branch)
+            .context("change was removed, but its archive record did not close")?;
         Ok(Removal {
-            label: prepared.branch.unwrap_or_else(|| "detached".to_owned()),
             navigate_to: (prepared.path == prepared.current).then_some(prepared.primary),
         })
     }
 
-    pub(crate) fn branch_names(&self, worktrees_only: bool) -> Result<Vec<String>> {
-        if worktrees_only {
-            return Ok(self
-                .worktrees()?
-                .into_iter()
-                .filter_map(|worktree| worktree.branch)
-                .collect());
+    fn validate_removal_refs(&self, prepared: &PreparedRemoval) -> Result<()> {
+        let live_oid = self.branch_oid(&prepared.branch)?;
+        if live_oid != prepared.expected_oid {
+            bail!(
+                "branch '{}' changed before it could be deleted",
+                prepared.branch
+            );
         }
-        self.branches()
+        self.validate_target(prepared)
     }
 
-    fn validate_branch(&self, branch: &str) -> Result<()> {
-        self.output(&["check-ref-format", "--branch", branch])?;
+    fn validate_target(&self, prepared: &PreparedRemoval) -> Result<()> {
+        self.validate_target_snapshot(
+            &prepared.primary,
+            prepared.target_ref.as_deref(),
+            prepared.target_oid.as_deref(),
+        )
+    }
+
+    fn validate_target_snapshot(
+        &self,
+        cwd: &Path,
+        target_ref: Option<&str>,
+        target_oid: Option<&str>,
+    ) -> Result<()> {
+        if let (Some(reference), Some(expected)) = (target_ref, target_oid) {
+            let live = self.peel_commit_at(cwd, reference)?;
+            if live != *expected {
+                bail!("integration target '{reference}' changed during removal");
+            }
+        }
         Ok(())
     }
 
-    fn pending_id(&self) -> Result<String> {
-        let now = SystemTime::now()
+    fn archive(&self, prepared: &PreparedRemoval) -> Result<()> {
+        let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before the Unix epoch")?
             .as_nanos();
-        for nonce in 0..100_u8 {
-            let seed = format!(
-                "{}:{now}:{}:{nonce}",
-                self.cwd.display(),
-                std::process::id()
-            );
-            let digest = blake3::hash(seed.as_bytes()).to_hex();
-            let name = format!("pending-{}", &digest[..12]);
-            if !self.worktree_path(&name)?.exists() {
-                return Ok(name);
+        let index = prepared
+            .capsule
+            .join(format!(".archive-index-{}-{nonce}", std::process::id()));
+        let temporary = prepared
+            .capsule
+            .join(format!(".artifacts-{}-{nonce}", std::process::id()));
+        create_private_directory(&temporary).with_context(|| {
+            format!(
+                "failed to create temporary change artifacts {}",
+                temporary.display()
+            )
+        })?;
+
+        let result = (|| {
+            self.checked_with_index(&prepared.path, &["read-tree", &prepared.base_oid], &index)?;
+            self.checked_with_index(&prepared.path, &["add", "-A", "--", "."], &index)?;
+            let final_tree = String::from_utf8_lossy(&self.checked_with_index(
+                &prepared.path,
+                &["write-tree"],
+                &index,
+            )?)
+            .trim()
+            .to_owned();
+            let patch = self.checked_at(
+                &prepared.path,
+                &[
+                    "diff",
+                    "--binary",
+                    "--full-index",
+                    "--find-renames",
+                    "--no-ext-diff",
+                    &prepared.base_oid,
+                    &final_tree,
+                    "--",
+                ],
+            )?;
+            let statuses = self.checked_at(
+                &prepared.path,
+                &[
+                    "diff",
+                    "--name-status",
+                    "--find-renames",
+                    "-z",
+                    &prepared.base_oid,
+                    &final_tree,
+                    "--",
+                ],
+            )?;
+            let numstat = self.checked_at(
+                &prepared.path,
+                &[
+                    "diff",
+                    "--numstat",
+                    "--find-renames",
+                    "-z",
+                    &prepared.base_oid,
+                    &final_tree,
+                    "--",
+                ],
+            )?;
+            let files = archive_files(&statuses, &numstat)?;
+            let summary = summarize_files(&files);
+            let stats = ArchiveStats {
+                version: 1,
+                base_oid: prepared.base_oid.clone(),
+                final_tree,
+                patch_digest: blake3::hash(&patch).to_hex().to_string(),
+                summary,
+                files,
+            };
+            let mut stats_bytes = serde_json::to_vec_pretty(&stats)?;
+            stats_bytes.push(b'\n');
+            write_private(&temporary.join("change.patch"), &patch)?;
+            write_private(&temporary.join("stats.json"), &stats_bytes)?;
+            File::open(&temporary)
+                .with_context(|| {
+                    format!(
+                        "failed to open temporary artifact directory {}",
+                        temporary.display()
+                    )
+                })?
+                .sync_all()
+                .with_context(|| {
+                    format!(
+                        "failed to sync temporary artifact directory {}",
+                        temporary.display()
+                    )
+                })?;
+
+            let artifacts = prepared.capsule.join("artifacts");
+            if artifacts.is_dir() {
+                let identical = fs::read(artifacts.join("change.patch")).ok().as_deref()
+                    == Some(patch.as_slice())
+                    && fs::read(artifacts.join("stats.json")).ok().as_deref()
+                        == Some(stats_bytes.as_slice());
+                if identical {
+                    fs::remove_dir_all(&temporary).with_context(|| {
+                        format!(
+                            "failed to remove duplicate artifact directory {}",
+                            temporary.display()
+                        )
+                    })?;
+                    return Ok(());
+                }
+                bail!("existing change artifacts differ from the current worktree snapshot");
             }
+            fs::rename(&temporary, &artifacts).with_context(|| {
+                format!("failed to install change artifacts {}", artifacts.display())
+            })?;
+            File::open(&prepared.capsule)
+                .with_context(|| {
+                    format!(
+                        "failed to open change capsule {}",
+                        prepared.capsule.display()
+                    )
+                })?
+                .sync_all()
+                .with_context(|| {
+                    format!(
+                        "failed to sync change capsule {}",
+                        prepared.capsule.display()
+                    )
+                })?;
+            Ok(())
+        })();
+
+        let _ = fs::remove_file(&index);
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&temporary);
         }
-        bail!("could not create a unique pending worktree path")
+        result
     }
 
     fn branch_exists(&self, branch: &str) -> Result<bool> {
@@ -736,7 +805,7 @@ impl Git {
             .context("failed to resolve Git common directory")
     }
 
-    fn worktree_path(&self, branch: &str) -> Result<PathBuf> {
+    fn changes_root(&self) -> Result<PathBuf> {
         let common_dir = PathBuf::from(self.text(&["rev-parse", "--git-common-dir"])?);
         let common_dir = if common_dir.is_absolute() {
             common_dir
@@ -759,10 +828,11 @@ impl Git {
         let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
         let home = std::env::var_os("HOME").context("HOME is not set")?;
 
-        Ok(PathBuf::from(home)
-            .join(".grove")
-            .join(format!("{}-{}", encode_path_segment(&repo), &digest[..12]))
-            .join(encode_path_segment(branch)))
+        Ok(PathBuf::from(home).join(".grove").join(format!(
+            "{}-{}",
+            encode_path_segment(&repo),
+            &digest[..12]
+        )))
     }
 
     fn worktrees(&self) -> Result<Vec<Worktree>> {
@@ -887,14 +957,6 @@ impl Git {
         self.merge_adds_no_change(branch, comparison)
     }
 
-    fn branches(&self) -> Result<Vec<String>> {
-        Ok(self
-            .text(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])?
-            .lines()
-            .map(str::to_owned)
-            .collect())
-    }
-
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
         self.predicate(&["merge-base", "--is-ancestor", ancestor, descendant])
     }
@@ -903,12 +965,14 @@ impl Git {
         self.text(&["rev-parse", &format!("refs/heads/{branch}")])
     }
 
-    fn worktree_add_new(&self, path: &Path, branch: &str, base: &CreationBase) -> Result<()> {
-        self.output_os(&["worktree", "add", "-b", branch], path, &[&base.oid])
-    }
-
     fn worktree_add(&self, path: &Path, branch: &str) -> Result<()> {
         self.output_os(&["worktree", "add"], path, &[branch])
+    }
+
+    fn reserve_branch(&self, branch: &str, oid: &str) -> Result<()> {
+        let reference = format!("refs/heads/{branch}");
+        let output = self.raw(&["update-ref", &reference, oid, ""])?;
+        check(output, &["update-ref", "<branch>", "<oid>", "<missing>"]).map(|_| ())
     }
 
     fn worktree_remove(&self, path: &Path, force: bool) -> Result<()> {
@@ -920,40 +984,15 @@ impl Git {
         self.output_os(before, path, &[])
     }
 
-    fn worktree_move(&self, source: &Path, target: &Path) -> Result<()> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&self.cwd)
-            .args(["worktree", "move"])
-            .arg(source)
-            .arg(target)
-            .output()
-            .context("could not move git worktree")?;
-        check(output, &["worktree", "move", "<source>", "<target>"]).map(|_| ())
-    }
-
-    fn delete_branch(&self, cwd: &Path, branch: &str, expected: Option<&str>) -> Result<()> {
+    fn delete_branch(&self, cwd: &Path, branch: &str, expected: &str) -> Result<()> {
         let reference = format!("refs/heads/{branch}");
         let mut command = Command::new("git");
         command.arg("-C").arg(cwd);
-        let shown;
-        if let Some(expected) = expected {
-            command.args(["update-ref", "-d", &reference, expected]);
-            shown = vec!["update-ref", "-d", "<branch>", "<expected>"];
-        } else {
-            command.args(["branch", "-D", "--", branch]);
-            shown = vec!["branch", "-D", "--", "<branch>"];
-        }
+        command.args(["update-ref", "-d", &reference, expected]);
         let output = command.output().context("could not delete branch")?;
-        check(output, &shown).with_context(|| {
-            if expected.is_some() {
-                format!("branch '{branch}' changed before it could be deleted")
-            } else {
-                format!("branch '{branch}' could not be deleted")
-            }
-        })?;
-        Lineage::clear(self, cwd, branch)
-            .context("branch was deleted, but its Grove lineage could not be cleared")
+        check(output, &["update-ref", "-d", "<branch>", "<expected>"])
+            .with_context(|| format!("branch '{branch}' changed before it could be deleted"))?;
+        Ok(())
     }
 
     fn text(&self, args: &[&str]) -> Result<String> {
@@ -961,6 +1000,10 @@ impl Git {
     }
 
     fn peel_commit(&self, source: &str) -> Result<String> {
+        self.peel_commit_at(&self.cwd, source)
+    }
+
+    fn peel_commit_at(&self, cwd: &Path, source: &str) -> Result<String> {
         let revision = format!("{source}^{{commit}}");
         let args = [
             "rev-parse",
@@ -968,7 +1011,7 @@ impl Git {
             "--end-of-options",
             revision.as_str(),
         ];
-        let output = self.raw(&args)?;
+        let output = self.raw_at(cwd, &args)?;
         if !output.status.success() {
             bail!("base '{source}' does not resolve to a commit");
         }
@@ -1002,20 +1045,6 @@ impl Git {
         Ok((name, reference))
     }
 
-    fn config_value(&self, key: &str) -> Result<Option<String>> {
-        let output = self.raw(&["config", "--local", "--get", key])?;
-        match output.status.code() {
-            Some(0) => Ok(Some(
-                String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-            )),
-            Some(1) => Ok(None),
-            _ => {
-                check(output, &["config", "--local", "--get", "<key>"])?;
-                unreachable!()
-            }
-        }
-    }
-
     fn is_full_commit(&self, oid: &str) -> bool {
         self.peel_commit(oid).is_ok_and(|resolved| resolved == oid)
     }
@@ -1046,23 +1075,28 @@ impl Git {
         Ok(merged_tree == self.text(&["rev-parse", &format!("{base}^{{tree}}")])?)
     }
 
-    fn rollback_created_worktree(&self, path: &Path, branch: &str) {
-        let _ = Lineage::clear(self, &self.cwd, branch);
-        let _ = self.worktree_remove(path, true);
-        let _ = self.raw(&["update-ref", "-d", &format!("refs/heads/{branch}")]);
+    fn rollback_created_worktree(&self, path: &Path, branch: &str) -> Result<()> {
+        if self
+            .worktrees()?
+            .iter()
+            .any(|worktree| worktree.branch.as_deref() == Some(branch))
+        {
+            self.worktree_remove(path, true)
+                .context("failed to roll back created worktree")?;
+        }
+        if self.branch_exists(branch)? {
+            let expected = self.branch_oid(branch)?;
+            let reference = format!("refs/heads/{branch}");
+            let output = self.raw(&["update-ref", "-d", &reference, &expected])?;
+            check(output, &["update-ref", "-d", "<branch>", "<expected>"])
+                .context("failed to roll back created branch")?;
+        }
+        Ok(())
     }
 
     fn text_at(&self, cwd: &Path, args: &[&str]) -> Result<String> {
         self.checked_at(cwd, args)
             .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
-    }
-
-    fn output(&self, args: &[&str]) -> Result<()> {
-        self.checked_at(&self.cwd, args).map(|_| ())
-    }
-
-    fn output_at(&self, cwd: &Path, args: &[&str]) -> Result<()> {
-        self.checked_at(cwd, args).map(|_| ())
     }
 
     fn output_bytes(&self, args: &[&str]) -> Result<Vec<u8>> {
@@ -1075,6 +1109,17 @@ impl Git {
 
     fn checked_at(&self, cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         check(self.raw_at(cwd, args)?, args)
+    }
+
+    fn checked_with_index(&self, cwd: &Path, args: &[&str], index: &Path) -> Result<Vec<u8>> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .env("GIT_INDEX_FILE", index)
+            .output()
+            .with_context(|| format!("could not run git {}", args.join(" ")))?;
+        check(output, args)
     }
 
     fn raw(&self, args: &[&str]) -> Result<Output> {
@@ -1131,105 +1176,135 @@ fn encode_path_segment(value: &str) -> String {
     encoded
 }
 
-fn branch_from_prompt(prompt: &str) -> Result<String> {
-    let mut branch = String::new();
-    let mut separator = false;
-    for character in prompt.trim().chars() {
-        if character.is_ascii_alphanumeric() {
-            let needs_separator = separator && !branch.is_empty();
-            if branch.len() + usize::from(needs_separator) + 1 > 48 {
-                break;
-            }
-            if needs_separator {
-                branch.push('-');
-            }
-            branch.push(character.to_ascii_lowercase());
-            separator = false;
+fn abbreviate_oid(oid: &str) -> String {
+    oid.chars().take(12).collect()
+}
+
+fn archive_files(statuses: &[u8], numstat: &[u8]) -> Result<Vec<ArchiveFile>> {
+    let numbers = parse_numstat(numstat)?;
+    let fields = statuses
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .collect::<Vec<_>>();
+    let mut files = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let status = String::from_utf8_lossy(fields[index]).into_owned();
+        index += 1;
+        let old_path = if status.starts_with('R') || status.starts_with('C') {
+            let path = fields
+                .get(index)
+                .context("Git returned an incomplete rename")?;
+            index += 1;
+            Some(String::from_utf8_lossy(path).into_owned())
         } else {
-            separator = true;
-        }
+            None
+        };
+        let path = fields
+            .get(index)
+            .context("Git returned a status without a path")?;
+        index += 1;
+        let path = String::from_utf8_lossy(path).into_owned();
+        let (additions, deletions) = numbers.get(&path).cloned().unwrap_or((Some(0), Some(0)));
+        files.push(ArchiveFile {
+            path,
+            old_path,
+            status,
+            binary: additions.is_none() || deletions.is_none(),
+            additions,
+            deletions,
+        });
     }
-    if branch.is_empty() {
-        bail!("the first prompt does not contain a branch name");
-    }
-    Ok(branch)
+    Ok(files)
 }
 
-fn read_session_id(git_dir: &Path) -> Result<Option<String>> {
-    let path = git_dir.join(SESSION_ID_FILE);
-    let value = match std::fs::read_to_string(&path) {
-        Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("failed to read session identity {}", path.display()));
+type LineCounts = (Option<u64>, Option<u64>);
+
+fn parse_numstat(bytes: &[u8]) -> Result<HashMap<String, LineCounts>> {
+    let fields = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let mut counts = HashMap::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let field = fields[index];
+        index += 1;
+        if field.is_empty() {
+            continue;
         }
+        let mut pieces = field.splitn(3, |byte| *byte == b'\t');
+        let additions = parse_line_count(pieces.next().context("Git numstat omitted additions")?)?;
+        let deletions = parse_line_count(pieces.next().context("Git numstat omitted deletions")?)?;
+        let embedded_path = pieces.next().context("Git numstat omitted path")?;
+        let path = if embedded_path.is_empty() {
+            index += 1;
+            let new_path = fields
+                .get(index)
+                .context("Git numstat omitted rename target")?;
+            index += 1;
+            *new_path
+        } else {
+            embedded_path
+        };
+        counts.insert(
+            String::from_utf8_lossy(path).into_owned(),
+            (additions, deletions),
+        );
+    }
+    Ok(counts)
+}
+
+fn parse_line_count(value: &[u8]) -> Result<Option<u64>> {
+    if value == b"-" {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(value)
+            .parse()
+            .context("Git returned an invalid numstat count")?,
+    ))
+}
+
+fn summarize_files(files: &[ArchiveFile]) -> FileSummary {
+    let mut summary = FileSummary {
+        files_changed: files.len(),
+        ..FileSummary::default()
     };
-    let value = value.trim();
-    if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("invalid Grove session identity in {}", path.display());
+    for file in files {
+        summary.additions += file.additions.unwrap_or(0);
+        summary.deletions += file.deletions.unwrap_or(0);
+        if file.binary {
+            summary.binary += 1;
+        }
+        match file.status.as_bytes().first().copied() {
+            Some(b'A') => summary.added += 1,
+            Some(b'D') => summary.deleted += 1,
+            Some(b'R') => summary.renamed += 1,
+            Some(b'C') => summary.copied += 1,
+            _ => summary.modified += 1,
+        }
     }
-    Ok(Some(value.to_owned()))
+    summary
 }
 
-fn create_session_id(git_dir: &Path) -> Result<String> {
-    let path = git_dir.join(SESSION_ID_FILE);
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before the Unix epoch")?
-        .as_nanos();
-    let seed = format!("{}:{now}:{}", git_dir.display(), std::process::id());
-    let id = blake3::hash(seed.as_bytes()).to_hex()[..32].to_owned();
-    let temporary = git_dir.join(format!(".{SESSION_ID_FILE}-{}-{now}", std::process::id()));
-    let mut options = std::fs::OpenOptions::new();
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path)
+}
+
+fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
+    let mut options = OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options
-        .open(&temporary)
-        .with_context(|| format!("failed to create {}", temporary.display()))?;
-    let result = (|| {
-        file.write_all(id.as_bytes())?;
-        file.sync_all()?;
-        match std::fs::hard_link(&temporary, &path) {
-            Ok(()) => Ok(id),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                read_session_id(git_dir)?
-                    .context("Grove session identity disappeared while it was created")
-            }
-            Err(error) => Err(error)
-                .with_context(|| format!("failed to create session identity {}", path.display())),
-        }
-    })();
-    let _ = std::fs::remove_file(temporary);
-    result
-}
-
-fn linked_git_dir(common_dir: &Path, worktree: &Path) -> Result<Option<PathBuf>> {
-    let directory = common_dir.join("worktrees");
-    let entries = match std::fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(error).with_context(|| format!("failed to read {}", directory.display()));
-        }
-    };
-    for entry in entries {
-        let git_dir = entry?.path();
-        let pointer = match std::fs::read_to_string(git_dir.join("gitdir")) {
-            Ok(pointer) => PathBuf::from(pointer.trim()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error).context("failed to read linked worktree metadata"),
-        };
-        if pointer.parent() == Some(worktree) {
-            return Ok(Some(git_dir));
-        }
-    }
-    Ok(None)
-}
-
-fn abbreviate_oid(oid: &str) -> String {
-    oid.chars().take(12).collect()
+        .open(path)
+        .with_context(|| format!("failed to create archive artifact {}", path.display()))?;
+    file.write_all(contents)
+        .with_context(|| format!("failed to write archive artifact {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync archive artifact {}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(unix)]

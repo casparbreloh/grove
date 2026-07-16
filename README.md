@@ -1,111 +1,131 @@
 # grove
 
-Grove is a small, Pi-first worktree manager. Git remains the source of truth.
-Each linked worktree has one persistent native Pi session, while the primary
-checkout stays where it already is.
+Grove is a small, Pi-first layer over Git worktrees. Git remains the source of
+truth. Grove adds a durable local **Change** around each task so that creating,
+leaving, finding, resuming, and safely removing Pi work stays simple.
 
 ```sh
-grove new auth-refresh
-# work in Pi, then detach with Ctrl+\
+grove new
+# work in Pi, then exit Pi normally
 
-grove switch auth-refresh
+grove switch   # pick the Change by title and resume Pi
 grove list
-grove remove auth-refresh
+grove remove   # remove the current Change, or pick one from the primary checkout
 ```
 
-See [VISION.md](VISION.md) for the product direction.
+See [VISION.md](VISION.md) for the product direction and [CONTEXT.md](CONTEXT.md)
+for the domain vocabulary.
 
-## Creating worktrees
+## Commands
 
 ```text
-grove new [OPTIONS] [BRANCH]
+grove new [--from REF] [--shell]
+grove switch [--shell]
+grove list
+grove remove [--force]
+grove init fish|zsh
 ```
 
-With a branch, `new` creates its worktree and opens Pi:
+`new` creates an untitled Change and opens Pi. It takes no name or branch
+argument. `--from` accepts any revision that resolves to a commit; `--from @`
+uses the invoking worktree's current commit. Without `--from`, Grove starts at
+the repository's detected default branch.
 
-```sh
-grove new auth-refresh
-grove new --from release backport-auth
-```
+`switch` always opens a terminal picker containing active Grove Changes. The
+picker and `list` lead with each Change's stable inferred title. Until naming
+succeeds, Grove shows `Untitled`; duplicate and untitled rows include a short
+opaque ID only to disambiguate them. Ordinary, detached, and otherwise
+unmanaged Git worktrees are not included.
 
-Without a branch, Grove opens Pi immediately in a detached pending worktree.
-A bundled Pi extension turns the first typed prompt into a lowercase,
-hyphenated branch name in the background and renames the worktree directory to
-match. There is no fallback branch and no extra model call.
+`remove` targets the current managed Change. From the primary checkout it opens
+the same picker. Safe removal accepts work integrated by merge, cherry-pick or
+rebase-shaped history, or an equivalent squash. It refuses dirty or genuinely
+unmerged work, including unique content hidden in a merge resolution. `--force`
+explicitly archives and discards that work. `delete` is an alias for `remove`.
 
-Detaching before the first prompt preserves the pending session, so Grove never
-submits or discards unfinished editor input. It remains available as
-`(pending)` in `grove switch`. Exiting Pi before the first prompt removes an
-untouched pending worktree; changed worktrees are preserved.
+`--shell` skips Pi and writes a navigation directive instead. It is useful for
+creating or entering a Change with a normal shell. `new --shell`, `switch
+--shell`, and removal from the current Change are the only operations that
+request parent-shell navigation. After managed Pi exits, the caller stays in
+the directory where it invoked Grove.
 
-`--from` accepts any revision that resolves to a commit. `--from @` starts at
-the invoking worktree's current commit and records its branch as the parent
-when possible. Without `--from`, Grove starts from the detected default branch.
+## Native Pi sessions
 
-Use `--shell` to create and enter a named worktree without Pi:
-
-```sh
-grove new --shell auth-refresh
-```
-
-Managed worktrees live at `~/.grove/<repo>-<digest>/<branch>`. Equal repository
-directory names cannot collide.
-
-## Switching
+Managed Pi is a direct, blocking child process:
 
 ```text
-grove switch [OPTIONS] [BRANCH]
+pi --session-dir <capsule>/sessions/pi --continue --extension <grove-extension>
 ```
 
-`switch` opens the worktree's sole Pi session. A live session is reattached;
-otherwise Pi resumes from the same session file. Without a branch, Grove shows
-an interactive picker, including unnamed pending sessions.
+There is no multiplexer, background server, detach/reattach protocol, or live
+terminal persistence. Closing Pi or its terminal ends that process. Pi's native
+JSONL session remains in the Change capsule, and a later picker selection runs
+Pi with the same `--session-dir --continue` arguments so it resumes
+automatically. You never need to copy or remember a Pi session ID.
 
-After Pi detaches, the calling shell returns to the repository's primary
-checkout. `grove switch main` also means that primary checkout, even when it
-currently has another branch checked out; Grove never creates a linked
-worktree for `main`.
+Grove holds a per-Change advisory lock while Pi is open. A second managed Pi or
+removal, including forced removal, refuses to proceed until the first process
+exits. Starting `pi` manually is unmanaged: Grove does not install its extension
+globally or discover arbitrary sessions.
 
-Use `grove switch --shell <branch>` to enter a worktree directly.
+Pi owns its native session files and session names. Grove's extension appends a
+small versioned link from each managed Pi session to its Change. The first
+substantial prompt in each unnamed native session also starts a fire-and-forget,
+isolated `pi --print` request to infer a three- or four-word session name. The
+first successful result initializes the Change's one stable title; later Pi
+sessions may receive different native names but never retitle the Change or
+rename Git.
 
-## Sessions
+The naming request uses `--no-session --no-tools --no-context-files --no-skills
+--no-extensions`. It does not delay the real turn, and malformed output or any
+failure leaves an honest `Untitled` fallback. It is still an additional request
+to Pi's configured provider: the first prompt is sent a second time and may
+incur provider cost. Treat that prompt according to the provider's privacy
+terms.
 
-Grove embeds [ZMX](https://github.com/neurosnap/zmx), so ZMX, tmux, and rmux do
-not need to be installed. Pi keeps its native TUI. Press `Ctrl+\` once to
-detach; `Ctrl+C` remains available to Pi.
+## Change identity and storage
 
-Closing a terminal detaches its client while Pi continues in the background.
-Closing a Mac laptop normally suspends the whole machine: the session survives
-and resumes after wake, but it cannot keep computing during sleep. Continuous
-lid-closed work requires an awake clamshell setup or an always-on remote host.
+Each Change has one immutable Grove-owned 32-character lowercase hexadecimal
+ID. Git uses that exact ID as a local branch name, but the normal UI hides it.
+The human title and Pi session IDs are separate identities; neither renames the
+branch or capsule.
 
-Grove currently supports one Pi session per worktree. There is no agent
-configuration or multiplexer UI.
-
-## Listing and removal
-
-`grove list` shows branch, base, uncommitted line changes, divergence, and path.
-In `Base↕`, `↑` means commits ahead and `↓` means commits behind.
+Everything local to a Change lives together:
 
 ```text
-grove remove [--force] [BRANCH]
+~/.grove/<repo-name>-<common-dir-digest>/<change-id>/
+  change.json
+  worktree/
+  sessions/pi/
+    <Pi-native session>.jsonl
+  artifacts/
+    change.patch
+    stats.json
 ```
 
-`grove delete` is an alias of `grove remove`.
+`change.json` records Grove-owned identity, creation lineage, stable title, and
+the `active` → `closing` → `archived` lifecycle. Pi JSONL is the canonical
+conversation, usage, and tool history. Before deletion, Grove snapshots the
+authoritative base-to-final worktree as a binary-capable patch and machine-
+readable statistics. Successful removal deletes only `worktree/` and the local
+ID branch; the record, Pi sessions, and artifacts remain for later inspection
+or analytics.
 
-Without a branch, `remove` targets the current linked worktree. Safe removal
-refuses dirty or genuinely unmerged work and follows the recorded creation
-base. It accepts work integrated by merge, rebase, cherry-pick, or an equivalent
-squash. `--force` explicitly discards changes and deletes an unmerged branch.
+Capsules are local-only and private (`0700` directories and `0600` Grove-owned
+records/artifacts on Unix). They can contain source, prompts, tool output, and
+secrets. Beyond the documented title request, Grove performs no implicit
+network activity.
 
-A live Pi session protects its worktree from safe removal. Forced removal stops
-only that worktree's session before changing Git state. Safe squash detection
-requires Git 2.38 or newer.
+This is a pre-1.0 clean break. Grove does not migrate or delete worktrees,
+branch metadata, session-runtime data, or other state created by earlier
+versions. Retain or remove that old data manually.
 
 ## Shell setup
 
-The wrapper lets Grove change the calling shell's directory and adds
-completions. It does not edit shell configuration.
+The wrapper lets Grove change the calling shell's directory and supplies
+command/flag completion. It does not edit shell configuration and does not
+complete Change titles as positional arguments because `switch` and primary
+`remove` use the picker.
 
 For Fish:
 
@@ -121,7 +141,7 @@ eval "$(grove init zsh)"
 
 ## Install
 
-Pi must be available as `pi` on `PATH`. Grove carries the session runtime.
+Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
 
 ```sh
 cargo install --path .

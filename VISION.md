@@ -1,45 +1,58 @@
 # Grove Vision
 
-Grove is an agent-first worktree manager: a small layer over Git that makes
-isolated terminal-agent work easy to create, return to, inspect, and ship. Git
-remains the source of truth. Grove should improve the workflow without becoming
-a version-control system or an agent framework.
+Grove is a Pi-first Change manager: a small layer over Git that makes isolated
+agent work easy to create, leave, find, resume, inspect, and ship. Git remains
+the source of truth. Grove should improve the workflow without becoming a
+version-control system, agent framework, or terminal multiplexer.
 
 ## Principles
 
-- Keep the common workflow obvious and the command surface small.
-- Use the branch as the workspace identity.
-- Give each worktree one persistent native agent session.
-- Make `new` and `switch` agent-first, with `--shell` as the explicit escape.
-- Use agents through their native interfaces instead of replacing their TUIs.
-- Keep network activity explicit.
-- Protect destructive operations and avoid complexity for unlikely cases.
+- Keep the common workflow and command surface small.
+- Give every Change an immutable opaque identity and one stable human title.
+- Keep titles, Git identity, and agent-native session identity separate.
+- Use Pi through its native TUI and native JSONL instead of replacing either.
+- Prefer native resume over owning background process or terminal persistence.
+- Keep remote and other provider activity explicit and documented.
+- Protect destructive operations and preserve useful local history.
+- Add complexity only when common, demonstrated workflows require it.
 
 ## Foundation
 
-Grove provides branch-backed worktrees, Pi-first switching, lineage-aware
-removal, and one persistent native Pi session per worktree. Bare `grove new`
-derives the branch asynchronously from Pi's first typed prompt without a
-fallback name or a second model call. Embedded ZMX provides the narrow
-persistent-PTY primitive without another installation or a multiplexer UI.
+Grove provides ID-backed Git worktrees, title-based list and picker navigation,
+direct Pi launch/resume, recorded creation lineage, and archive-before-delete
+safety. A Change's hidden 32-hex ID is also its durable local Git branch. Its
+capsule groups the record, worktree, Pi-native sessions, and final Git
+artifacts beneath one `~/.grove` path.
 
-## Next: shipping a branch
+Bare `grove new` creates the complete Change before starting Pi. A small managed
+extension links each native Pi session and makes one isolated, best-effort title
+request from its first prompt. Naming never blocks the real turn, moves a path,
+or renames Git. Pi itself owns the session transcript and resume behavior.
+
+Grove deliberately does not keep Pi running after its terminal closes. There is
+no daemon, PTY host, detach key, or multiplexer. `grove switch` starts Pi again
+against the same native session directory, which is the simpler persistence the
+product actually needs.
+
+## Next: shipping a Change
 
 Close the path from local work to review while keeping every remote effect
 explicit:
 
-- Generate a commit message from the current diff, with review before commit.
+- Generate a commit message from the archived or current diff, with review.
 - Fetch and synchronize with the recorded base through an explicit command.
-- Push the branch and create or update a pull request through an explicit
-  command.
-- Show concise remote, pull-request, and CI state in `grove list`.
+- Give an opaque local branch an appropriate publication name if hosting needs
+  one.
+- Push and create or update a pull request through an explicit command.
+- Show concise remote, pull-request, and CI state without weakening the local
+  Change model.
 
-Keep Pi integration native and narrow. Supporting another agent should require
-clear user demand and a similarly small, reliable native seam.
+Pi remains the primary agent. Supporting another agent should require clear
+user demand and a similarly small, trustworthy native seam.
 
 ## Later
 
-Only deepen session management when real use demonstrates a need. Useful agent
-state and explicit local-to-cloud handoff may earn their place. Multiple
-sessions, orchestration, analytics, and automation should not enter the core
-workflow merely because they are possible.
+The capsule and independent identities keep analytics and local-to-cloud
+handoff possible without committing Grove to them now. Multiple agents,
+orchestration, dashboards, uploads, cloud sandboxes, and live process
+persistence should enter the core only after concrete use proves their value.

@@ -10,10 +10,8 @@ clap = { version = "4", features = ["derive", "unstable-ext"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 clap_usage = "2"
 crossterm = { version = "0.29", default-features = false, features = ["events"] }
-flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tar = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2"

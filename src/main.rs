@@ -1,15 +1,15 @@
+mod change;
 mod git;
 mod session;
 
 use std::{
-    ffi::OsStr,
+    collections::HashMap,
     io::{IsTerminal, Read, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 use crossterm::{
     QueueableCommand,
@@ -19,7 +19,7 @@ use crossterm::{
 };
 
 use crate::{
-    git::{Git, PendingChange, WorktreeState},
+    git::{Git, WorktreeState},
     session::Session,
 };
 
@@ -36,6 +36,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Create a change worktree
+    ///
+    /// Managed Pi makes an additional, asynchronous provider request from the
+    /// first prompt to infer a title. `--shell` skips Pi and title inference.
     New {
         /// Start the change from this revision (`@` means the invoking worktree)
         #[arg(long, value_name = "REF")]
@@ -43,40 +46,31 @@ enum Cmd {
         /// Enter the worktree without opening its agent
         #[arg(long)]
         shell: bool,
-        /// Branch for the change
-        branch: Option<String>,
     },
-    /// Go to a worktree
+    /// Open an active change
     Switch {
         /// Enter the worktree without opening its agent
         #[arg(long)]
         shell: bool,
-        /// Branch [default: choose interactively]
-        #[arg(
-            value_name = "BRANCH",
-            add = ArgValueCompleter::new(branches)
-        )]
-        target: Option<String>,
     },
-    /// List the repository's worktrees
+    /// List the repository's active changes
     List,
-    /// Remove a linked worktree
+    /// Remove an active change
     #[command(visible_alias = "delete")]
     Remove {
         /// Discard changes and delete an unmerged branch
         #[arg(long)]
         force: bool,
-        /// Branch to remove [default: current]
-        #[arg(
-            value_name = "BRANCH",
-            add = ArgValueCompleter::new(worktree_branches)
-        )]
-        target: Option<String>,
     },
     /// Print shell integration and completions
     Init { shell: Shell },
-    #[command(name = "__name", hide = true)]
-    Name,
+    #[command(name = "__title", hide = true)]
+    Title {
+        #[arg(long)]
+        change: String,
+        #[arg(long)]
+        session: String,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -96,95 +90,68 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::New {
-            from,
-            shell,
-            branch,
-        } => new(&Git::discover()?, from.as_deref(), branch.as_deref(), shell),
-        Cmd::Switch { shell, target } => switch(&Git::discover()?, target.as_deref(), shell),
+        Cmd::New { from, shell } => new(&Git::discover()?, from.as_deref(), shell),
+        Cmd::Switch { shell } => switch(&Git::discover()?, shell),
         Cmd::List => list(&Git::discover()?),
-        Cmd::Remove { force, target } => remove(&Git::discover()?, target.as_deref(), force),
+        Cmd::Remove { force } => remove(&Git::discover()?, force),
         Cmd::Init { shell } => init(shell),
-        Cmd::Name => name_pending(),
+        Cmd::Title { change, session } => title(&change, &session),
     }
 }
 
-fn new(git: &Git, from: Option<&str>, branch: Option<&str>, shell: bool) -> Result<()> {
-    if let Some(branch) = branch {
-        if !shell {
-            Session::prepare()?;
-        }
-        let change = git.create_change(from, branch)?;
-        eprintln!("✓ Created {} at {}", change.branch, change.path.display());
-        return if shell {
-            navigate(&change.path)
-        } else {
-            open_agent_worktree(git, &change.path)
-        };
+fn title(change_id: &str, session_id: &str) -> Result<()> {
+    let capsule = std::env::var_os("GROVE_CHANGE_CAPSULE")
+        .map(PathBuf::from)
+        .context("GROVE_CHANGE_CAPSULE is not set")?;
+    let mut prompt = String::new();
+    std::io::stdin()
+        .read_to_string(&mut prompt)
+        .context("failed to read the title prompt")?;
+    println!(
+        "{}",
+        session::infer_title(&capsule, change_id, session_id, &prompt)?
+    );
+    Ok(())
+}
+
+fn new(git: &Git, from: Option<&str>, shell: bool) -> Result<()> {
+    if !shell {
+        Session::prepare()?;
     }
+    let change = git.create_change(from)?;
+    let path = change.worktree();
+    eprintln!("✓ Created {} at {}", change.id, path.display());
     if shell {
-        bail!("a branch is required with --shell");
-    }
-    Session::prepare()?;
-    let pending = git.create_pending_change(from)?;
-    let path = pending.path().to_owned();
-    eprintln!("✓ Created pending change at {}", path.display());
-    render_pending(&pending, session::start_pending(&pending)?);
-    navigate(&git.primary_path()?)
-}
-
-fn render_pending(pending: &PendingChange, outcome: session::PendingOutcome) {
-    if matches!(outcome, session::PendingOutcome::Preserved) {
-        eprintln!(
-            "○ Pending change preserved at {}; use `grove switch` to return",
-            pending.path().display()
-        );
+        navigate(&path)
+    } else {
+        open_agent_worktree(&path)
     }
 }
 
-fn open_agent_worktree(primary: &Git, path: &Path) -> Result<()> {
-    Session::for_launch(&Git::at(path)?)?.attach()?;
-    navigate(&primary.primary_path()?)
+fn open_agent_worktree(path: &Path) -> Result<()> {
+    Session::for_worktree(path)?.attach()
 }
 
-fn switch(git: &Git, target: Option<&str>, shell: bool) -> Result<()> {
-    let selected = if let Some(branch) = target {
-        PickedWorktree {
-            branch: Some(branch.to_owned()),
-            pending: false,
-            path: git.enter(branch)?,
-        }
-    } else {
-        pick(git)?
-    };
-    let label = selected.branch.as_deref().unwrap_or(if selected.pending {
-        "(pending)"
-    } else {
-        "(detached)"
-    });
-    eprintln!("✓ Using {label} at {}", selected.path.display());
+fn switch(git: &Git, shell: bool) -> Result<()> {
+    let selected = pick(git)?;
+    eprintln!("✓ Using {} at {}", selected.title, selected.path.display());
     if shell {
         navigate(&selected.path)
-    } else if selected.pending {
-        let pending = PendingChange::load(Git::at(&selected.path)?)?;
-        render_pending(&pending, session::resume_pending(&pending)?);
-        navigate(&git.primary_path()?)
     } else {
-        open_agent_worktree(git, &selected.path)
+        open_agent_worktree(&selected.path)
     }
 }
 
 struct PickedWorktree {
-    branch: Option<String>,
-    pending: bool,
+    id: String,
+    title: String,
     path: PathBuf,
 }
 
 fn pick(git: &Git) -> Result<PickedWorktree> {
     let (mut choices, _) = rows(git)?;
-    choices.retain(|row| row.marker != "@");
     if choices.is_empty() {
-        bail!("no other worktrees to switch to");
+        bail!("no active changes to switch to");
     }
     for (index, row) in choices.iter_mut().enumerate() {
         row.marker = if index == 0 { "›" } else { " " }.to_owned();
@@ -198,8 +165,8 @@ fn pick(git: &Git) -> Result<PickedWorktree> {
     output.flush()?;
     let selected = select(&mut output, &mut choices)?;
     Ok(PickedWorktree {
-        branch: choices[selected].branch.clone(),
-        pending: choices[selected].pending,
+        id: choices[selected].id.clone(),
+        title: choices[selected].title_label.clone(),
         path: choices[selected].worktree_path.clone(),
     })
 }
@@ -295,7 +262,7 @@ fn list(git: &Git) -> Result<()> {
     let mut output = stdout.lock();
     print_rows(&rows, &mut output, terminal, "\n")?;
     output.flush()?;
-    eprint!("\n○ Showing {} worktrees", rows.len());
+    eprint!("\n○ Showing {} changes", rows.len());
     if changed > 0 {
         eprint!(", {changed} with changes");
     }
@@ -305,30 +272,23 @@ fn list(git: &Git) -> Result<()> {
 
 fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
     let worktrees = git.inventory()?;
-    let current = worktrees
-        .iter()
-        .find(|worktree| worktree.current)
-        .map(|worktree| worktree.path.as_path())
-        .context("current worktree is missing")?;
+    let current = git.current_path()?;
+    let mut title_counts = HashMap::new();
+    for worktree in &worktrees {
+        if let Some(title) = &worktree.title {
+            *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
+        }
+    }
     let mut rows = Vec::new();
     let mut changed = 0;
     for worktree in &worktrees {
-        let marker = if worktree.current {
-            '@'
-        } else if worktree.primary {
-            '^'
-        } else {
-            '+'
+        let marker = if worktree.current { '@' } else { '+' };
+        let short_id = &worktree.id[..8];
+        let title_label = match &worktree.title {
+            Some(title) if title_counts.get(title.as_str()) == Some(&1) => title.clone(),
+            Some(title) => format!("{title} · {short_id}"),
+            None => format!("Untitled · {short_id}"),
         };
-        let branch_label = worktree
-            .branch
-            .as_deref()
-            .unwrap_or(if worktree.pending {
-                "(pending)"
-            } else {
-                "(detached)"
-            })
-            .to_owned();
         let changes = match &worktree.state {
             WorktreeState::Missing => "missing".to_owned(),
             WorktreeState::Present(status) => {
@@ -340,10 +300,9 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         };
         rows.push(Row {
             marker: marker.to_string(),
-            branch: worktree.branch.clone(),
-            pending: worktree.pending,
+            id: worktree.id.clone(),
             worktree_path: worktree.path.clone(),
-            branch_label,
+            title_label,
             base: worktree.base.clone(),
             changes,
             divergence: worktree
@@ -351,7 +310,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
                 .as_ref()
                 .map(format_divergence)
                 .unwrap_or_default(),
-            path: display_path(&worktree.path, current),
+            path: display_path(&worktree.path, &current),
         });
     }
     Ok((rows, changed))
@@ -359,10 +318,9 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
 
 struct Row {
     marker: String,
-    branch: Option<String>,
-    pending: bool,
+    id: String,
     worktree_path: PathBuf,
-    branch_label: String,
+    title_label: String,
     base: String,
     changes: String,
     divergence: String,
@@ -404,13 +362,13 @@ fn print_rows(
     newline: &str,
 ) -> std::io::Result<()> {
     let marker_width = width(rows, "", |row| &row.marker);
-    let branch_width = width(rows, "Branch", |row| &row.branch_label);
+    let title_width = width(rows, "Title", |row| &row.title_label);
     let base_width = width(rows, "Base", |row| &row.base);
     let changes_width = width(rows, "Changes", |row| &row.changes);
     let divergence_width = width(rows, "Base↕", |row| &row.divergence);
     let header = format!(
-        "{:<marker_width$} {:<branch_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
-        "", "Branch", "Base", "Changes", "Base↕"
+        "{:<marker_width$} {:<title_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
+        "", "Title", "Base", "Changes", "Base↕"
     );
     write!(output, "{}{newline}", bold(&header, terminal))?;
     for row in rows {
@@ -419,8 +377,8 @@ fn print_rows(
         let divergence = format!("{:<divergence_width$}", row.divergence);
         write!(
             output,
-            "{:<marker_width$} {:<branch_width$}  {base}  {changes}  {divergence}  {}{newline}",
-            row.marker, row.branch_label, row.path,
+            "{:<marker_width$} {:<title_width$}  {base}  {changes}  {divergence}  {}{newline}",
+            row.marker, row.title_label, row.path,
         )?;
     }
     Ok(())
@@ -491,54 +449,44 @@ fn display_path(path: &Path, current: &Path) -> String {
     path.display().to_string()
 }
 
-fn remove(git: &Git, requested: Option<&str>, force: bool) -> Result<()> {
-    let prepared = git.prepare_removal(requested, force)?;
-    let session = Session::for_worktree(prepared.identity());
-    if force {
-        session.terminate()?;
-    } else if session.active()? {
-        bail!("worktree has a live agent session; use --force to stop it");
+fn remove(git: &Git, force: bool) -> Result<()> {
+    let recovered = git.recover_closing_removals()?;
+    if recovered > 0 {
+        eprintln!("✓ Finished {recovered} interrupted removal(s)");
+        return Ok(());
     }
+    let (rows, _) = rows(git)?;
+    let selected = if let Some(current) = rows.into_iter().find(|row| row.marker == "@") {
+        PickedWorktree {
+            id: current.id,
+            title: current.title_label,
+            path: current.worktree_path,
+        }
+    } else if git.current_path()? == git.primary_path()? {
+        pick(git)?
+    } else {
+        bail!("current worktree is not a managed Grove change");
+    };
+    let session = Session::for_worktree(&selected.path)?;
+    let _lock = session.lock()?;
+    let prepared = git.prepare_removal(&selected.id, force)?;
     let removal = git.remove(prepared)?;
-    eprintln!("✓ Removed {}", removal.label);
+    eprintln!("✓ Removed {}", selected.title);
     if let Some(path) = removal.navigate_to {
         navigate(&path)?;
     }
     Ok(())
 }
 
-fn name_pending() -> Result<()> {
-    let mut prompt = String::new();
-    std::io::stdin().read_to_string(&mut prompt)?;
-    let git = Git::discover()?;
-    git.name_pending_change(&prompt)?;
-    Ok(())
-}
-
 fn navigate(path: &Path) -> Result<()> {
     if let Some(file) = std::env::var_os("GROVE_DIRECTIVE_CD_FILE") {
-        std::fs::write(file, path.as_os_str().as_encoded_bytes())?;
+        let file = PathBuf::from(file);
+        std::fs::write(&file, path.as_os_str().as_encoded_bytes()).with_context(|| {
+            format!(
+                "failed to write shell navigation directive {}",
+                file.display()
+            )
+        })?;
     }
     Ok(())
-}
-
-fn branches(current: &OsStr) -> Vec<CompletionCandidate> {
-    complete(current, false)
-}
-
-fn worktree_branches(current: &OsStr) -> Vec<CompletionCandidate> {
-    complete(current, true)
-}
-
-fn complete(current: &OsStr, worktrees_only: bool) -> Vec<CompletionCandidate> {
-    let current = current.to_string_lossy();
-    let Ok(git) = Git::discover() else {
-        return Vec::new();
-    };
-    git.branch_names(worktrees_only)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|value| value.starts_with(current.as_ref()))
-        .map(CompletionCandidate::new)
-        .collect()
 }
