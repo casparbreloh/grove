@@ -47,13 +47,13 @@ enum Cmd {
         #[arg(long)]
         shell: bool,
     },
-    /// Open an active change
+    /// Open a Change or the main repository
     Switch {
         /// Enter the worktree without opening its agent
         #[arg(long)]
         shell: bool,
     },
-    /// List the repository's active changes
+    /// List the main repository and active Changes
     List,
     /// Remove an active change
     #[command(visible_alias = "delete")]
@@ -134,23 +134,9 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
     if shell {
         require_shell_navigation()?;
     }
-    let (mut choices, _) = rows(git)?;
-    if shell && choices.iter().any(|row| row.current) {
-        let current = git.current_path()?;
-        let primary = git.primary_path()?;
-        choices.insert(
-            0,
-            Row {
-                current: false,
-                change_id: None,
-                worktree_path: primary.clone(),
-                title_label: "Main repository".to_owned(),
-                base: String::new(),
-                changes: String::new(),
-                divergence: String::new(),
-                path: display_path(&primary, &current),
-            },
-        );
+    let (mut choices, _) = change_rows(git)?;
+    if choices.iter().any(|row| row.current) {
+        choices.insert(0, main_row(git)?);
     }
     let selected = pick(choices)?;
     eprintln!(
@@ -158,7 +144,7 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
         selected.title_label,
         selected.worktree_path.display()
     );
-    if shell {
+    if shell || selected.change_id.is_none() {
         navigate(&selected.worktree_path)
     } else {
         Session::for_worktree(&selected.worktree_path)?.attach()
@@ -245,7 +231,7 @@ fn print_picker(
     selected: usize,
     output: &mut impl Write,
 ) -> std::io::Result<()> {
-    writeln!(output, "Search  {filter}\r")?;
+    writeln!(output, "⌕  {filter}\r")?;
     print_rows(rows, output, true, "\r\n", Some(selected))
 }
 
@@ -293,13 +279,15 @@ impl Drop for RawMode {
 }
 
 fn list(git: &Git) -> Result<()> {
-    let (rows, changed) = rows(git)?;
+    let (mut rows, changed) = change_rows(git)?;
+    let changes = rows.len();
+    rows.insert(0, main_row(git)?);
     let stdout = std::io::stdout();
     let terminal = stdout.is_terminal();
     let mut output = stdout.lock();
     print_rows(&rows, &mut output, terminal, "\n", None)?;
     output.flush()?;
-    eprint!("\n○ Showing {} changes", rows.len());
+    eprint!("\n○ Showing {changes} changes");
     if changed > 0 {
         eprint!(", {changed} with changes");
     }
@@ -307,7 +295,7 @@ fn list(git: &Git) -> Result<()> {
     Ok(())
 }
 
-fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
+fn change_rows(git: &Git) -> Result<(Vec<Row>, usize)> {
     let worktrees = git.inventory()?;
     let current = git.current_path()?;
     let mut title_counts = HashMap::new();
@@ -350,6 +338,21 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         });
     }
     Ok((rows, changed))
+}
+
+fn main_row(git: &Git) -> Result<Row> {
+    let current = git.current_path()?;
+    let primary = git.primary_path()?;
+    Ok(Row {
+        current: current == primary,
+        change_id: None,
+        worktree_path: primary.clone(),
+        title_label: "Main repository".to_owned(),
+        base: String::new(),
+        changes: String::new(),
+        divergence: String::new(),
+        path: display_path(&primary, &current),
+    })
 }
 
 #[derive(Clone)]
@@ -501,7 +504,7 @@ fn remove(git: &Git, force: bool) -> Result<()> {
         return Ok(());
     }
     let current = git.current_path()?;
-    let (rows, _) = rows(git)?;
+    let (rows, _) = change_rows(git)?;
     let selected = if let Some(current) = rows.iter().find(|row| row.current) {
         current.clone()
     } else if current == git.primary_path()? {

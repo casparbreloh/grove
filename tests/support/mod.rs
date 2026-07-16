@@ -166,27 +166,28 @@ impl TestRepo {
         )
     }
 
-    pub fn switch_with_shell_in_pty(
+    pub fn switch_from_shell_in_pty(
         &self,
         directory: &Path,
         shell: &str,
+        invocation: &str,
         ready: &str,
         input: &[u8],
     ) -> Output {
         let binary = self.compiled_binary();
         let shell_path = find_executable(shell);
         let script = match shell {
-            "fish" => {
-                "\"$GROVE_TEST_BINARY\" init fish | source\ngrove switch --shell\nset status_code $status\nprintf '__PWD__%s\\n' $PWD\nstty -a\nexit $status_code"
-            }
-            "zsh" => {
-                "eval \"$(\"$GROVE_TEST_BINARY\" init zsh)\"\ngrove switch --shell\nstatus_code=$?\nprintf '__PWD__%s\\n' \"$PWD\"\nstty -a\nexit $status_code"
-            }
+            "fish" => format!(
+                "\"$GROVE_TEST_BINARY\" init fish | source\n{invocation}\nset status_code $status\nprintf '__PWD__%s\\n' $PWD\nstty -a\nexit $status_code"
+            ),
+            "zsh" => format!(
+                "eval \"$(\"$GROVE_TEST_BINARY\" init zsh)\"\n{invocation}\nstatus_code=$?\nprintf '__PWD__%s\\n' \"$PWD\"\nstty -a\nexit $status_code"
+            ),
             _ => panic!("unsupported test shell {shell}"),
         };
         let mut command = self.pty(directory, shell_path.as_os_str());
         command
-            .args(["-c", script])
+            .args(["-c", &script])
             .env("GROVE_TEST_BINARY", &binary)
             .env("PATH", self.test_path_with(binary.parent().unwrap()))
             .env_remove("GROVE_DIRECTIVE_CD_FILE");

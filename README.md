@@ -32,12 +32,13 @@ uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
 `switch` always opens a terminal picker containing active Grove Changes. From a
-Change, `switch --shell` also offers the main repository first. The picker and
-`list` lead with each Change's stable inferred title. Until naming succeeds,
-Grove shows `Untitled`; duplicate and untitled rows include a short opaque ID
-only to disambiguate them. Type to search titles, use the arrow keys, and press
-Enter to select. Ordinary, detached, and otherwise unmanaged Git worktrees are
-not included.
+Change it also offers the main repository first; selecting main returns the
+calling shell there without opening Pi. `list` always includes main without
+counting it as a Change. The picker and `list` lead with each Change's stable
+inferred title. Until naming succeeds, Grove shows `Untitled`; duplicate and
+untitled rows include a short opaque ID only to disambiguate them. Type to
+search titles, use the arrow keys, and press Enter to select. Ordinary,
+detached, and otherwise unmanaged Git worktrees are not included.
 
 `remove` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe removal accepts work integrated by merge, cherry-pick or
@@ -48,8 +49,9 @@ explicitly archives and discards that work. `delete` is an alias for `remove`.
 `--shell` skips Pi and writes a navigation directive instead. It is useful for
 creating or entering a Change with a normal shell. `new --shell`, `switch
 --shell`, and removal from the current Change are the only operations that
-request parent-shell navigation. After managed Pi exits, the caller stays in
-the directory where it invoked Grove.
+request parent-shell navigation. Selecting the main repository in ordinary
+`switch` also navigates without opening Pi. After managed Pi exits, the caller
+stays in the directory where it invoked Grove.
 
 ## Native Pi sessions
 

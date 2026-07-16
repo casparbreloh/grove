@@ -127,9 +127,10 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         let shell_repo = TestRepo::new();
         let change = shell_repo.create_change(None);
         shell_repo.set_change_title(&change, "Navigate With Shell");
-        let output = shell_repo.switch_with_shell_in_pty(
+        let output = shell_repo.switch_from_shell_in_pty(
             shell_repo.path(),
             shell,
+            "grove switch --shell",
             "Navigate With Shell",
             b"\r",
         );
@@ -142,8 +143,13 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         );
         assert_terminal_restored(&terminal);
 
-        let output =
-            shell_repo.switch_with_shell_in_pty(&change.path, shell, "Navigate With Shell", b"\r");
+        let output = shell_repo.switch_from_shell_in_pty(
+            &change.path,
+            shell,
+            "grove switch --shell",
+            "Navigate With Shell",
+            b"\r",
+        );
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
         let expected = shell_repo.path().canonicalize().unwrap();
@@ -152,6 +158,23 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
             terminal.contains(&format!("__PWD__{}", expected.display())),
             "{shell}: {terminal}"
         );
+        assert_terminal_restored(&terminal);
+
+        let output = shell_repo.switch_from_shell_in_pty(
+            &change.path,
+            shell,
+            "grove switch",
+            "Navigate With Shell",
+            b"\r",
+        );
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let terminal = stdout(&output);
+        let expected = shell_repo.path().canonicalize().unwrap();
+        assert!(
+            terminal.contains(&format!("__PWD__{}", expected.display())),
+            "{shell}: {terminal}"
+        );
+        assert_eq!(shell_repo.agent_log(), "");
         assert_terminal_restored(&terminal);
     }
 
@@ -581,8 +604,8 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let selected = repo.switch_in_pty(repo.path(), "Capture Native Sessions", b"active\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    assert!(terminal.contains("Search  active"), "{terminal}");
-    assert!(!terminal.contains("Filter:"), "{terminal}");
+    assert!(terminal.contains("⌕  active"), "{terminal}");
+    assert!(!terminal.contains("Search  active"), "{terminal}");
     assert!(
         terminal.contains("✓ Using Search Active Changes"),
         "{terminal}"
@@ -665,7 +688,9 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         .success()
         .get_output()
         .clone();
-    assert!(stdout(&listed).contains("Title"));
+    let table = stdout(&listed);
+    assert!(table.contains("Title"));
+    assert!(table.contains("@ Main repository"), "{table}");
     assert!(stderr(&listed).contains("Showing 0 changes"));
     let error = empty
         .grove()
