@@ -21,7 +21,60 @@ struct RepositoryRecord {
     git_common_dir: String,
 }
 
-pub(crate) fn locate_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
+pub(crate) struct RepositoryDirectory {
+    root: PathBuf,
+    name: String,
+    common_dir: PathBuf,
+}
+
+impl RepositoryDirectory {
+    pub(crate) fn new(name: String, common_dir: PathBuf) -> Result<Self> {
+        let home = std::env::var_os("HOME").context("HOME is not set")?;
+        Ok(Self {
+            root: PathBuf::from(home).join(".grove/repositories"),
+            name,
+            common_dir,
+        })
+    }
+
+    pub(crate) fn reserve(&self, creation: Creation) -> Result<Reserved> {
+        let root = claim_repository(&self.root, &self.name, &self.common_dir)?;
+        Reserved::create(&root, &self.common_dir, creation)
+    }
+
+    pub(crate) fn records(&self) -> Result<Vec<(PathBuf, Record)>> {
+        let records = Record::load_all(&self.path()?)?;
+        for (capsule, record) in &records {
+            self.validate(capsule, record)?;
+        }
+        Ok(records)
+    }
+
+    pub(crate) fn record(&self, id: &str) -> Result<Option<(PathBuf, Record)>> {
+        let capsule = self.path()?.join(id);
+        let Some(record) = Record::load_optional(&capsule.join("change.json"))? else {
+            return Ok(None);
+        };
+        self.validate(&capsule, &record)?;
+        Ok(Some((capsule, record)))
+    }
+
+    fn path(&self) -> Result<PathBuf> {
+        locate_repository(&self.root, &self.name, &self.common_dir)
+    }
+
+    fn validate(&self, capsule: &Path, record: &Record) -> Result<()> {
+        if Path::new(&record.repository) != self.common_dir {
+            bail!(
+                "change record {} belongs to a different repository",
+                capsule.join("change.json").display()
+            );
+        }
+        Ok(())
+    }
+}
+
+fn locate_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
     let candidates = repository_candidates(root, name, common_dir);
     for candidate in &candidates {
         if repository_matches(candidate, common_dir)? {
@@ -35,7 +88,7 @@ pub(crate) fn locate_repository(root: &Path, name: &str, common_dir: &Path) -> R
     }
 }
 
-pub(crate) fn claim_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
+fn claim_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
     create_private_directory_all(root)
         .with_context(|| format!("failed to create Grove repositories {}", root.display()))?;
     let _claim_lock = repository_claim_lock(root)?;
@@ -54,7 +107,7 @@ pub(crate) fn claim_repository(root: &Path, name: &str, common_dir: &Path) -> Re
             }
             match create_private_directory(&candidate) {
                 Ok(()) => {
-                    if let Err(error) = install_repository_record(&candidate, &record) {
+                    if let Err(error) = replace_json(&candidate.join("repository.json"), &record) {
                         let _ = fs::remove_dir_all(&candidate);
                         return Err(error);
                     }
@@ -84,32 +137,6 @@ fn repository_claim_lock(root: &Path) -> Result<File> {
     file.lock()
         .with_context(|| format!("failed to lock Grove repositories {}", root.display()))?;
     Ok(file)
-}
-
-fn install_repository_record(path: &Path, record: &RepositoryRecord) -> Result<()> {
-    let installed = path.join("repository.json");
-    let temporary = path.join(format!(
-        ".repository.json-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    if let Err(error) = write_json(&temporary, record) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    if let Err(error) = fs::rename(&temporary, &installed) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error).with_context(|| {
-            format!(
-                "failed to install repository record {}",
-                installed.display()
-            )
-        });
-    }
-    sync_parent(&installed)
 }
 
 fn repository_candidates(root: &Path, name: &str, common_dir: &Path) -> [PathBuf; 2] {
@@ -207,19 +234,19 @@ pub(crate) struct Closure {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Record {
-    pub(crate) version: u8,
+    version: u8,
     pub(crate) id: String,
     pub(crate) title: Option<String>,
     pub(crate) state: State,
     pub(crate) created_at: u64,
-    pub(crate) repository: String,
+    repository: String,
     pub(crate) creation: Creation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) closure: Option<Closure>,
 }
 
 impl Record {
-    pub(crate) fn load_all(root: &Path) -> Result<Vec<(PathBuf, Self)>> {
+    fn load_all(root: &Path) -> Result<Vec<(PathBuf, Self)>> {
         let entries = match fs::read_dir(root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -254,7 +281,7 @@ impl Record {
         Ok(records)
     }
 
-    pub(crate) fn load_optional(path: &Path) -> Result<Option<Self>> {
+    fn load_optional(path: &Path) -> Result<Option<Self>> {
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -278,7 +305,7 @@ pub(crate) struct Reserved {
 }
 
 impl Reserved {
-    pub(crate) fn create(root: &Path, repository: &Path, creation: Creation) -> Result<Self> {
+    fn create(root: &Path, repository: &Path, creation: Creation) -> Result<Self> {
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before the Unix epoch")?
@@ -307,7 +334,7 @@ impl Reserved {
                 creation: creation.clone(),
                 closure: None,
             };
-            if let Err(error) = write_record(&capsule.join("change.json"), &record) {
+            if let Err(error) = replace_json(&capsule.join("change.json"), &record) {
                 if let Err(rollback_error) = fs::remove_dir_all(&capsule) {
                     return Err(error).context(format!(
                         "record creation failed and capsule rollback also failed: {rollback_error}"
@@ -351,7 +378,7 @@ impl Reserved {
 
 pub(crate) struct Change {
     pub(crate) id: String,
-    pub(crate) capsule: PathBuf,
+    capsule: PathBuf,
 }
 
 impl Change {
@@ -434,25 +461,7 @@ fn update_record(
     }
     update(&mut record)?;
 
-    let temporary = capsule.join(format!(
-        ".change.json-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    if let Err(error) = write_record(&temporary, &record) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    if let Err(error) = fs::rename(&temporary, &path) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error)
-            .with_context(|| format!("failed to install change record {}", path.display()));
-    }
-    sync_parent(&path)?;
-    Ok(())
+    replace_json(&path, &record)
 }
 
 fn generate_id(root: &Path, nonce: u8) -> Result<String> {
@@ -486,10 +495,6 @@ fn create_private_directory_all(path: &Path) -> std::io::Result<()> {
     builder.create(path)
 }
 
-fn write_record(path: &Path, record: &Record) -> Result<()> {
-    write_json(path, record)
-}
-
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
@@ -506,6 +511,32 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
         .with_context(|| format!("failed to sync Grove record {}", path.display()))?;
     sync_parent(path)?;
     Ok(())
+}
+
+fn replace_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    let parent = path.parent().context("Grove record has no parent")?;
+    let name = path
+        .file_name()
+        .context("Grove record has no file name")?
+        .to_string_lossy();
+    let temporary = parent.join(format!(
+        ".{name}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    if let Err(error) = write_json(&temporary, value) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error)
+            .with_context(|| format!("failed to install Grove record {}", path.display()));
+    }
+    sync_parent(path)
 }
 
 fn sync_parent(path: &Path) -> Result<()> {

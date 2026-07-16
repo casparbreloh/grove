@@ -158,35 +158,16 @@ impl TestRepo {
     }
 
     pub fn switch_in_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let binary = PathBuf::from(
-            assert_cmd::Command::cargo_bin("grove")
-                .expect("compiled grove binary")
-                .get_program(),
-        );
-        let mut command = self.pty(&self.repo, OsStr::new("/bin/sh"));
-        command
-            .args([
-                "-c",
-                "\"$GROVE_TEST_BINARY\" switch --shell\nstatus=$?\nstty -a\nexit \"$status\"",
-            ])
-            .env("GROVE_TEST_BINARY", binary);
-        let mut picker = PtyProcess::start(&mut command, self._root.path());
-        picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
-        picker.send(input, "Grove switch");
-        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove switch");
-        Output {
-            status,
-            stdout: picker.output(),
-            stderr: Vec::new(),
-        }
+        self.run_pty(
+            self.sh_picker("switch --shell"),
+            ready,
+            input,
+            "Grove switch",
+        )
     }
 
     pub fn switch_with_shell_in_pty(&self, shell: &str, ready: &str, input: &[u8]) -> Output {
-        let binary = PathBuf::from(
-            assert_cmd::Command::cargo_bin("grove")
-                .expect("compiled grove binary")
-                .get_program(),
-        );
+        let binary = self.compiled_binary();
         let shell_path = find_executable(shell);
         let script = match shell {
             "fish" => {
@@ -203,52 +184,18 @@ impl TestRepo {
             .env("GROVE_TEST_BINARY", &binary)
             .env("PATH", self.test_path_with(binary.parent().unwrap()))
             .env_remove("GROVE_DIRECTIVE_CD_FILE");
-        let mut picker = PtyProcess::start(&mut command, self._root.path());
-        picker.wait_for(ready, Duration::from_secs(10), "Grove shell switch");
-        picker.send(input, "Grove shell switch");
-        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove shell switch");
-        Output {
-            status,
-            stdout: picker.output(),
-            stderr: Vec::new(),
-        }
+        self.run_pty(command, ready, input, "Grove shell switch")
     }
 
     pub fn remove_in_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let binary = assert_cmd::Command::cargo_bin("grove")
-            .expect("compiled grove binary")
-            .get_program()
-            .to_owned();
-        let mut command = self.pty(&self.repo, OsStr::new("/bin/sh"));
-        command
-            .args([
-                "-c",
-                "\"$GROVE_TEST_BINARY\" remove\nstatus=$?\nstty -a\nexit \"$status\"",
-            ])
-            .env("GROVE_TEST_BINARY", binary);
-        let mut picker = PtyProcess::start(&mut command, self._root.path());
-        picker.wait_for(ready, Duration::from_secs(10), "Grove remove");
-        picker.send(input, "Grove remove");
-        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove remove");
-        Output {
-            status,
-            stdout: picker.output(),
-            stderr: Vec::new(),
-        }
+        self.run_pty(self.sh_picker("remove"), ready, input, "Grove remove")
     }
 
     pub fn select_agent_in_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let mut command = self.grove_pty(&self.repo);
+        let binary = self.compiled_binary();
+        let mut command = self.pty(&self.repo, binary.as_os_str());
         command.arg("switch");
-        let mut picker = PtyProcess::start(&mut command, self._root.path());
-        picker.wait_for(ready, Duration::from_secs(10), "Grove switch");
-        picker.send(input, "Grove switch");
-        let status = picker.wait_for_exit(Duration::from_secs(5), "Grove switch");
-        Output {
-            status,
-            stdout: picker.output(),
-            stderr: Vec::new(),
-        }
+        self.run_pty(command, ready, input, "Grove switch")
     }
 
     pub fn agent_log(&self) -> String {
@@ -362,12 +309,35 @@ impl TestRepo {
             .collect()
     }
 
-    fn grove_pty(&self, directory: &Path) -> Command {
-        let binary = assert_cmd::Command::cargo_bin("grove")
-            .expect("compiled grove binary")
-            .get_program()
-            .to_owned();
-        self.pty(directory, &binary)
+    fn run_pty(&self, mut command: Command, ready: &str, input: &[u8], label: &str) -> Output {
+        let mut picker = PtyProcess::start(&mut command, self._root.path());
+        picker.wait_for(ready, Duration::from_secs(10), label);
+        picker.send(input, label);
+        let status = picker.wait_for_exit(Duration::from_secs(5), label);
+        Output {
+            status,
+            stdout: picker.output(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn sh_picker(&self, action: &str) -> Command {
+        let mut command = self.pty(&self.repo, OsStr::new("/bin/sh"));
+        command
+            .args([
+                "-c",
+                &format!("\"$GROVE_TEST_BINARY\" {action}\nstatus=$?\nstty -a\nexit \"$status\""),
+            ])
+            .env("GROVE_TEST_BINARY", self.compiled_binary());
+        command
+    }
+
+    fn compiled_binary(&self) -> PathBuf {
+        PathBuf::from(
+            assert_cmd::Command::cargo_bin("grove")
+                .expect("compiled grove binary")
+                .get_program(),
+        )
     }
 
     fn pty(&self, directory: &Path, program: &OsStr) -> Command {
@@ -380,11 +350,7 @@ impl TestRepo {
     }
 
     fn compiled_grove(&self, directory: &Path) -> Command {
-        let binary = assert_cmd::Command::cargo_bin("grove")
-            .expect("compiled grove binary")
-            .get_program()
-            .to_owned();
-        let mut command = Command::new(binary);
+        let mut command = Command::new(self.compiled_binary());
         self.configure_grove(&mut command, directory);
         command
     }

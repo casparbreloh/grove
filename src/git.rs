@@ -17,8 +17,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::change::{
-    Change, Closure, Creation, Outcome, Record, Reserved, claim_repository, locate_repository,
-    lock as lock_change, mark_archived, mark_closing, restore_active,
+    Change, Closure, Creation, Outcome, Record, RepositoryDirectory, lock as lock_change,
+    mark_archived, mark_closing, restore_active,
 };
 
 #[derive(Clone)]
@@ -159,22 +159,13 @@ impl Lineage {
         })
     }
 
-    fn load(git: &Git, branch: &str) -> Result<Self> {
-        let path = git.changes_root()?.join(branch).join("change.json");
-        let Some(record) = Record::load_optional(&path)? else {
-            return Ok(Self {
-                base_ref: None,
-                base_oid: None,
-                parent: None,
-                default: false,
-            });
-        };
-        Ok(Self {
+    fn from_record(record: &Record) -> Self {
+        Self {
             default: record.creation.base_ref.is_none(),
-            base_ref: record.creation.base_ref,
-            base_oid: Some(record.creation.base_oid),
-            parent: record.creation.parent,
-        })
+            base_ref: record.creation.base_ref.clone(),
+            base_oid: Some(record.creation.base_oid.clone()),
+            parent: record.creation.parent.clone(),
+        }
     }
 
     fn base(&self, git: &Git, branch: &str) -> Result<BranchBase> {
@@ -289,11 +280,9 @@ impl Git {
 
     pub(crate) fn create_change(&self, from: Option<&str>) -> Result<Change> {
         let creation = Lineage::resolve_creation_base(self, from)?;
-        let common_dir = self.common_dir()?;
-        let (repositories, name) = self.repository_storage()?;
-        let root = claim_repository(&repositories, &name, &common_dir)?;
+        let repository = self.repository()?;
         for _ in 0..100 {
-            let reserved = Reserved::create(&root, &common_dir, creation.clone())?;
+            let reserved = repository.reserve(creation.clone())?;
             let id = reserved.id().to_owned();
             match self.branch_exists(&id) {
                 Ok(true) => {
@@ -342,18 +331,11 @@ impl Git {
     pub(crate) fn inventory(&self) -> Result<Vec<WorktreeView>> {
         let worktrees = self.worktrees()?;
         let current = self.current_root()?;
-        let common_dir = self.common_dir()?;
-        let changes_root = self.changes_root()?;
+        let repository = self.repository()?;
         let mut records = Vec::new();
-        for (capsule, record) in Record::load_all(&changes_root)? {
+        for (capsule, record) in repository.records()? {
             if !record.state.is_active() {
                 continue;
-            }
-            if Path::new(&record.repository) != common_dir {
-                bail!(
-                    "change record {} belongs to a different repository",
-                    capsule.join("change.json").display()
-                );
             }
             records.push((record.created_at, capsule, record));
         }
@@ -395,7 +377,7 @@ impl Git {
                     );
                 }
 
-                let base = Lineage::load(self, &record.id)?.base(self, &record.id)?;
+                let base = Lineage::from_record(&record).base(self, &record.id)?;
                 let divergence = base
                     .divergence_ref
                     .as_deref()
@@ -430,14 +412,14 @@ impl Git {
             .context("repository has no worktrees")?
             .path
             .clone();
-        let root = self.changes_root()?;
+        let repository = self.repository()?;
         let mut finalized = 0;
-        for (capsule, record) in Record::load_all(&root)? {
+        for (capsule, record) in repository.records()? {
             if !record.state.is_closing() {
                 continue;
             }
             let _lock = lock_change(&capsule)?;
-            let Some(record) = Record::load_optional(&capsule.join("change.json"))? else {
+            let Some((capsule, record)) = repository.record(&record.id)? else {
                 continue;
             };
             if !record.state.is_closing() {
@@ -507,15 +489,15 @@ impl Git {
 
         let path = target.path.clone();
         let branch = branch.to_owned();
-        let capsule = self.changes_root()?.join(&branch);
-        let record_path = capsule.join("change.json");
-        let record = Record::load_optional(&record_path)?
-            .with_context(|| format!("change record is missing from {}", capsule.display()))?;
+        let (capsule, record) = self
+            .repository()?
+            .record(&branch)?
+            .with_context(|| format!("change record is missing for '{branch}'"))?;
         if record.id != branch || !record.state.is_active() {
             bail!("change '{branch}' is not active");
         }
         let expected_oid = self.branch_oid(&branch)?;
-        let base = Lineage::load(self, &branch)?.base(self, &branch)?;
+        let base = Lineage::from_record(&record).base(self, &branch)?;
         let target_ref = base.removal_ref.clone();
         let target_oid = target_ref
             .as_deref()
@@ -806,13 +788,8 @@ impl Git {
             .context("failed to resolve Git common directory")
     }
 
-    fn changes_root(&self) -> Result<PathBuf> {
+    fn repository(&self) -> Result<RepositoryDirectory> {
         let common_dir = self.common_dir()?;
-        let (repositories, name) = self.repository_storage()?;
-        locate_repository(&repositories, &name, &common_dir)
-    }
-
-    fn repository_storage(&self) -> Result<(PathBuf, String)> {
         let primary = self
             .worktrees()?
             .into_iter()
@@ -824,8 +801,7 @@ impl Git {
             .context("primary worktree has no directory name")?
             .to_string_lossy()
             .into_owned();
-        let home = std::env::var_os("HOME").context("HOME is not set")?;
-        Ok((PathBuf::from(home).join(".grove/repositories"), repo))
+        RepositoryDirectory::new(repo, common_dir)
     }
 
     fn worktrees(&self) -> Result<Vec<Worktree>> {

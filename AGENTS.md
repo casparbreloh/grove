@@ -11,7 +11,7 @@ safety boundaries; do not add complexity for merely hypothetical edge cases.
 ## Layout
 
 - `src/main.rs` owns Clap definitions, rendering, picker/shell integration, and navigation.
-- `src/change.rs` owns immutable Change identity, capsule records, titles, and lifecycle transitions.
+- `src/change.rs` owns repository directories, immutable Change identity, capsule records, titles, and lifecycle transitions.
 - `src/git.rs` is the deep Git module. It owns creation lineage, inventory, archive snapshots, integration detection, rollback, and compare-and-delete safety; keep raw Git operations private there.
 - `src/session.rs` is the narrow Pi adapter: validation, capsule lock, direct blocking launch/resume, extension materialization, and isolated title inference.
 - `src/pi-extension.ts` links native Pi sessions and starts fire-and-forget naming without delaying Pi.

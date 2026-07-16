@@ -13,7 +13,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 use crossterm::{
     QueueableCommand,
-    cursor::{MoveDown, MoveToColumn, MoveUp},
+    cursor::{MoveToColumn, MoveUp},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
@@ -126,12 +126,8 @@ fn new(git: &Git, from: Option<&str>, shell: bool) -> Result<()> {
     if shell {
         navigate(&path)
     } else {
-        open_agent_worktree(&path)
+        Session::for_worktree(&path)?.attach()
     }
-}
-
-fn open_agent_worktree(path: &Path) -> Result<()> {
-    Session::for_worktree(path)?.attach()
 }
 
 fn switch(git: &Git, shell: bool) -> Result<()> {
@@ -139,21 +135,19 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
         require_shell_navigation()?;
     }
     let selected = pick(git)?;
-    eprintln!("✓ Using {} at {}", selected.title, selected.path.display());
+    eprintln!(
+        "✓ Using {} at {}",
+        selected.title_label,
+        selected.worktree_path.display()
+    );
     if shell {
-        navigate(&selected.path)
+        navigate(&selected.worktree_path)
     } else {
-        open_agent_worktree(&selected.path)
+        Session::for_worktree(&selected.worktree_path)?.attach()
     }
 }
 
-struct PickedWorktree {
-    id: String,
-    title: String,
-    path: PathBuf,
-}
-
-fn pick(git: &Git) -> Result<PickedWorktree> {
+fn pick(git: &Git) -> Result<Row> {
     let (choices, _) = rows(git)?;
     if choices.is_empty() {
         bail!("no active changes to switch to");
@@ -163,12 +157,7 @@ fn pick(git: &Git) -> Result<PickedWorktree> {
         bail!("interactive worktree selection requires a terminal");
     }
     let mut output = stderr.lock();
-    let selected = select(&mut output, &choices)?;
-    Ok(PickedWorktree {
-        id: selected.id,
-        title: selected.title_label,
-        path: selected.worktree_path,
-    })
+    select(&mut output, &choices)
 }
 
 fn select(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
@@ -181,8 +170,7 @@ fn select(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
 fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
     let mut filter = String::new();
     let mut visible = filtered_rows(choices, &filter);
-    mark_first(&mut visible);
-    print_picker(&visible, &filter, output)?;
+    print_picker(&visible, &filter, 0, output)?;
     output.flush()?;
     let mut selected: usize = 0;
     loop {
@@ -202,7 +190,7 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
             }
             KeyCode::Backspace if !filter.is_empty() => {
                 filter.pop();
-                visible = replace_picker(output, visible.len(), choices, &filter)?;
+                visible = replace_picker(output, visible.len(), choices, &filter, 0)?;
                 selected = 0;
                 continue;
             }
@@ -212,16 +200,14 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Row> {
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 filter.push(character);
-                visible = replace_picker(output, visible.len(), choices, &filter)?;
+                visible = replace_picker(output, visible.len(), choices, &filter, 0)?;
                 selected = 0;
                 continue;
             }
             _ => continue,
         };
         if next != selected {
-            redraw_picker(output, visible.len(), selected, next)?;
-            visible[selected].marker = " ".to_owned();
-            visible[next].marker = "›".to_owned();
+            visible = replace_picker(output, visible.len(), choices, &filter, next)?;
             selected = next;
         }
     }
@@ -236,15 +222,14 @@ fn filtered_rows(choices: &[Row], filter: &str) -> Vec<Row> {
         .collect()
 }
 
-fn mark_first(rows: &mut [Row]) {
-    for (index, row) in rows.iter_mut().enumerate() {
-        row.marker = if index == 0 { "›" } else { " " }.to_owned();
-    }
-}
-
-fn print_picker(rows: &[Row], filter: &str, output: &mut impl Write) -> std::io::Result<()> {
+fn print_picker(
+    rows: &[Row],
+    filter: &str,
+    selected: usize,
+    output: &mut impl Write,
+) -> std::io::Result<()> {
     writeln!(output, "Filter: {filter}\r")?;
-    print_rows(rows, output, true, "\r\n")
+    print_rows(rows, output, true, "\r\n", Some(selected))
 }
 
 fn replace_picker(
@@ -252,41 +237,17 @@ fn replace_picker(
     previous_rows: usize,
     choices: &[Row],
     filter: &str,
+    selected: usize,
 ) -> std::io::Result<Vec<Row>> {
     let distance = u16::try_from(previous_rows + 2).unwrap_or(u16::MAX);
     output
         .queue(MoveUp(distance))?
         .queue(MoveToColumn(0))?
         .queue(Clear(ClearType::FromCursorDown))?;
-    let mut rows = filtered_rows(choices, filter);
-    mark_first(&mut rows);
-    print_picker(&rows, filter, output)?;
+    let rows = filtered_rows(choices, filter);
+    print_picker(&rows, filter, selected, output)?;
     output.flush()?;
     Ok(rows)
-}
-
-fn redraw_picker(
-    output: &mut impl Write,
-    row_count: usize,
-    previous: usize,
-    next: usize,
-) -> std::io::Result<()> {
-    move_picker_marker(output, row_count, previous, " ")?;
-    move_picker_marker(output, row_count, next, "›")?;
-    output.flush()
-}
-
-fn move_picker_marker(
-    output: &mut impl Write,
-    row_count: usize,
-    row: usize,
-    marker: &str,
-) -> std::io::Result<()> {
-    let distance = u16::try_from(row_count - row).unwrap_or(u16::MAX);
-    output.queue(MoveUp(distance))?.queue(MoveToColumn(0))?;
-    write!(output, "{marker}")?;
-    output.queue(MoveDown(distance))?.queue(MoveToColumn(0))?;
-    Ok(())
 }
 
 struct RawMode {
@@ -319,7 +280,7 @@ fn list(git: &Git) -> Result<()> {
     let stdout = std::io::stdout();
     let terminal = stdout.is_terminal();
     let mut output = stdout.lock();
-    print_rows(&rows, &mut output, terminal, "\n")?;
+    print_rows(&rows, &mut output, terminal, "\n", None)?;
     output.flush()?;
     eprint!("\n○ Showing {} changes", rows.len());
     if changed > 0 {
@@ -341,7 +302,6 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
     let mut rows = Vec::new();
     let mut changed = 0;
     for worktree in &worktrees {
-        let marker = if worktree.current { '@' } else { '+' };
         let short_id = &worktree.id[..8];
         let title_label = match &worktree.title {
             Some(title) if title_counts.get(title.as_str()) == Some(&1) => title.clone(),
@@ -358,7 +318,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
             }
         };
         rows.push(Row {
-            marker: marker.to_string(),
+            current: worktree.current,
             id: worktree.id.clone(),
             worktree_path: worktree.path.clone(),
             title_label,
@@ -377,7 +337,7 @@ fn rows(git: &Git) -> Result<(Vec<Row>, usize)> {
 
 #[derive(Clone)]
 struct Row {
-    marker: String,
+    current: bool,
     id: String,
     worktree_path: PathBuf,
     title_label: String,
@@ -420,8 +380,9 @@ fn print_rows(
     output: &mut impl Write,
     terminal: bool,
     newline: &str,
+    selected: Option<usize>,
 ) -> std::io::Result<()> {
-    let marker_width = width(rows, "", |row| &row.marker);
+    let marker_width = 1;
     let title_width = width(rows, "Title", |row| &row.title_label);
     let base_width = width(rows, "Base", |row| &row.base);
     let changes_width = width(rows, "Changes", |row| &row.changes);
@@ -431,14 +392,21 @@ fn print_rows(
         "", "Title", "Base", "Changes", "Base↕"
     );
     write!(output, "{}{newline}", bold(&header, terminal))?;
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
+        let marker = if let Some(selected) = selected {
+            if index == selected { '›' } else { ' ' }
+        } else if row.current {
+            '@'
+        } else {
+            '+'
+        };
         let base = format!("{:<base_width$}", row.base);
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
         write!(
             output,
             "{:<marker_width$} {:<title_width$}  {base}  {changes}  {divergence}  {}{newline}",
-            row.marker, row.title_label, row.path,
+            marker, row.title_label, row.path,
         )?;
     }
     Ok(())
@@ -517,25 +485,21 @@ fn remove(git: &Git, force: bool) -> Result<()> {
     }
     let current = git.current_path()?;
     let (rows, _) = rows(git)?;
-    let selected = if let Some(current) = rows.into_iter().find(|row| row.marker == "@") {
-        PickedWorktree {
-            id: current.id,
-            title: current.title_label,
-            path: current.worktree_path,
-        }
+    let selected = if let Some(current) = rows.into_iter().find(|row| row.current) {
+        current
     } else if current == git.primary_path()? {
         pick(git)?
     } else {
         bail!("current worktree is not a managed Grove change");
     };
-    if selected.path == current {
+    if selected.worktree_path == current {
         require_shell_navigation()?;
     }
-    let session = Session::for_worktree(&selected.path)?;
+    let session = Session::for_worktree(&selected.worktree_path)?;
     let _lock = session.lock()?;
     let prepared = git.prepare_removal(&selected.id, force)?;
     let removal = git.remove(prepared)?;
-    eprintln!("✓ Removed {}", selected.title);
+    eprintln!("✓ Removed {}", selected.title_label);
     if let Some(path) = removal.navigate_to {
         navigate(&path)?;
     }
