@@ -99,10 +99,12 @@ Everything local to a Change lives together:
 ```text
 ~/.grove/
   repositories/
-    <repository-name>/
+    <repository-name>-<path-hash>/
       repository.json
       <change-id>/
         change.json
+        .activity.lock
+        .metadata.lock
         worktree/
         sessions/pi/
           <Pi-native session>.jsonl
@@ -112,16 +114,20 @@ Everything local to a Change lives together:
   runtime/
 ```
 
-The normal repository directory is its readable name. `repository.json`
-records the canonical Git common directory; only an unrelated repository that
-already shares the name receives a short suffix. `change.json` records
-Grove-owned identity, creation lineage, stable title, and
+Repository directories always combine the readable repository name with a
+short hash of the canonical Git common directory. This makes repository claims
+deterministic without a global lock. `repository.json` records that canonical
+directory, while `change.json` records Grove-owned identity, creation lineage, stable title, and
 the `active` → `closing` → `archived` lifecycle. Pi JSONL is the canonical
 conversation, usage, and tool history. Before deletion, Grove snapshots the
 authoritative base-to-final worktree as a binary-capable patch and machine-
 readable statistics. Successful removal deletes only `worktree/` and the local
 ID branch; the record, Pi sessions, and artifacts remain for later inspection
 or analytics.
+
+The two empty lock files have separate purposes: `.activity.lock` excludes a
+second managed Pi and removal while Pi is open; `.metadata.lock` serializes
+atomic `change.json` updates. They contain no persistent state.
 
 Capsules are local-only and private (`0700` directories and `0600` Grove-owned
 records/artifacts on Unix). They can contain source, prompts, tool output, and

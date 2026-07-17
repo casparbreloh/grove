@@ -75,76 +75,62 @@ impl RepositoryDirectory {
 }
 
 fn locate_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
-    let candidates = repository_candidates(root, name, common_dir);
-    for candidate in &candidates {
-        if repository_matches(candidate, common_dir)? {
-            return Ok(candidate.clone());
-        }
+    let path = repository_path(root, name, common_dir);
+    if !path.exists() || repository_matches(&path, common_dir)? {
+        return Ok(path);
     }
-    if !candidates[0].exists() {
-        Ok(candidates[0].clone())
-    } else {
-        Ok(candidates[1].clone())
-    }
+    bail!("Grove repository directory does not match '{name}'")
 }
 
 fn claim_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
     create_private_directory_all(root)
         .with_context(|| format!("failed to create Grove repositories {}", root.display()))?;
-    let _claim_lock = repository_claim_lock(root)?;
+    let repository = repository_path(root, name, common_dir);
+    if repository.exists() {
+        if repository_matches(&repository, common_dir)? {
+            return Ok(repository);
+        }
+        bail!("Grove repository directory does not match '{name}'");
+    }
+
     let record = RepositoryRecord {
         version: REPOSITORY_RECORD_VERSION,
         name: name.to_owned(),
         git_common_dir: common_dir.to_string_lossy().into_owned(),
     };
-    for candidate in repository_candidates(root, name, common_dir) {
-        loop {
-            if repository_matches(&candidate, common_dir)? {
-                return Ok(candidate);
-            }
-            if candidate.exists() {
-                break;
-            }
-            match create_private_directory(&candidate) {
-                Ok(()) => {
-                    if let Err(error) = replace_json(&candidate.join("repository.json"), &record) {
-                        let _ = fs::remove_dir_all(&candidate);
-                        return Err(error);
-                    }
-                    return Ok(candidate);
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("failed to claim Grove repository {}", candidate.display())
-                    });
-                }
-            }
-        }
+    let temporary = root.join(format!(
+        ".repository-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    create_private_directory(&temporary).with_context(|| {
+        format!(
+            "failed to create temporary Grove repository {}",
+            temporary.display()
+        )
+    })?;
+    if let Err(error) = write_json(&temporary.join("repository.json"), &record) {
+        let _ = fs::remove_dir_all(&temporary);
+        return Err(error);
     }
-    bail!("could not isolate Grove repository '{name}'")
+    if let Err(error) = fs::rename(&temporary, &repository) {
+        let _ = fs::remove_dir_all(&temporary);
+        if repository_matches(&repository, common_dir)? {
+            return Ok(repository);
+        }
+        return Err(error)
+            .with_context(|| format!("failed to claim Grove repository {}", repository.display()));
+    }
+    sync_parent(&repository)?;
+    Ok(repository)
 }
 
-fn repository_claim_lock(root: &Path) -> Result<File> {
-    let path = root.join(".lock");
-    let mut options = OpenOptions::new();
-    options.create(true).read(true).write(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let file = options
-        .open(&path)
-        .with_context(|| format!("failed to open repository claim lock {}", path.display()))?;
-    file.lock()
-        .with_context(|| format!("failed to lock Grove repositories {}", root.display()))?;
-    Ok(file)
-}
-
-fn repository_candidates(root: &Path, name: &str, common_dir: &Path) -> [PathBuf; 2] {
+fn repository_path(root: &Path, name: &str, common_dir: &Path) -> PathBuf {
     let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
-    [
-        root.join(name),
-        root.join(format!("{name}-{}", &digest[..8])),
-    ]
+    root.join(format!("{name}-{}", &digest[..8]))
 }
 
 fn repository_matches(path: &Path, common_dir: &Path) -> Result<bool> {
@@ -171,7 +157,7 @@ pub(crate) struct Lock {
 }
 
 pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
-    let path = capsule.join(".lock");
+    let path = capsule.join(".activity.lock");
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]
@@ -442,7 +428,7 @@ fn update_record(
     expected_id: &str,
     update: impl FnOnce(&mut Record) -> Result<()>,
 ) -> Result<()> {
-    let lock_path = capsule.join(".record.lock");
+    let lock_path = capsule.join(".metadata.lock");
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]

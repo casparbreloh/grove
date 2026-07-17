@@ -224,20 +224,7 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     repo.remove_pi();
     let original = repo.git(["rev-parse", "main"]);
     let repository_root = repo.home().join(".grove/repositories");
-    fs::create_dir_all(&repository_root).unwrap();
-    let claim_lock = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(repository_root.join(".lock"))
-        .unwrap();
-    claim_lock.lock().unwrap();
-    let mut creation = repo.spawn_grove_from(repo.path(), ["new", "--shell"]);
-    thread::sleep(Duration::from_secs(1));
-    assert!(creation.try_wait().unwrap().is_none());
-    claim_lock.unlock().unwrap();
-    assert!(creation.wait().unwrap().success());
+    repo.grove().args(["new", "--shell"]).assert().success();
 
     let capsule = repo.change_capsules().pop().expect("created capsule");
     let id = capsule.file_name().unwrap().to_str().unwrap();
@@ -247,11 +234,14 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     );
     let repository = capsule.parent().expect("repository directory");
-    assert_eq!(repository.file_name().unwrap(), "repo");
+    let repository_name = repository.file_name().unwrap().to_string_lossy();
+    assert!(repository_name.starts_with("repo-"), "{repository_name}");
+    assert_eq!(repository_name.len(), "repo-12345678".len());
     assert_eq!(
         repository.parent().unwrap(),
         repo.home().join(".grove/repositories")
     );
+    assert!(!repository_root.join(".lock").exists());
     let repository_record = repo.repository_record(repository);
     assert_eq!(repository_record["version"], 1);
     assert_eq!(repository_record["name"], "repo");
@@ -343,10 +333,13 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     );
     let first_repository = first.path.parent().unwrap().parent().unwrap();
     let second_repository = second.path.parent().unwrap().parent().unwrap();
-    assert_eq!(first_repository.file_name().unwrap(), "repo");
+    let first_name = first_repository.file_name().unwrap().to_str().unwrap();
+    assert!(first_name.starts_with("repo-"), "{first_name}");
+    assert_eq!(first_name.len(), "repo-".len() + 8);
     let collision_name = second_repository.file_name().unwrap().to_str().unwrap();
     assert!(collision_name.starts_with("repo-"), "{collision_name}");
     assert_eq!(collision_name.len(), "repo-".len() + 8);
+    assert_ne!(first_name, collision_name);
     assert_eq!(
         Path::new(
             repo.repository_record(second_repository)["git_common_dir"]
@@ -358,17 +351,20 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
 
     let readable = repo.create_repo("named/Project Name");
     let readable_change = repo.create_change_from(&readable, None);
-    assert_eq!(
-        readable_change
-            .path
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap(),
-        "Project Name"
+    let readable_name = readable_change
+        .path
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy();
+    assert!(
+        readable_name.starts_with("Project Name-"),
+        "{readable_name}"
     );
+    assert_eq!(readable_name.len(), "Project Name-12345678".len());
 
     let blocked = TestRepo::new();
     fs::write(blocked.home().join(".grove"), "not a directory").unwrap();
@@ -448,6 +444,10 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     repo.release_title_generator(&gate);
     repo.wait_for_change_title(&capsule, "Implement Native Session Titles");
     repo.wait_for_session_content(r#""name":"Implement Native Session Titles""#);
+    assert!(capsule.join(".activity.lock").is_file());
+    assert!(capsule.join(".metadata.lock").is_file());
+    assert!(!capsule.join(".lock").exists());
+    assert!(!capsule.join(".record.lock").exists());
     let session_path = repo.pi_session_files().pop().unwrap();
     let session_before = fs::read_to_string(&session_path).unwrap();
     let id = capsule.file_name().unwrap().to_string_lossy();
@@ -546,6 +546,8 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let (agent, lock_gate) = locked.start_blocking_new();
     let locked_capsule = locked.change_capsules().pop().unwrap();
     let locked_worktree = locked_capsule.join("worktree");
+    assert!(locked_capsule.join(".activity.lock").is_file());
+    assert!(!locked_capsule.join(".lock").exists());
     let switch = locked.select_agent_in_pty("Untitled", b"\r");
     assert!(!switch.status.success());
     assert!(
