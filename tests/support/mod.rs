@@ -23,7 +23,7 @@ pub struct TestRepo {
 }
 
 pub struct TestChange {
-    pub branch: String,
+    pub id: String,
     pub path: PathBuf,
 }
 
@@ -107,7 +107,7 @@ impl TestRepo {
     }
 
     pub fn change_capsules(&self) -> Vec<PathBuf> {
-        let root = self.home.join(".grove/repositories");
+        let root = self.home.join(".grove");
         let Ok(repositories) = fs::read_dir(root) else {
             return Vec::new();
         };
@@ -127,19 +127,16 @@ impl TestRepo {
         capsules
     }
 
-    pub fn repository_record(&self, path: &Path) -> serde_json::Value {
-        serde_json::from_slice(
-            &fs::read(path.join("repository.json")).expect("read repository record"),
-        )
-        .expect("valid repository record")
-    }
-
     pub fn grove(&self) -> assert_cmd::Command {
         self.grove_from(&self.repo)
     }
 
     pub fn create_change(&self, from: Option<&str>) -> TestChange {
         self.create_change_from(&self.repo, from)
+    }
+
+    pub fn change_head(&self, change: &TestChange) -> String {
+        self.git_from(&change.path, ["rev-parse", "HEAD"])
     }
 
     pub fn set_change_title(&self, change: &TestChange, title: &str) {
@@ -167,21 +164,18 @@ impl TestRepo {
         }
         command.assert().success();
         let path = self.navigation();
-        let branch = self.git_from(&path, ["branch", "--show-current"]);
-        TestChange { branch, path }
+        assert_eq!(self.git_from(&path, ["branch", "--show-current"]), "");
+        let id = path
+            .parent()
+            .and_then(Path::file_name)
+            .expect("Change ID")
+            .to_string_lossy()
+            .into_owned();
+        TestChange { id, path }
     }
 
     pub fn grove_from(&self, directory: &Path) -> assert_cmd::Command {
         assert_cmd::Command::from_std(self.compiled_grove(directory))
-    }
-
-    pub fn spawn_grove_from<const N: usize>(&self, directory: &Path, args: [&str; N]) -> Child {
-        self.compiled_grove(directory)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn compiled Grove binary")
     }
 
     pub fn switch_in_pty(&self, directory: &Path, ready: &str, input: &[u8]) -> Output {
@@ -201,7 +195,10 @@ impl TestRepo {
         ready: &str,
         input: &[u8],
     ) -> Output {
-        let binary = self.compiled_binary();
+        let binary = self
+            .compiled_binary()
+            .canonicalize()
+            .expect("resolve Grove test executable");
         let shell_path = find_executable(shell);
         let script = match shell {
             "fish" => format!(
@@ -216,24 +213,25 @@ impl TestRepo {
         command
             .args(["-c", &script])
             .env("GROVE_TEST_BINARY", &binary)
+            .env("GROVE_EXECUTABLE", &binary)
             .env("PATH", self.test_path_with(binary.parent().unwrap()))
             .env_remove("GROVE_DIRECTIVE_CD_FILE");
         self.run_pty(command, ready, input, "Grove shell switch")
     }
 
-    pub fn remove_in_pty(&self, ready: &str, input: &[u8]) -> Output {
+    pub fn archive_in_pty(&self, ready: &str, input: &[u8]) -> Output {
         self.run_pty(
-            self.sh_picker(&self.repo, "remove"),
+            self.sh_picker(&self.repo, "archive"),
             ready,
             input,
-            "Grove remove",
+            "Grove archive",
         )
     }
 
-    pub fn remove_in_narrow_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let mut command = self.sh_picker(&self.repo, "remove");
+    pub fn archive_in_narrow_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.sh_picker(&self.repo, "archive");
         command.env("GROVE_TEST_COLUMNS", "48");
-        self.run_pty(command, ready, input, "narrow Grove remove")
+        self.run_pty(command, ready, input, "narrow Grove archive")
     }
 
     pub fn list_in_narrow_pty(&self) -> Output {
@@ -343,15 +341,11 @@ impl TestRepo {
         self.navigation.exists()
     }
 
-    pub fn grove_runtime_exists(&self) -> bool {
-        self.home.join(".grove/runtime").exists()
-    }
-
     pub fn pi_session_files(&self) -> Vec<PathBuf> {
         self.change_capsules()
             .into_iter()
             .flat_map(|capsule| {
-                fs::read_dir(capsule.join("sessions/pi"))
+                fs::read_dir(capsule.join("pi"))
                     .into_iter()
                     .flatten()
                     .filter_map(Result::ok)

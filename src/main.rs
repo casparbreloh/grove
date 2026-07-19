@@ -36,7 +36,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create a change worktree
+    /// Create a Change workspace
     ///
     /// Managed Pi makes an additional, asynchronous provider request from the
     /// first prompt to infer a title. `--shell` skips Pi and title inference.
@@ -44,13 +44,13 @@ enum Cmd {
         /// Start the change from this revision (`@` means the invoking worktree)
         #[arg(long, value_name = "REF")]
         from: Option<String>,
-        /// Enter the worktree without opening its agent
+        /// Enter the workspace without opening its agent
         #[arg(long)]
         shell: bool,
     },
     /// Open a Change or the main repository
     Switch {
-        /// Enter the worktree without opening its agent
+        /// Enter the workspace without opening its agent
         #[arg(long)]
         shell: bool,
     },
@@ -58,10 +58,9 @@ enum Cmd {
     List,
     /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
     Sync,
-    /// Remove an active change
-    #[command(visible_alias = "delete")]
-    Remove {
-        /// Discard changes and delete an unmerged branch
+    /// Archive an active Change
+    Archive {
+        /// Archive and discard unmerged work
         #[arg(long)]
         force: bool,
     },
@@ -97,7 +96,7 @@ fn main() -> Result<()> {
         Cmd::Switch { shell } => switch(&Git::discover()?, shell),
         Cmd::List => list(&Git::discover()?),
         Cmd::Sync => sync(&Git::discover()?),
-        Cmd::Remove { force } => remove(&Git::discover()?, force),
+        Cmd::Archive { force } => archive(&Git::discover()?, force),
         Cmd::Init { shell } => init(shell),
         Cmd::Title { change, session } => title(&change, &session),
     }
@@ -125,12 +124,12 @@ fn new(git: &Git, from: Option<&str>, shell: bool) -> Result<()> {
         Session::prepare()?;
     }
     let change = git.create_change(from)?;
-    let path = change.worktree();
+    let path = change.workspace();
     eprintln!("✓ Created {} at {}", change.id, path.display());
     if shell {
         navigate(&path)
     } else {
-        Session::for_worktree(&path)?.attach()
+        Session::for_workspace(&path)?.attach()
     }
 }
 
@@ -153,7 +152,7 @@ fn switch(git: &Git, shell: bool) -> Result<()> {
     if shell || selected.change_id.is_none() {
         navigate(&selected.worktree_path)
     } else {
-        Session::for_worktree(&selected.worktree_path)?.attach()
+        Session::for_workspace(&selected.worktree_path)?.attach()
     }
 }
 
@@ -163,7 +162,7 @@ fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
     }
     let stderr = std::io::stderr();
     if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
-        bail!("interactive worktree selection requires a terminal");
+        bail!("interactive Change selection requires a terminal");
     }
     let mut output = stderr.lock();
     select(&mut output, &choices)
@@ -263,10 +262,68 @@ impl<W: Write> Drop for PickerMode<'_, W> {
 
 fn sync(git: &Git) -> Result<()> {
     let result = git.sync()?;
-    eprintln!(
-        "✓ Synced: {} archived, {} rebased, {} skipped",
-        result.archived, result.rebased, result.skipped
-    );
+    let mut title_counts = HashMap::new();
+    for entry in &result.entries {
+        if let Some(title) = &entry.title {
+            *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
+        }
+    }
+    let rows = result
+        .entries
+        .iter()
+        .map(|entry| {
+            let short_id = &entry.id[..8];
+            let title = match &entry.title {
+                Some(title) if title_counts.get(title.as_str()) == Some(&1) => title.clone(),
+                Some(title) => format!("{title} · {short_id}"),
+                None => format!("Untitled · {short_id}"),
+            };
+            let marker = match entry.outcome.as_str() {
+                "archived" => '-',
+                "rebased" => '↑',
+                "skipped" => '○',
+                _ => ' ',
+            };
+            (marker, title, entry.outcome.as_str(), entry.reason.as_str())
+        })
+        .collect::<Vec<_>>();
+    let title_width = rows
+        .iter()
+        .map(|(_, title, _, _)| UnicodeWidthStr::width(title.as_str()))
+        .max()
+        .unwrap_or(0);
+    let outcome_width = rows
+        .iter()
+        .map(|(_, _, outcome, _)| UnicodeWidthStr::width(*outcome))
+        .max()
+        .unwrap_or(0);
+    let stderr = std::io::stderr();
+    let max_width = stderr
+        .is_terminal()
+        .then(|| terminal::size().ok())
+        .flatten()
+        .map(|(columns, _)| usize::from(columns.saturating_sub(1)));
+    let mut output = stderr.lock();
+    for (marker, title, outcome, reason) in rows {
+        let title_padding = title_width.saturating_sub(UnicodeWidthStr::width(title.as_str()));
+        let outcome_padding = outcome_width.saturating_sub(UnicodeWidthStr::width(outcome));
+        let line = format!(
+            "{marker} {title}{}  {outcome}{}  {reason}",
+            " ".repeat(title_padding),
+            " ".repeat(outcome_padding)
+        );
+        writeln!(output, "{}", fit_width(line, max_width))?;
+    }
+    writeln!(output)?;
+    writeln!(
+        output,
+        "✓ Synced {} Changes: {} archived, {} rebased, {} skipped",
+        result.entries.len(),
+        result.archived,
+        result.rebased,
+        result.skipped
+    )?;
+    output.flush()?;
     Ok(())
 }
 
@@ -520,10 +577,10 @@ fn display_path(path: &Path, current: &Path) -> String {
     path.display().to_string()
 }
 
-fn remove(git: &Git, force: bool) -> Result<()> {
-    let recovered = git.recover_closing_removals()?;
+fn archive(git: &Git, force: bool) -> Result<()> {
+    let recovered = git.recover_closing_archives()?;
     if recovered > 0 {
-        eprintln!("✓ Finished {recovered} interrupted removal(s)");
+        eprintln!("✓ Finished {recovered} interrupted archive(s)");
         return Ok(());
     }
     let current = git.current_path()?;
@@ -533,7 +590,7 @@ fn remove(git: &Git, force: bool) -> Result<()> {
     } else if current == git.primary_path()? {
         pick(rows)?
     } else {
-        bail!("current worktree is not a managed Grove change");
+        bail!("current workspace is not a managed Grove Change");
     };
     let Some(selected) = selected else {
         return Ok(());
@@ -541,16 +598,16 @@ fn remove(git: &Git, force: bool) -> Result<()> {
     if selected.worktree_path == current {
         require_shell_navigation()?;
     }
-    let session = Session::for_worktree(&selected.worktree_path)?;
+    let session = Session::for_workspace(&selected.worktree_path)?;
     let _lock = session.lock()?;
     let change_id = selected
         .change_id
         .as_deref()
         .context("selected destination is not a Change")?;
-    let prepared = git.prepare_removal(change_id, force)?;
-    let removal = git.remove(prepared)?;
-    eprintln!("✓ Removed {}", selected.title_label);
-    if let Some(path) = removal.navigate_to {
+    let prepared = git.prepare_archive(change_id, force)?;
+    let archive = git.finish_archive(prepared)?;
+    eprintln!("✓ Archived {}", selected.title_label);
+    if let Some(path) = archive.navigate_to {
         navigate(&path)?;
     }
     Ok(())
