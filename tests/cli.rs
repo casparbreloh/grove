@@ -731,20 +731,30 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
 }
 
 #[test]
-fn picker_rows_stay_within_the_terminal_when_redrawn() {
+fn terminal_tables_stay_within_the_terminal_width() {
     let repo = TestRepo::new();
     let first = repo.create_change(None);
     let second = repo.create_change(None);
     repo.set_change_title(&first, "First Narrow Picker Change");
     repo.set_change_title(&second, "Second Narrow Picker Change");
-
-    let output = repo.remove_in_narrow_pty("First Narrow Picker Change", b"\x1b[B\x1b");
-    assert!(output.status.success(), "{output:?}");
-    let terminal = stdout(&output);
     let full_path = format!(
         "~/{}",
         first.path.strip_prefix(repo.home()).unwrap().display()
     );
+
+    let listed = repo.list_in_narrow_pty();
+    assert!(listed.status.success(), "{listed:?}");
+    let terminal = stdout(&listed);
+    assert!(!terminal.contains(&full_path), "{terminal}");
+    assert!(terminal.contains('…'), "{terminal}");
+
+    let redirected = repo.grove().arg("list").output().unwrap();
+    assert!(redirected.status.success(), "{redirected:?}");
+    assert!(stdout(&redirected).contains(&full_path));
+
+    let removed = repo.remove_in_narrow_pty("First Narrow Picker Change", b"\x1b[B\x1b");
+    assert!(removed.status.success(), "{removed:?}");
+    let terminal = stdout(&removed);
     assert!(!terminal.contains(&full_path), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
     assert_terminal_restored(&terminal);
