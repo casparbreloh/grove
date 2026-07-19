@@ -150,7 +150,8 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
         let expected = shell_repo.path().canonicalize().unwrap();
-        assert!(terminal.contains("Main repository"), "{shell}: {terminal}");
+        assert!(terminal.contains("Main"), "{shell}: {terminal}");
+        assert!(!terminal.contains("Main repository"), "{shell}: {terminal}");
         assert!(
             terminal.contains(&format!("__PWD__{}", expected.display())),
             "{shell}: {terminal}"
@@ -416,11 +417,19 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
                 .and_then(|argument| argument.strip_suffix('>'))
         })
         .collect::<Vec<_>>();
+    let extension = arguments
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--extension").then_some(pair[1]))
+        .expect("managed Pi must receive the Grove extension");
+    let extension_name = Path::new(extension).file_name().unwrap().to_string_lossy();
+    let extension_hash = extension_name
+        .strip_prefix(".grove-pi-extension-")
+        .and_then(|name| name.strip_suffix(".ts"))
+        .expect("Pi extension path must retain its name and TypeScript suffix");
+    assert_eq!(extension_hash.len(), 8, "{extension_name}");
     assert!(
-        arguments
-            .windows(2)
-            .any(|pair| pair[0] == "--extension" && pair[1].ends_with(".ts")),
-        "Pi extension path must retain its TypeScript suffix: {log}"
+        extension_hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{extension_name}"
     );
     assert!(
         log.contains(&format!(
@@ -597,7 +606,7 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let fourth = &changes[3];
     repo.set_change_title(named, "Capture Native Sessions");
     repo.set_change_title(duplicate, "Capture Native Sessions");
-    repo.set_change_title(fourth, "Review Active Changes");
+    repo.set_change_title(fourth, "Main");
     let ordinary = repo.home().join("ordinary");
     repo.git(["branch", "ordinary"]);
     repo.git(["worktree", "add", ordinary.to_str().unwrap(), "ordinary"]);
@@ -621,7 +630,10 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         !table.contains("ordinary") && !table.contains("detached"),
         "{table}"
     );
-    assert!(table.contains("Review Active Changes"), "{table}");
+    assert!(
+        table.contains(&format!("Main · {}", &fourth.id[..8])),
+        "{table}"
+    );
     assert!(stderr(&listed).contains("Showing 4 changes"));
 
     let selected = repo.switch_in_pty(repo.path(), "Capture Native Sessions", b"\r");
@@ -644,7 +656,7 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let unmanaged = repo.switch_in_pty(&ordinary, "Capture Native Sessions", b"\x1b");
     assert!(unmanaged.status.success(), "{unmanaged:?}");
     let terminal = stdout(&unmanaged);
-    assert!(!terminal.contains("Main repository"), "{terminal}");
+    assert_eq!(terminal.matches("Main").count(), 1, "{terminal}");
     assert!(!terminal.contains("Error:"), "{terminal}");
     assert_eq!(repo.navigation(), before);
     assert_terminal_restored(&terminal);
@@ -724,7 +736,8 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         .clone();
     let table = stdout(&listed);
     assert!(table.contains("Title"));
-    assert!(table.contains("@ Main repository"), "{table}");
+    assert!(table.contains("@ Main"), "{table}");
+    assert!(!table.contains("Main repository"), "{table}");
     assert!(stderr(&listed).contains("Showing 0 changes"));
     let error = empty
         .grove()
@@ -771,6 +784,14 @@ fn sync_fetches_exact_upstream_archives_and_rebases_safely() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();
     let stale_main = repo.git(["rev-parse", "main"]);
+
+    let empty = repo.grove().arg("sync").output().unwrap();
+    assert!(empty.status.success(), "{}", stderr(&empty));
+    assert_eq!(stdout(&empty), "");
+    assert_eq!(
+        stderr(&empty),
+        "✓ Synced 0 Changes: 0 archived, 0 rebased, 0 skipped\n"
+    );
 
     repo.git_from(&publisher, ["checkout", "-b", "unrelated"]);
     repo.commit_file(&publisher, "unrelated.txt", "initial unrelated work\n");

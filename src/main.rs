@@ -48,13 +48,13 @@ enum Cmd {
         #[arg(long)]
         shell: bool,
     },
-    /// Open a Change or the main repository
+    /// Open a Change or Main
     Switch {
         /// Enter the workspace without opening its agent
         #[arg(long)]
         shell: bool,
     },
-    /// List the main repository and active Changes
+    /// List Main and active Changes
     List,
     /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
     Sync,
@@ -314,7 +314,9 @@ fn sync(git: &Git) -> Result<()> {
         );
         writeln!(output, "{}", fit_width(line, max_width))?;
     }
-    writeln!(output)?;
+    if !result.entries.is_empty() {
+        writeln!(output)?;
+    }
     writeln!(
         output,
         "✓ Synced {} Changes: {} archived, {} rebased, {} skipped",
@@ -347,7 +349,7 @@ fn list(git: &Git) -> Result<()> {
 fn change_rows(git: &Git) -> Result<(Vec<Row>, usize)> {
     let worktrees = git.inventory()?;
     let current = git.current_path()?;
-    let mut title_counts = HashMap::new();
+    let mut title_counts = HashMap::from([("Main", 1_usize)]);
     for worktree in &worktrees {
         if let Some(title) = &worktree.title {
             *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
@@ -396,7 +398,7 @@ fn main_row(git: &Git) -> Result<Row> {
         current: current == primary,
         change_id: None,
         worktree_path: primary.clone(),
-        title_label: "Main repository".to_owned(),
+        title_label: "Main".to_owned(),
         base: String::new(),
         changes: String::new(),
         divergence: String::new(),

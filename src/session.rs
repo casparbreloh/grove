@@ -155,7 +155,9 @@ fn temporary_path(parent: &Path, label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    parent.join(format!(".{label}-{}-{nonce}", std::process::id()))
+    let seed = format!("{}-{nonce}", std::process::id());
+    let digest = blake3::hash(seed.as_bytes()).to_hex();
+    parent.join(format!(".{label}-{}", &digest[..8]))
 }
 
 fn create_private_directory_all(path: &Path) -> std::io::Result<()> {
