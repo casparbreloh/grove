@@ -209,6 +209,14 @@ impl TestRepo {
         self.run_pty(command, ready, input, "narrow Grove remove")
     }
 
+    pub fn list_in_narrow_pty(&self) -> Output {
+        let mut command = self.sh_picker(&self.repo, "list");
+        command
+            .env("GROVE_TEST_COLUMNS", "48")
+            .output()
+            .expect("run narrow Grove list")
+    }
+
     pub fn select_agent_in_pty(&self, ready: &str, input: &[u8]) -> Output {
         let binary = self.compiled_binary();
         let mut command = self.pty(&self.repo, binary.as_os_str());

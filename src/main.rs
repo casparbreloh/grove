@@ -202,10 +202,7 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
 }
 
 fn print_picker(rows: &[Row], selected: usize, output: &mut impl Write) -> std::io::Result<()> {
-    let max_width = terminal::size()
-        .map(|(columns, _)| usize::from(columns.saturating_sub(1)))
-        .ok();
-    print_rows(rows, output, true, "\r\n", Some(selected), max_width)
+    print_rows(rows, output, true, "\r\n", Some(selected))
 }
 
 fn redraw_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> std::io::Result<()> {
@@ -268,7 +265,7 @@ fn list(git: &Git) -> Result<()> {
     let stdout = std::io::stdout();
     let terminal = stdout.is_terminal();
     let mut output = stdout.lock();
-    print_rows(&rows, &mut output, terminal, "\n", None, None)?;
+    print_rows(&rows, &mut output, terminal, "\n", None)?;
     output.flush()?;
     eprint!("\n○ Showing {changes} changes");
     if changed > 0 {
@@ -381,11 +378,14 @@ fn format_divergence(divergence: &git::Divergence) -> String {
 fn print_rows(
     rows: &[Row],
     output: &mut impl Write,
-    terminal: bool,
+    is_terminal: bool,
     newline: &str,
     selected: Option<usize>,
-    max_width: Option<usize>,
 ) -> std::io::Result<()> {
+    let max_width = is_terminal
+        .then(|| terminal::size().ok())
+        .flatten()
+        .map(|(columns, _)| usize::from(columns.saturating_sub(1)));
     let marker_width = 1;
     let title_width = width(rows, "Title", |row| &row.title_label);
     let base_width = width(rows, "Base", |row| &row.base);
@@ -396,7 +396,7 @@ fn print_rows(
         "", "Title", "Base", "Changes", "Base↕"
     );
     let header = fit_width(header, max_width);
-    write!(output, "{}{newline}", bold(&header, terminal))?;
+    write!(output, "{}{newline}", bold(&header, is_terminal))?;
     for (index, row) in rows.iter().enumerate() {
         let marker = if let Some(selected) = selected {
             if index == selected { '›' } else { ' ' }
