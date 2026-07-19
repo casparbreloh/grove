@@ -416,11 +416,19 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
                 .and_then(|argument| argument.strip_suffix('>'))
         })
         .collect::<Vec<_>>();
+    let extension = arguments
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--extension").then_some(pair[1]))
+        .expect("managed Pi must receive the Grove extension");
+    let extension_name = Path::new(extension).file_name().unwrap().to_string_lossy();
+    let extension_hash = extension_name
+        .strip_prefix(".grove-pi-extension-")
+        .and_then(|name| name.strip_suffix(".ts"))
+        .expect("Pi extension path must retain its name and TypeScript suffix");
+    assert_eq!(extension_hash.len(), 8, "{extension_name}");
     assert!(
-        arguments
-            .windows(2)
-            .any(|pair| pair[0] == "--extension" && pair[1].ends_with(".ts")),
-        "Pi extension path must retain its TypeScript suffix: {log}"
+        extension_hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{extension_name}"
     );
     assert!(
         log.contains(&format!(
@@ -771,6 +779,14 @@ fn sync_fetches_exact_upstream_archives_and_rebases_safely() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();
     let stale_main = repo.git(["rev-parse", "main"]);
+
+    let empty = repo.grove().arg("sync").output().unwrap();
+    assert!(empty.status.success(), "{}", stderr(&empty));
+    assert_eq!(stdout(&empty), "");
+    assert_eq!(
+        stderr(&empty),
+        "✓ Synced 0 Changes: 0 archived, 0 rebased, 0 skipped\n"
+    );
 
     repo.git_from(&publisher, ["checkout", "-b", "unrelated"]);
     repo.commit_file(&publisher, "unrelated.txt", "initial unrelated work\n");

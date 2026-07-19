@@ -314,7 +314,9 @@ fn sync(git: &Git) -> Result<()> {
         );
         writeln!(output, "{}", fit_width(line, max_width))?;
     }
-    writeln!(output)?;
+    if !result.entries.is_empty() {
+        writeln!(output)?;
+    }
     writeln!(
         output,
         "✓ Synced {} Changes: {} archived, {} rebased, {} skipped",
