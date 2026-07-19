@@ -14,7 +14,7 @@ use support::{TestChange, TestRepo};
 fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
     let repo = TestRepo::new();
     let help = stdout(repo.grove().arg("--help").assert().success().get_output());
-    for command in ["new", "switch", "list", "remove", "init"] {
+    for command in ["new", "switch", "list", "sync", "remove", "init"] {
         assert!(help.contains(command), "{help}");
     }
     assert!(!help.contains("  agent"), "{help}");
@@ -758,6 +758,800 @@ fn terminal_tables_stay_within_the_terminal_width() {
     assert!(!terminal.contains(&full_path), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
     assert_terminal_restored(&terminal);
+}
+
+#[test]
+fn sync_fetches_upstream_archives_integrated_and_rebases_remaining_change() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let stale_main = repo.git(["rev-parse", "main"]);
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        stale_main
+    );
+
+    let integrated = repo.create_change(Some("main"));
+    repo.set_change_title(&integrated, "Archive Remote Integration");
+    repo.commit_file(&integrated.path, "integrated.txt", "integrated remotely\n");
+    let integrated_tip = repo.git(["rev-parse", &integrated.branch]);
+
+    let remaining = repo.create_change(Some("main"));
+    repo.set_change_title(&remaining, "Rebase Onto Upstream");
+    let remaining_tip = repo.commit_file(&remaining.path, "change.txt", "local change\n");
+
+    repo.git_from(
+        &publisher,
+        ["fetch", repo.path().to_str().unwrap(), &integrated.branch],
+    );
+    repo.git_from(
+        &publisher,
+        [
+            "merge",
+            "--no-ff",
+            "-m",
+            "Integrate Grove change",
+            "FETCH_HEAD",
+        ],
+    );
+    repo.commit_file(&publisher, "upstream.txt", "new upstream work\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let fetched_upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        stale_main
+    );
+
+    let output = repo
+        .grove()
+        .arg("sync")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert_eq!(stdout(&output), "");
+    let summary = stderr(&output);
+    assert_eq!(summary.lines().count(), 1, "{summary}");
+    assert!(summary.contains("1 archived"), "{summary}");
+    assert!(summary.contains("1 rebased"), "{summary}");
+
+    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        fetched_upstream
+    );
+
+    let integrated_capsule = integrated.path.parent().unwrap();
+    assert!(!integrated.path.exists());
+    assert!(!repo.branch_exists(&integrated.branch));
+    assert!(integrated_capsule.join("artifacts/change.patch").is_file());
+    assert!(integrated_capsule.join("artifacts/stats.json").is_file());
+    let integrated_record = repo.change_record(integrated_capsule);
+    assert_eq!(integrated_record["state"], "archived");
+    assert_eq!(integrated_record["closure"]["outcome"], "integrated");
+    assert_eq!(integrated_record["closure"]["tip_oid"], integrated_tip);
+    assert_eq!(integrated_record["closure"]["target_oid"], fetched_upstream);
+
+    assert!(remaining.path.exists());
+    assert!(repo.branch_exists(&remaining.branch));
+    assert_ne!(repo.git(["rev-parse", &remaining.branch]), remaining_tip);
+    assert_eq!(
+        repo.git_from(&remaining.path, ["rev-parse", "HEAD^"]),
+        fetched_upstream
+    );
+    assert_eq!(
+        repo.git_from(&remaining.path, ["show", "HEAD:change.txt"]),
+        "local change"
+    );
+    assert_eq!(
+        repo.git_from(&remaining.path, ["show", "HEAD:upstream.txt"]),
+        "new upstream work"
+    );
+    assert_eq!(
+        repo.change_record(remaining.path.parent().unwrap())["state"],
+        "active"
+    );
+}
+
+#[test]
+fn sync_reapplies_a_change_whose_cherry_pick_was_reverted_upstream() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let change = repo.create_change(Some("main"));
+    let change_tip = repo.commit_file(
+        &change.path,
+        "reapplied.txt",
+        "content that must survive sync\n",
+    );
+
+    repo.git_from(
+        &publisher,
+        ["fetch", repo.path().to_str().unwrap(), &change.branch],
+    );
+    repo.git_from(&publisher, ["cherry-pick", &change_tip]);
+    repo.git_from(&publisher, ["revert", "--no-edit", "HEAD"]);
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let fetched_upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo
+        .grove()
+        .arg("sync")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let summary = stderr(&output);
+    assert!(summary.contains("0 archived"), "{summary}");
+    assert!(summary.contains("1 rebased"), "{summary}");
+
+    assert_eq!(
+        repo.change_record(change.path.parent().unwrap())["state"],
+        "active"
+    );
+    assert_eq!(
+        fs::read_to_string(change.path.join("reapplied.txt")).unwrap(),
+        "content that must survive sync\n"
+    );
+    assert_eq!(
+        repo.git_from(&change.path, ["rev-parse", "HEAD^"]),
+        fetched_upstream
+    );
+}
+
+#[test]
+fn sync_skips_a_change_rewritten_behind_its_creation_base() {
+    let repo = TestRepo::new();
+    repo.commit_file(repo.path(), "base.txt", "creation base work\n");
+    let publisher = repo.create_local_origin();
+    let creation_base = repo.git(["rev-parse", "main"]);
+    let parent = repo.git(["rev-parse", "main^"]);
+
+    let change = repo.create_change(Some("main"));
+    let capsule = change.path.parent().unwrap();
+    let record_before = fs::read(capsule.join("change.json")).unwrap();
+    assert_eq!(
+        repo.change_record(capsule)["creation"]["base_oid"],
+        creation_base
+    );
+
+    repo.git_from(&change.path, ["reset", "--hard", &parent]);
+    assert_eq!(
+        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
+        ""
+    );
+
+    repo.commit_file(&publisher, "upstream.txt", "unrelated upstream work\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let summary = stderr(&output);
+    assert_eq!(summary.lines().count(), 1, "{summary}");
+    for expected in ["0 archived", "0 rebased", "1 skipped", "1 rewritten change"] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+
+    assert!(change.path.exists());
+    assert!(repo.branch_exists(&change.branch));
+    assert_eq!(repo.git(["rev-parse", &change.branch]), parent);
+    assert_eq!(repo.git_from(&change.path, ["rev-parse", "HEAD"]), parent);
+    assert_eq!(
+        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
+        ""
+    );
+    assert_eq!(
+        fs::read(capsule.join("change.json")).unwrap(),
+        record_before
+    );
+    assert_eq!(repo.change_record(capsule)["state"], "active");
+    assert!(!capsule.join("artifacts").exists());
+}
+
+#[test]
+fn sync_skips_merge_history_that_contains_resolution_only_content() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let change = repo.create_change(Some("main"));
+
+    repo.git(["checkout", "-b", "merge-side", "main"]);
+    repo.commit_file(repo.path(), "side.txt", "side work\n");
+    repo.git(["checkout", "main"]);
+
+    repo.commit_file(&change.path, "change.txt", "change work\n");
+    repo.git_from(
+        &change.path,
+        ["merge", "--no-ff", "--no-commit", "merge-side"],
+    );
+    fs::write(
+        change.path.join("resolution-only.txt"),
+        "preserve merge resolution\n",
+    )
+    .unwrap();
+    repo.git_from(&change.path, ["add", "resolution-only.txt"]);
+    repo.git_from(
+        &change.path,
+        ["commit", "-m", "Merge side with unique resolution"],
+    );
+
+    let capsule = change.path.parent().unwrap();
+    let tip_before = repo.git(["rev-parse", &change.branch]);
+    let record_before = fs::read(capsule.join("change.json")).unwrap();
+    assert_eq!(
+        repo.git_from(&change.path, ["rev-list", "--min-parents=2", "HEAD"]),
+        tip_before
+    );
+
+    repo.commit_file(&publisher, "upstream.txt", "nonconflicting upstream work\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let summary = stderr(&output);
+    assert_eq!(summary.lines().count(), 1, "{summary}");
+    for expected in ["0 archived", "0 rebased", "1 skipped", "1 merge history"] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+
+    assert!(change.path.exists());
+    assert!(repo.branch_exists(&change.branch));
+    assert_eq!(repo.git(["rev-parse", &change.branch]), tip_before);
+    assert_eq!(
+        fs::read(capsule.join("change.json")).unwrap(),
+        record_before
+    );
+    assert_eq!(repo.change_record(capsule)["state"], "active");
+    assert!(!capsule.join("artifacts").exists());
+    assert_eq!(
+        fs::read_to_string(change.path.join("resolution-only.txt")).unwrap(),
+        "preserve merge resolution\n"
+    );
+    assert_eq!(
+        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
+        ""
+    );
+}
+
+#[test]
+fn sync_does_not_update_an_unmanaged_branch_when_user_config_enables_update_refs() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    repo.git(["config", "--global", "rebase.updateRefs", "true"]);
+
+    let change = repo.create_change(Some("main"));
+    let intermediate = repo.commit_file(&change.path, "first.txt", "first change\n");
+    let original_tip = repo.commit_file(&change.path, "second.txt", "second change\n");
+    repo.git(["branch", "unmanaged-snapshot", &intermediate]);
+
+    repo.commit_file(&publisher, "upstream.txt", "remote advance\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_ne!(repo.git(["rev-parse", &change.branch]), original_tip);
+    assert_eq!(
+        repo.git_from(&change.path, ["rev-parse", "HEAD~2"]),
+        upstream
+    );
+    assert_eq!(
+        repo.git(["rev-parse", "refs/heads/unmanaged-snapshot"]),
+        intermediate
+    );
+}
+
+#[test]
+fn sync_skips_a_change_from_another_local_parent_and_rebases_a_main_change() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    repo.git(["branch", "release"]);
+
+    let release_change = repo.create_change(Some("release"));
+    repo.commit_file(
+        &release_change.path,
+        "release-change.txt",
+        "release change\n",
+    );
+    let release_capsule = release_change.path.parent().unwrap();
+    let release_tip = repo.git(["rev-parse", &release_change.branch]);
+    let release_tree = repo.git_from(&release_change.path, ["rev-parse", "HEAD^{tree}"]);
+    let release_status = repo.git_from(&release_change.path, ["status", "--porcelain=v1"]);
+    let release_record = fs::read(release_capsule.join("change.json")).unwrap();
+    assert_eq!(
+        repo.change_record(release_capsule)["creation"]["parent"],
+        "release"
+    );
+
+    let main_change = repo.create_change(Some("main"));
+    let main_tip = repo.commit_file(&main_change.path, "main-change.txt", "main change\n");
+
+    repo.commit_file(&publisher, "upstream.txt", "upstream change\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let summary = stderr(&output);
+    for expected in ["0 archived", "1 rebased", "1 skipped", "1 other base"] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+
+    assert!(release_change.path.exists());
+    assert!(repo.branch_exists(&release_change.branch));
+    assert_eq!(repo.git(["rev-parse", &release_change.branch]), release_tip);
+    assert_eq!(
+        repo.git_from(&release_change.path, ["rev-parse", "HEAD^{tree}"]),
+        release_tree
+    );
+    assert_eq!(
+        repo.git_from(&release_change.path, ["status", "--porcelain=v1"]),
+        release_status
+    );
+    assert_eq!(
+        fs::read(release_capsule.join("change.json")).unwrap(),
+        release_record
+    );
+    assert_eq!(repo.change_record(release_capsule)["state"], "active");
+    assert!(!release_capsule.join("artifacts/change.patch").exists());
+    assert!(!release_capsule.join("artifacts/stats.json").exists());
+
+    assert_ne!(repo.git(["rev-parse", &main_change.branch]), main_tip);
+    assert_eq!(
+        repo.git_from(&main_change.path, ["rev-parse", "HEAD^"]),
+        upstream
+    );
+    assert_eq!(
+        repo.git_from(&main_change.path, ["status", "--porcelain=v1"]),
+        ""
+    );
+}
+
+#[test]
+fn sync_fetches_but_skips_a_change_when_upstream_no_longer_contains_its_creation_base() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    repo.commit_file(repo.path(), "base.txt", "recorded creation base\n");
+    repo.git(["push", "origin", "main"]);
+    repo.git_from(&publisher, ["pull", "--ff-only"]);
+    let creation_base = repo.git(["rev-parse", "main"]);
+
+    let change = repo.create_change(Some("main"));
+    let change_tip = repo.commit_file(&change.path, "change.txt", "local change\n");
+    let capsule = change.path.parent().unwrap();
+    let record_before = fs::read(capsule.join("change.json")).unwrap();
+    assert_eq!(
+        repo.change_record(capsule)["creation"]["base_oid"],
+        creation_base
+    );
+    let worktree_bytes = |path: &Path| {
+        let mut files = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                (
+                    path.file_name().unwrap().to_owned(),
+                    fs::read(path).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files
+    };
+    let worktree_before = worktree_bytes(&change.path);
+    let status_before = repo.git_from(&change.path, ["status", "--porcelain=v1"]);
+    let artifacts = capsule.join("artifacts");
+    assert!(!artifacts.exists());
+
+    repo.git_from(
+        &publisher,
+        ["reset", "--hard", &format!("{creation_base}^")],
+    );
+    repo.commit_file(&publisher, "rewritten.txt", "replacement history\n");
+    let rewritten_upstream = repo.git_from(&publisher, ["rev-parse", "HEAD"]);
+    repo.git_from(&publisher, ["push", "--force", "origin", "HEAD:main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let summary = stderr(&output);
+    assert_eq!(summary.lines().count(), 1, "{summary}");
+    for expected in ["0 archived", "0 rebased", "1 skipped", "1 diverged base"] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        rewritten_upstream
+    );
+    assert_eq!(repo.git(["rev-parse", "main"]), creation_base);
+    assert!(repo.branch_exists(&change.branch));
+    assert_eq!(repo.git(["rev-parse", &change.branch]), change_tip);
+    assert_eq!(worktree_bytes(&change.path), worktree_before);
+    assert_eq!(
+        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
+        status_before
+    );
+    assert_eq!(
+        fs::read(capsule.join("change.json")).unwrap(),
+        record_before
+    );
+    assert!(!artifacts.exists());
+}
+
+#[test]
+fn sync_fetches_the_primary_merge_ref_when_the_remote_fetch_refspec_excludes_it() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let stale_main = repo.git(["rev-parse", "main"]);
+
+    repo.git_from(&publisher, ["checkout", "-b", "other"]);
+    repo.commit_file(&publisher, "other.txt", "initial other work\n");
+    repo.git_from(&publisher, ["push", "--set-upstream", "origin", "other"]);
+    repo.git_from(&publisher, ["checkout", "main"]);
+    repo.git([
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    repo.git(["config", "--add", "remote.origin.fetch", "^refs/heads/main"]);
+    repo.git(["fetch", "origin"]);
+    let stale_other = repo.git(["rev-parse", "refs/remotes/origin/other"]);
+
+    let change = repo.create_change(Some("main"));
+    repo.commit_file(&change.path, "change.txt", "local change\n");
+
+    repo.git_from(&publisher, ["checkout", "other"]);
+    repo.commit_file(&publisher, "other.txt", "advanced other work\n");
+    repo.git_from(&publisher, ["push", "origin", "other"]);
+    let advanced_other = repo.git_from(&publisher, ["rev-parse", "other"]);
+    repo.git_from(&publisher, ["checkout", "main"]);
+    repo.commit_file(&publisher, "upstream.txt", "advanced main work\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let advanced_main = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        stale_main
+    );
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/other"]),
+        stale_other
+    );
+
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/other"]),
+        advanced_other
+    );
+    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        advanced_main
+    );
+    assert_eq!(
+        repo.git_from(&change.path, ["rev-parse", "HEAD^"]),
+        advanced_main
+    );
+    assert_eq!(
+        repo.git_from(&change.path, ["show", "HEAD:upstream.txt"]),
+        "advanced main work"
+    );
+}
+
+#[test]
+fn sync_fetch_failure_leaves_change_state_untouched() {
+    let repo = TestRepo::new();
+    repo.create_local_origin();
+    let change = repo.create_change(Some("main"));
+    let content_path = change.path.join("change.txt");
+    repo.commit_file(&change.path, "change.txt", "committed change\n");
+
+    let capsule = change.path.parent().unwrap();
+    let branch_before = repo.git(["rev-parse", &change.branch]);
+    let status_before = repo.git_from(&change.path, ["status", "--porcelain=v1"]);
+    let content_before = fs::read(&content_path).unwrap();
+    let record_before = fs::read(capsule.join("change.json")).unwrap();
+    let artifacts = capsule.join("artifacts");
+    assert_eq!(repo.change_record(capsule)["state"], "active");
+    assert!(!artifacts.exists());
+
+    let origin = repo.git(["remote", "get-url", "origin"]);
+    fs::remove_dir_all(origin).unwrap();
+    let output = repo.grove().arg("sync").output().unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    let error = stderr(&output);
+    assert!(error.contains("failed to fetch remote 'origin'"), "{error}");
+    assert!(repo.branch_exists(&change.branch));
+    assert_eq!(repo.git(["rev-parse", &change.branch]), branch_before);
+    assert_eq!(
+        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
+        status_before
+    );
+    assert_eq!(fs::read(content_path).unwrap(), content_before);
+    assert_eq!(
+        fs::read(capsule.join("change.json")).unwrap(),
+        record_before
+    );
+    assert!(!artifacts.exists());
+}
+
+#[test]
+fn sync_from_a_change_fails_before_fetch_or_mutation() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let stale_upstream = repo.git(["rev-parse", "refs/remotes/origin/main"]);
+
+    let change = repo.create_change(Some("main"));
+    repo.commit_file(&change.path, "change.txt", "integrated remotely\n");
+    repo.git_from(
+        &publisher,
+        ["fetch", repo.path().to_str().unwrap(), &change.branch],
+    );
+    repo.git_from(
+        &publisher,
+        [
+            "merge",
+            "--no-ff",
+            "-m",
+            "Integrate current Change",
+            "FETCH_HEAD",
+        ],
+    );
+    repo.commit_file(&publisher, "upstream.txt", "remote advance\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    assert_ne!(
+        repo.git_from(&publisher, ["rev-parse", "main"]),
+        stale_upstream
+    );
+
+    let branch_before = repo.git(["rev-parse", &change.branch]);
+    let record_path = change.path.parent().unwrap().join("change.json");
+    let record_before = fs::read(&record_path).unwrap();
+    let worktree_bytes = |path: &Path| {
+        let mut files = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                (
+                    path.file_name().unwrap().to_owned(),
+                    fs::read(path).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files
+    };
+    let worktree_before = worktree_bytes(&change.path);
+
+    let output = repo.grove_from(&change.path).arg("sync").output().unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stderr(&output).contains("primary worktree"), "{output:?}");
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        stale_upstream
+    );
+    assert!(repo.branch_exists(&change.branch));
+    assert_eq!(repo.git(["rev-parse", &change.branch]), branch_before);
+    assert_eq!(worktree_bytes(&change.path), worktree_before);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
+}
+
+#[test]
+fn sync_aborts_conflicts_continues_rebases_and_skips_dirty_changes() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let stale_main = repo.git(["rev-parse", "main"]);
+
+    let conflicting = repo.create_change(Some("main"));
+    repo.set_change_title(&conflicting, "Preserve Conflicting Change");
+    let conflicting_tip =
+        repo.commit_file(&conflicting.path, "README.md", "# Conflicting change\n");
+
+    let rebased = repo.create_change(Some("main"));
+    repo.set_change_title(&rebased, "Continue Clean Rebase");
+    let rebased_tip = repo.commit_file(&rebased.path, "clean.txt", "clean change\n");
+
+    let dirty = repo.create_change(Some("main"));
+    repo.set_change_title(&dirty, "Skip Dirty Change");
+    let dirty_tip = repo.commit_file(&dirty.path, "dirty.txt", "committed state\n");
+    fs::write(dirty.path.join("dirty.txt"), "uncommitted state\n").unwrap();
+    let dirty_status = repo.git_from(&dirty.path, ["status", "--porcelain=v1"]);
+
+    repo.commit_file(&publisher, "README.md", "# Upstream change\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let fetched_upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo
+        .grove()
+        .arg("sync")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert_eq!(stdout(&output), "");
+    let summary = stderr(&output);
+    assert_eq!(summary.lines().count(), 1, "{summary}");
+    for expected in [
+        "0 archived",
+        "1 rebased",
+        "2 skipped",
+        "1 conflict",
+        "1 dirty",
+    ] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+
+    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_eq!(
+        repo.git(["rev-parse", "refs/remotes/origin/main"]),
+        fetched_upstream
+    );
+
+    assert_eq!(
+        repo.git_from(&conflicting.path, ["rev-parse", "HEAD"]),
+        conflicting_tip
+    );
+    assert_eq!(
+        repo.git_from(&conflicting.path, ["status", "--porcelain=v1"]),
+        ""
+    );
+    for name in ["rebase-merge", "rebase-apply"] {
+        let metadata = repo.git_from(
+            &conflicting.path,
+            ["rev-parse", "--path-format=absolute", "--git-path", name],
+        );
+        assert!(!Path::new(&metadata).exists(), "{metadata} still exists");
+    }
+
+    assert_ne!(
+        repo.git_from(&rebased.path, ["rev-parse", "HEAD"]),
+        rebased_tip
+    );
+    assert_eq!(
+        repo.git_from(&rebased.path, ["rev-parse", "HEAD^"]),
+        fetched_upstream
+    );
+    assert_eq!(
+        repo.git_from(&rebased.path, ["status", "--porcelain=v1"]),
+        ""
+    );
+
+    assert_eq!(repo.git_from(&dirty.path, ["rev-parse", "HEAD"]), dirty_tip);
+    assert_eq!(
+        repo.git_from(&dirty.path, ["status", "--porcelain=v1"]),
+        dirty_status
+    );
+    assert_eq!(
+        fs::read_to_string(dirty.path.join("dirty.txt")).unwrap(),
+        "uncommitted state\n"
+    );
+}
+
+#[test]
+fn sync_skips_busy_locked_and_missing_changes_while_rebasing_an_eligible_change() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+
+    let (agent, agent_gate) = repo.start_blocking_new();
+    let busy_capsule = repo.change_capsules().pop().expect("busy Change capsule");
+    let busy = TestChange {
+        branch: busy_capsule
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        path: busy_capsule.join("worktree"),
+    };
+    let busy_tip = repo.commit_file(&busy.path, "busy.txt", "busy change\n");
+
+    let locked = repo.create_change(Some("main"));
+    let locked_tip = repo.commit_file(&locked.path, "locked.txt", "locked change\n");
+
+    let missing = repo.create_change(Some("main"));
+    let missing_tip = repo.commit_file(&missing.path, "missing.txt", "missing change\n");
+    let missing_git_dir =
+        Path::new(&repo.git_from(&missing.path, ["rev-parse", "--absolute-git-dir"])).to_owned();
+
+    let eligible = repo.create_change(Some("main"));
+    let eligible_tip = repo.commit_file(&eligible.path, "eligible.txt", "eligible change\n");
+
+    repo.git([
+        "worktree",
+        "lock",
+        "--reason",
+        "Grove sync test",
+        locked.path.to_str().unwrap(),
+    ]);
+    fs::remove_dir_all(&missing.path).unwrap();
+    let inventory_before = repo.git(["worktree", "list", "--porcelain"]);
+    assert!(
+        inventory_before.contains(&format!("worktree {}", missing.path.display()))
+            && inventory_before.contains("prunable"),
+        "{inventory_before}"
+    );
+
+    let skipped = [&busy, &locked, &missing];
+    let records_before = skipped
+        .iter()
+        .map(|change| fs::read(change.path.parent().unwrap().join("change.json")).unwrap())
+        .collect::<Vec<_>>();
+
+    repo.commit_file(&publisher, "upstream.txt", "remote advance\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+    repo.release_blocking_agent(agent, &agent_gate);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let summary = stderr(&output);
+    assert_eq!(summary.lines().count(), 1, "{summary}");
+    for expected in ["1 rebased", "3 skipped", "1 busy", "1 locked", "1 missing"] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+
+    for ((change, record_before), tip_before) in
+        skipped
+            .iter()
+            .zip(&records_before)
+            .zip([busy_tip, locked_tip, missing_tip])
+    {
+        assert!(repo.branch_exists(&change.branch));
+        assert_eq!(repo.git(["rev-parse", &change.branch]), tip_before);
+        assert_eq!(
+            fs::read(change.path.parent().unwrap().join("change.json")).unwrap(),
+            *record_before
+        );
+        assert_eq!(
+            repo.change_record(change.path.parent().unwrap())["state"],
+            "active"
+        );
+    }
+
+    assert!(busy.path.exists());
+    assert!(locked.path.exists());
+    assert!(!missing.path.exists());
+    assert!(missing.path.parent().unwrap().exists());
+    assert!(missing_git_dir.exists());
+    let inventory_after = repo.git(["worktree", "list", "--porcelain"]);
+    assert!(
+        inventory_after.contains(&format!("worktree {}", locked.path.display()))
+            && inventory_after.contains("locked Grove sync test"),
+        "{inventory_after}"
+    );
+    assert!(
+        inventory_after.contains(&format!("worktree {}", missing.path.display()))
+            && inventory_after.contains("prunable"),
+        "{inventory_after}"
+    );
+
+    assert!(repo.branch_exists(&eligible.branch));
+    assert_ne!(repo.git(["rev-parse", &eligible.branch]), eligible_tip);
+    assert_eq!(
+        repo.git_from(&eligible.path, ["rev-parse", "HEAD^"]),
+        upstream
+    );
+    assert_eq!(
+        repo.git_from(&eligible.path, ["show", "HEAD:eligible.txt"]),
+        "eligible change"
+    );
+    assert_eq!(
+        repo.git_from(&eligible.path, ["show", "HEAD:upstream.txt"]),
+        "remote advance"
+    );
 }
 
 #[test]

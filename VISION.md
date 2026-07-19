@@ -19,10 +19,11 @@ version-control system, agent framework, or terminal multiplexer.
 ## Foundation
 
 Grove provides ID-backed Git worktrees, title-based list and picker navigation,
-direct Pi launch/resume, recorded creation lineage, and archive-before-delete
-safety. A Change's hidden repository-scoped 8-hex ID is also its durable local Git branch. Its
-capsule groups the record, worktree, Pi-native sessions, and final Git
-artifacts beneath one `~/.grove` path.
+direct Pi launch/resume, recorded creation lineage, archive-before-delete
+safety, and explicit upstream synchronization. A Change's hidden
+repository-scoped 8-hex ID is also its durable local Git branch. Its capsule
+groups the record, worktree, Pi-native sessions, and final Git artifacts
+beneath one `~/.grove` path.
 
 Bare `grove new` creates the complete Change before starting Pi. A small managed
 extension links each native Pi session and makes one isolated, best-effort title
@@ -34,13 +35,18 @@ no daemon, PTY host, detach key, or multiplexer. `grove switch` starts Pi again
 against the same native session directory, which is the simpler persistence the
 product actually needs.
 
+`grove sync` explicitly fetches the primary branch's upstream while leaving the
+local primary branch in place. It archives clean integrated Changes, rebases
+other eligible clean Changes onto the fetched upstream, and conservatively
+skips Changes that cannot be synchronized safely. This is the local foundation
+for eventually shipping a Change.
+
 ## Next: shipping a Change
 
 Close the path from local work to review while keeping every remote effect
 explicit:
 
 - Generate a commit message from the archived or current diff, with review.
-- Fetch and synchronize with the recorded base through an explicit command.
 - Give an opaque local branch an appropriate publication name if hosting needs
   one.
 - Push and create or update a pull request through an explicit command.

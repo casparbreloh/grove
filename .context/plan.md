@@ -35,6 +35,7 @@ This is deliberately a breaking pre-1.0 migration: do not auto-import old pendin
 grove new [--from REF] [--shell]
 grove switch [--shell]
 grove list
+grove sync
 grove remove [--force]
 grove init fish|zsh
 ```
@@ -137,6 +138,12 @@ Artifacts are installed durably before Git mutation. Grove then revalidates the 
   - Files: `tests/cli.rs`, `tests/support/mod.rs`, `tests/support/agent.sh`, `README.md`, `VISION.md`, `AGENTS.md`, `CONTEXT.md`, `docs/adr/0001-id-backed-native-pi-changes.md`, `docs/research/herdr-evaluation.md`
   - Does: Delete obsolete helpers/tests for ZMX process reuse/kill, detach, pending preservation/discard, inferred branch/worktree moves, semantic branch arguments/completion, `switch main`, and unmanaged worktree selection. Consolidate remaining coverage into coherent user workflows and update all project guidance/glossary/decision records.
   - Done when: the compiled-CLI suite has approximately eight coherent workflows covering command/shell surface, native Pi create/resume/title, picker safety, base/transaction rollback, repository isolation, integrated-history safety, unique merge-resolution protection, and archive-before-delete; no obsolete runtime/PID/pending fixture paths remain; docs consistently describe the capsule and direct-Pi behavior; every retained test asserts user-visible output plus real Git/filesystem state rather than private helpers.
+
+- [x] Task 7: Synchronize active Changes with their fetched base
+  - Files: `src/main.rs`, `src/git.rs`, `src/change.rs`, `tests/cli.rs`, `tests/support/mod.rs`, `README.md`, `VISION.md`
+  - Does: First make the terminal test harness portable by assigning test PTYs a nonzero size and normalizing temporary paths. Then use compiled-CLI TDD to add explicit `grove sync`: fetch the primary branch's configured upstream, archive/remove clean unlocked Changes already integrated into the fetched target, and rebase remaining clean unlocked Changes onto the fetched target. Abort and verify failed rebases, skip dirty, busy, locked, or missing worktrees, never autostash or touch unmanaged worktrees, and render one concise summary without Git progress noise.
+  - Done when: real disposable repositories with local bare remotes prove fetch-before-mutation, merged/squash-equivalent cleanup through the existing archive transaction, successful nonconflicting rebases in linked worktrees, exact conflict rollback, conservative skips, and clean output; fetch failure changes no Change; existing terminal tests pass in noninteractive command environments; docs define the explicit network and rewrite behavior.
+  - Notes: Compare and rebase against the exact fetched upstream OID rather than updating local `main`. Process integrated removals before rebases. A conflict may be reported while sync continues with other Changes, but any abort/verification failure is a hard error. Do not add provider/PR APIs, capsule retention, automatic local-base fast-forwarding, or broad `git worktree prune`.
 
 ## Checks
 

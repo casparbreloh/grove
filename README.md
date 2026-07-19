@@ -22,6 +22,7 @@ for the domain vocabulary.
 grove new [--from REF] [--shell]
 grove switch [--shell]
 grove list
+grove sync
 grove remove [--force]
 grove init fish|zsh
 ```
@@ -39,6 +40,20 @@ inferred title. Until naming succeeds, Grove shows `Untitled`; duplicate and
 untitled rows include a short opaque ID only to disambiguate them. Use the arrow
 keys and press Enter to select. Ordinary, detached, and otherwise unmanaged Git
 worktrees are not included.
+
+`sync` is an explicit network operation that must run from the primary worktree
+and requires its current branch to have a configured upstream. It fetches and
+prunes that upstream's remote, without moving the local primary branch. Among
+clean active Changes recorded with the primary branch as their creation parent,
+it archives Changes already integrated upstream through the same safe
+archive-before-delete path and rebases the rest onto the fetched upstream.
+Rebase rewrites Change commits. Before integration detection or rebasing,
+Grove conservatively preserves and skips a Change if its recorded creation base
+is no longer in the Change's history. It also preserves rather than rebases
+non-integrated Changes whose work history contains a merge, and it aborts and
+skips a conflicting linear rebase. It also skips dirty or busy Changes
+(including Changes with an active Pi process), Git-locked or missing worktrees,
+and Changes created from another parent branch.
 
 `remove` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe removal accepts work integrated by merge, cherry-pick or
@@ -120,7 +135,7 @@ deterministic without a global lock. `repository.json` records that canonical
 directory, while `change.json` records Grove-owned identity, creation lineage, stable title, and
 the `active` → `closing` → `archived` lifecycle. Pi JSONL is the canonical
 conversation, usage, and tool history. Before deletion, Grove snapshots the
-authoritative base-to-final worktree as a binary-capable patch and machine-
+non-ignored base-to-final worktree as a binary-capable patch and machine-
 readable statistics. Successful removal deletes only `worktree/` and the local
 ID branch; the record, Pi sessions, and artifacts remain for later inspection
 or analytics.

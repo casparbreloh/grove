@@ -156,7 +156,19 @@ pub(crate) struct Lock {
     _file: File,
 }
 
+pub(crate) enum LockAttempt {
+    Acquired(Lock),
+    Busy,
+}
+
 pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
+    match try_lock(capsule)? {
+        LockAttempt::Acquired(lock) => Ok(lock),
+        LockAttempt::Busy => bail!("change is already open in another Grove process"),
+    }
+}
+
+pub(crate) fn try_lock(capsule: &Path) -> Result<LockAttempt> {
     let path = capsule.join(".activity.lock");
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
@@ -166,10 +178,8 @@ pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
         .open(&path)
         .with_context(|| format!("failed to open change lock {}", path.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Lock { _file: file }),
-        Err(fs::TryLockError::WouldBlock) => {
-            bail!("change is already open in another Grove process")
-        }
+        Ok(()) => Ok(LockAttempt::Acquired(Lock { _file: file })),
+        Err(fs::TryLockError::WouldBlock) => Ok(LockAttempt::Busy),
         Err(fs::TryLockError::Error(error)) => Err(error)
             .with_context(|| format!("failed to lock change capsule {}", capsule.display())),
     }

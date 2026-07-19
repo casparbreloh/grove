@@ -56,6 +56,8 @@ enum Cmd {
     },
     /// List the main repository and active Changes
     List,
+    /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
+    Sync,
     /// Remove an active change
     #[command(visible_alias = "delete")]
     Remove {
@@ -94,6 +96,7 @@ fn main() -> Result<()> {
         Cmd::New { from, shell } => new(&Git::discover()?, from.as_deref(), shell),
         Cmd::Switch { shell } => switch(&Git::discover()?, shell),
         Cmd::List => list(&Git::discover()?),
+        Cmd::Sync => sync(&Git::discover()?),
         Cmd::Remove { force } => remove(&Git::discover()?, force),
         Cmd::Init { shell } => init(shell),
         Cmd::Title { change, session } => title(&change, &session),
@@ -256,6 +259,35 @@ impl<W: Write> Drop for PickerMode<'_, W> {
             let _ = disable_raw_mode();
         }
     }
+}
+
+fn sync(git: &Git) -> Result<()> {
+    let result = git.sync()?;
+    let reasons = [
+        (result.conflicts, "conflict"),
+        (result.dirty, "dirty"),
+        (result.busy, "busy"),
+        (result.locked, "locked"),
+        (result.missing, "missing"),
+        (result.other_base, "other base"),
+        (result.diverged_base, "diverged base"),
+        (result.rewritten_change, "rewritten change"),
+        (result.merge_history, "merge history"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, reason)| format!("{count} {reason}"))
+    .collect::<Vec<_>>();
+    let reasons = if reasons.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", reasons.join(", "))
+    };
+    eprintln!(
+        "✓ Synced: {} archived, {} rebased, {} skipped{}",
+        result.archived, result.rebased, result.skipped, reasons
+    );
+    Ok(())
 }
 
 fn list(git: &Git) -> Result<()> {
