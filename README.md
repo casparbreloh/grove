@@ -33,8 +33,8 @@ uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
 `switch` always opens a terminal picker containing active Grove Changes. From a
-Change it also offers the main repository first; selecting main returns the
-calling shell there without opening Pi. `list` always includes main without
+Change it also offers Main first; selecting Main returns the calling shell
+there without opening Pi. `list` always includes Main without
 counting it as a Change. The picker and `list` lead with each Change's stable
 inferred title. Until naming succeeds, Grove shows `Untitled`; duplicate and
 untitled rows include a short opaque ID only to disambiguate them. Use the arrow
@@ -69,8 +69,8 @@ branch without a configured upstream; tracking branches are preserved.
 `--shell` skips Pi and writes a navigation directive instead. It is useful for
 creating or entering a Change with a normal shell. `new --shell`, `switch
 --shell`, and archival from the current Change are the only operations that
-request parent-shell navigation. Selecting the main repository in ordinary
-`switch` also navigates without opening Pi. After managed Pi exits, the caller
+request parent-shell navigation. Selecting Main in ordinary `switch` also
+navigates without opening Pi. After managed Pi exits, the caller
 stays in the directory where it invoked Grove.
 
 ## Native Pi sessions

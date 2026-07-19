@@ -150,7 +150,8 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
         let expected = shell_repo.path().canonicalize().unwrap();
-        assert!(terminal.contains("Main repository"), "{shell}: {terminal}");
+        assert!(terminal.contains("Main"), "{shell}: {terminal}");
+        assert!(!terminal.contains("Main repository"), "{shell}: {terminal}");
         assert!(
             terminal.contains(&format!("__PWD__{}", expected.display())),
             "{shell}: {terminal}"
@@ -605,7 +606,7 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let fourth = &changes[3];
     repo.set_change_title(named, "Capture Native Sessions");
     repo.set_change_title(duplicate, "Capture Native Sessions");
-    repo.set_change_title(fourth, "Review Active Changes");
+    repo.set_change_title(fourth, "Main");
     let ordinary = repo.home().join("ordinary");
     repo.git(["branch", "ordinary"]);
     repo.git(["worktree", "add", ordinary.to_str().unwrap(), "ordinary"]);
@@ -629,7 +630,10 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         !table.contains("ordinary") && !table.contains("detached"),
         "{table}"
     );
-    assert!(table.contains("Review Active Changes"), "{table}");
+    assert!(
+        table.contains(&format!("Main · {}", &fourth.id[..8])),
+        "{table}"
+    );
     assert!(stderr(&listed).contains("Showing 4 changes"));
 
     let selected = repo.switch_in_pty(repo.path(), "Capture Native Sessions", b"\r");
@@ -652,7 +656,7 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
     let unmanaged = repo.switch_in_pty(&ordinary, "Capture Native Sessions", b"\x1b");
     assert!(unmanaged.status.success(), "{unmanaged:?}");
     let terminal = stdout(&unmanaged);
-    assert!(!terminal.contains("Main repository"), "{terminal}");
+    assert_eq!(terminal.matches("Main").count(), 1, "{terminal}");
     assert!(!terminal.contains("Error:"), "{terminal}");
     assert_eq!(repo.navigation(), before);
     assert_terminal_restored(&terminal);
@@ -732,7 +736,8 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         .clone();
     let table = stdout(&listed);
     assert!(table.contains("Title"));
-    assert!(table.contains("@ Main repository"), "{table}");
+    assert!(table.contains("@ Main"), "{table}");
+    assert!(!table.contains("Main repository"), "{table}");
     assert!(stderr(&listed).contains("Showing 0 changes"));
     let error = empty
         .grove()
