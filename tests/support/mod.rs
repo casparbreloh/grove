@@ -203,6 +203,12 @@ impl TestRepo {
         )
     }
 
+    pub fn remove_in_narrow_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.sh_picker(&self.repo, "remove");
+        command.env("GROVE_TEST_COLUMNS", "48");
+        self.run_pty(command, ready, input, "narrow Grove remove")
+    }
+
     pub fn select_agent_in_pty(&self, ready: &str, input: &[u8]) -> Output {
         let binary = self.compiled_binary();
         let mut command = self.pty(&self.repo, binary.as_os_str());
@@ -338,7 +344,9 @@ impl TestRepo {
         command
             .args([
                 "-c",
-                &format!("\"$GROVE_TEST_BINARY\" {action}\nstatus=$?\nstty -a\nexit \"$status\""),
+                &format!(
+                    "if [ -n \"$GROVE_TEST_COLUMNS\" ]; then stty cols \"$GROVE_TEST_COLUMNS\"; fi\n\"$GROVE_TEST_BINARY\" {action}\nstatus=$?\nstty -a\nexit \"$status\""
+                ),
             ])
             .env("GROVE_TEST_BINARY", self.compiled_binary());
         command

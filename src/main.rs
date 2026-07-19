@@ -15,8 +15,9 @@ use crossterm::{
     QueueableCommand,
     cursor::{Hide, MoveToColumn, MoveUp, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
+    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     git::{Git, WorktreeState},
@@ -201,7 +202,10 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
 }
 
 fn print_picker(rows: &[Row], selected: usize, output: &mut impl Write) -> std::io::Result<()> {
-    print_rows(rows, output, true, "\r\n", Some(selected))
+    let max_width = terminal::size()
+        .map(|(columns, _)| usize::from(columns.saturating_sub(1)))
+        .ok();
+    print_rows(rows, output, true, "\r\n", Some(selected), max_width)
 }
 
 fn redraw_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> std::io::Result<()> {
@@ -264,7 +268,7 @@ fn list(git: &Git) -> Result<()> {
     let stdout = std::io::stdout();
     let terminal = stdout.is_terminal();
     let mut output = stdout.lock();
-    print_rows(&rows, &mut output, terminal, "\n", None)?;
+    print_rows(&rows, &mut output, terminal, "\n", None, None)?;
     output.flush()?;
     eprint!("\n○ Showing {changes} changes");
     if changed > 0 {
@@ -380,6 +384,7 @@ fn print_rows(
     terminal: bool,
     newline: &str,
     selected: Option<usize>,
+    max_width: Option<usize>,
 ) -> std::io::Result<()> {
     let marker_width = 1;
     let title_width = width(rows, "Title", |row| &row.title_label);
@@ -390,6 +395,7 @@ fn print_rows(
         "{:<marker_width$} {:<title_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
         "", "Title", "Base", "Changes", "Base↕"
     );
+    let header = fit_width(header, max_width);
     write!(output, "{}{newline}", bold(&header, terminal))?;
     for (index, row) in rows.iter().enumerate() {
         let marker = if let Some(selected) = selected {
@@ -402,13 +408,39 @@ fn print_rows(
         let base = format!("{:<base_width$}", row.base);
         let changes = format!("{:<changes_width$}", row.changes);
         let divergence = format!("{:<divergence_width$}", row.divergence);
-        write!(
-            output,
-            "{:<marker_width$} {:<title_width$}  {base}  {changes}  {divergence}  {}{newline}",
+        let line = format!(
+            "{:<marker_width$} {:<title_width$}  {base}  {changes}  {divergence}  {}",
             marker, row.title_label, row.path,
-        )?;
+        );
+        write!(output, "{}{newline}", fit_width(line, max_width))?;
     }
     Ok(())
+}
+
+fn fit_width(mut value: String, max_width: Option<usize>) -> String {
+    let Some(max_width) = max_width else {
+        return value;
+    };
+    value.retain(|character| UnicodeWidthChar::width(character).is_some());
+    if UnicodeWidthStr::width(value.as_str()) <= max_width {
+        return value;
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let mut fitted = String::new();
+    let mut width = 0;
+    for character in value.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if width + character_width + 1 > max_width {
+            break;
+        }
+        fitted.push(character);
+        width += character_width;
+    }
+    fitted.push('…');
+    fitted
 }
 
 fn bold(value: &str, enabled: bool) -> String {
