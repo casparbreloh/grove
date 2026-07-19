@@ -18,18 +18,18 @@ const TITLE_SYSTEM_PROMPT: &str = "Create a concise title of exactly three or fo
 
 pub(crate) struct Session {
     capsule: PathBuf,
-    worktree: PathBuf,
+    workspace: PathBuf,
 }
 
 impl Session {
-    pub(crate) fn for_worktree(worktree: &Path) -> Result<Self> {
-        let capsule = worktree
+    pub(crate) fn for_workspace(workspace: &Path) -> Result<Self> {
+        let capsule = workspace
             .parent()
-            .context("Grove worktree has no change capsule")?
+            .context("Grove workspace has no Change capsule")?
             .to_owned();
         Ok(Self {
             capsule,
-            worktree: worktree.to_owned(),
+            workspace: workspace.to_owned(),
         })
     }
 
@@ -40,14 +40,14 @@ impl Session {
     pub(crate) fn attach(&self) -> Result<()> {
         validate_pi()?;
         let _lock = self.lock()?;
-        let sessions = self.capsule.join("sessions/pi");
+        let sessions = self.capsule.join("pi");
         create_private_directory_all(&sessions).with_context(|| {
             format!(
                 "failed to create Pi session directory {}",
                 sessions.display()
             )
         })?;
-        let extension = extension_path()?;
+        let extension = materialize_extension()?;
         let executable = env::current_exe().context("failed to locate the Grove executable")?;
         let change_id = self
             .capsule
@@ -60,15 +60,17 @@ impl Session {
             .arg("--continue")
             .arg("--extension")
             .arg(&extension)
-            .current_dir(&self.worktree)
+            .current_dir(&self.workspace)
             .env("GROVE_EXECUTABLE", executable)
             .env("GROVE_CHANGE_ID", change_id)
             .env("GROVE_CHANGE_CAPSULE", &self.capsule)
             .env_remove("GROVE_DIRECTIVE_CD_FILE")
-            .status()
-            .with_context(|| format!("failed to launch Pi in {}", self.worktree.display()))?;
+            .status();
+        let _ = fs::remove_file(&extension);
+        let status = status
+            .with_context(|| format!("failed to launch Pi in {}", self.workspace.display()))?;
         if !status.success() {
-            bail!("Pi exited with {status} in {}", self.worktree.display());
+            bail!("Pi exited with {status} in {}", self.workspace.display());
         }
         Ok(())
     }
@@ -108,7 +110,7 @@ pub(crate) fn infer_title(
         .arg("--system-prompt")
         .arg(TITLE_SYSTEM_PROMPT)
         .arg(prompt)
-        .current_dir(capsule.join("worktree"))
+        .current_dir(capsule.join("workspace"))
         .output()
         .with_context(|| "failed to launch isolated Pi title generator")?;
     if !output.status.success() {
@@ -132,22 +134,8 @@ pub(crate) fn infer_title(
     Ok(title.to_owned())
 }
 
-fn extension_path() -> Result<PathBuf> {
-    let home = env::var_os("HOME").context("HOME is not set")?;
-    let runtime = PathBuf::from(home).join(".grove/runtime");
-    create_private_directory_all(&runtime)
-        .with_context(|| format!("failed to create Grove runtime {}", runtime.display()))?;
-    #[cfg(unix)]
-    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("failed to protect Grove runtime {}", runtime.display()))?;
-
-    let digest = blake3::hash(EXTENSION).to_hex();
-    let path = runtime.join(format!("pi-extension-{}.ts", &digest[..12]));
-    if path.is_file() {
-        return Ok(path);
-    }
-
-    let temporary = temporary_path(&runtime, "extension");
+fn materialize_extension() -> Result<PathBuf> {
+    let temporary = temporary_path(&env::temp_dir(), "grove-pi-extension");
     let mut options = fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -159,20 +147,7 @@ fn extension_path() -> Result<PathBuf> {
         .with_context(|| format!("failed to write {}", temporary.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync {}", temporary.display()))?;
-    #[cfg(unix)]
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("failed to protect {}", temporary.display()))?;
-    match fs::rename(&temporary, &path) {
-        Ok(()) => Ok(path),
-        Err(_error) if path.is_file() => {
-            let _ = fs::remove_file(&temporary);
-            Ok(path)
-        }
-        Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            Err(error).with_context(|| format!("failed to install {}", path.display()))
-        }
-    }
+    Ok(temporary)
 }
 
 fn temporary_path(parent: &Path, label: &str) -> PathBuf {

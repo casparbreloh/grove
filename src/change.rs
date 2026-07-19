@@ -11,145 +11,35 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-const RECORD_VERSION: u8 = 1;
-const REPOSITORY_RECORD_VERSION: u8 = 1;
-
-#[derive(Deserialize, Serialize)]
-struct RepositoryRecord {
-    version: u8,
-    name: String,
-    git_common_dir: String,
-}
+const RECORD_VERSION: u8 = 3;
 
 pub(crate) struct RepositoryDirectory {
-    root: PathBuf,
-    name: String,
-    common_dir: PathBuf,
+    path: PathBuf,
 }
 
 impl RepositoryDirectory {
     pub(crate) fn new(name: String, common_dir: PathBuf) -> Result<Self> {
         let home = std::env::var_os("HOME").context("HOME is not set")?;
+        let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
         Ok(Self {
-            root: PathBuf::from(home).join(".grove/repositories"),
-            name,
-            common_dir,
+            path: PathBuf::from(home)
+                .join(".grove")
+                .join(format!("{name}-{}", &digest[..8])),
         })
     }
 
     pub(crate) fn reserve(&self, creation: Creation) -> Result<Reserved> {
-        let root = claim_repository(&self.root, &self.name, &self.common_dir)?;
-        Reserved::create(&root, &self.common_dir, creation)
+        Reserved::create(&self.path, creation)
     }
 
     pub(crate) fn records(&self) -> Result<Vec<(PathBuf, Record)>> {
-        let records = Record::load_all(&self.path()?)?;
-        for (capsule, record) in &records {
-            self.validate(capsule, record)?;
-        }
-        Ok(records)
+        Record::load_all(&self.path)
     }
 
     pub(crate) fn record(&self, id: &str) -> Result<Option<(PathBuf, Record)>> {
-        let capsule = self.path()?.join(id);
-        let Some(record) = Record::load_optional(&capsule.join("change.json"))? else {
-            return Ok(None);
-        };
-        self.validate(&capsule, &record)?;
-        Ok(Some((capsule, record)))
+        let capsule = self.path.join(id);
+        Ok(Record::load_optional(&capsule.join("change.json"))?.map(|record| (capsule, record)))
     }
-
-    fn path(&self) -> Result<PathBuf> {
-        locate_repository(&self.root, &self.name, &self.common_dir)
-    }
-
-    fn validate(&self, capsule: &Path, record: &Record) -> Result<()> {
-        if Path::new(&record.repository) != self.common_dir {
-            bail!(
-                "change record {} belongs to a different repository",
-                capsule.join("change.json").display()
-            );
-        }
-        Ok(())
-    }
-}
-
-fn locate_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
-    let path = repository_path(root, name, common_dir);
-    if !path.exists() || repository_matches(&path, common_dir)? {
-        return Ok(path);
-    }
-    bail!("Grove repository directory does not match '{name}'")
-}
-
-fn claim_repository(root: &Path, name: &str, common_dir: &Path) -> Result<PathBuf> {
-    create_private_directory_all(root)
-        .with_context(|| format!("failed to create Grove repositories {}", root.display()))?;
-    let repository = repository_path(root, name, common_dir);
-    if repository.exists() {
-        if repository_matches(&repository, common_dir)? {
-            return Ok(repository);
-        }
-        bail!("Grove repository directory does not match '{name}'");
-    }
-
-    let record = RepositoryRecord {
-        version: REPOSITORY_RECORD_VERSION,
-        name: name.to_owned(),
-        git_common_dir: common_dir.to_string_lossy().into_owned(),
-    };
-    let temporary = root.join(format!(
-        ".repository-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    create_private_directory(&temporary).with_context(|| {
-        format!(
-            "failed to create temporary Grove repository {}",
-            temporary.display()
-        )
-    })?;
-    if let Err(error) = write_json(&temporary.join("repository.json"), &record) {
-        let _ = fs::remove_dir_all(&temporary);
-        return Err(error);
-    }
-    if let Err(error) = fs::rename(&temporary, &repository) {
-        let _ = fs::remove_dir_all(&temporary);
-        if repository_matches(&repository, common_dir)? {
-            return Ok(repository);
-        }
-        return Err(error)
-            .with_context(|| format!("failed to claim Grove repository {}", repository.display()));
-    }
-    sync_parent(&repository)?;
-    Ok(repository)
-}
-
-fn repository_path(root: &Path, name: &str, common_dir: &Path) -> PathBuf {
-    let digest = blake3::hash(common_dir.as_os_str().as_encoded_bytes()).to_hex();
-    root.join(format!("{name}-{}", &digest[..8]))
-}
-
-fn repository_matches(path: &Path, common_dir: &Path) -> Result<bool> {
-    let manifest = path.join("repository.json");
-    let bytes = match fs::read(&manifest) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!("failed to read repository record {}", manifest.display())
-            });
-        }
-    };
-    let record: RepositoryRecord = serde_json::from_slice(&bytes)
-        .with_context(|| format!("invalid repository record {}", manifest.display()))?;
-    if record.version != REPOSITORY_RECORD_VERSION {
-        bail!("unsupported repository record {}", manifest.display());
-    }
-    Ok(Path::new(&record.git_common_dir) == common_dir)
 }
 
 pub(crate) struct Lock {
@@ -179,7 +69,6 @@ pub(crate) fn try_lock(capsule: &Path) -> Result<Option<Lock>> {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Creation {
-    pub(crate) base_ref: Option<String>,
     pub(crate) base_oid: String,
     pub(crate) parent: Option<String>,
 }
@@ -210,14 +99,12 @@ pub(crate) enum Outcome {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct Closure {
-    pub(crate) closed_at: Option<u64>,
+pub(crate) struct Closing {
     pub(crate) outcome: Outcome,
     pub(crate) tip_oid: String,
     pub(crate) target_oid: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) target_ref: Option<String>,
-    pub(crate) integration: String,
+    pub(crate) local_branch: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -227,10 +114,14 @@ pub(crate) struct Record {
     pub(crate) title: Option<String>,
     pub(crate) state: State,
     pub(crate) created_at: u64,
-    repository: String,
-    pub(crate) creation: Creation,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) closure: Option<Closure>,
+    pub(crate) base_oid: String,
+    pub(crate) parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) closing: Option<Closing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) archived_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<Outcome>,
 }
 
 impl Record {
@@ -281,7 +172,12 @@ impl Record {
         let record: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("invalid change record {}", path.display()))?;
         if record.version != RECORD_VERSION || !valid_id(&record.id) {
-            bail!("unsupported change record {}", path.display());
+            bail!(
+                "unsupported change record {} (version {}, expected {})",
+                path.display(),
+                record.version,
+                RECORD_VERSION
+            );
         }
         Ok(Some(record))
     }
@@ -293,12 +189,12 @@ pub(crate) struct Reserved {
 }
 
 impl Reserved {
-    fn create(root: &Path, repository: &Path, creation: Creation) -> Result<Self> {
+    fn create(root: &Path, creation: Creation) -> Result<Self> {
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock is before the Unix epoch")?
             .as_secs();
-        fs::create_dir_all(root)
+        create_private_directory_all(root)
             .with_context(|| format!("failed to create Grove root {}", root.display()))?;
         for nonce in 0..100_u8 {
             let id = generate_id(root, nonce)?;
@@ -318,9 +214,11 @@ impl Reserved {
                 title: None,
                 state: State::Active,
                 created_at,
-                repository: repository.to_string_lossy().into_owned(),
-                creation: creation.clone(),
-                closure: None,
+                base_oid: creation.base_oid.clone(),
+                parent: creation.parent.clone(),
+                closing: None,
+                archived_at: None,
+                outcome: None,
             };
             if let Err(error) = replace_json(&capsule.join("change.json"), &record) {
                 if let Err(rollback_error) = fs::remove_dir_all(&capsule) {
@@ -335,12 +233,8 @@ impl Reserved {
         bail!("could not reserve a unique Grove change")
     }
 
-    pub(crate) fn id(&self) -> &str {
-        &self.id
-    }
-
-    pub(crate) fn worktree(&self) -> PathBuf {
-        self.capsule.join("worktree")
+    pub(crate) fn workspace(&self) -> PathBuf {
+        self.capsule.join("workspace")
     }
 
     pub(crate) fn finish(self) -> Change {
@@ -370,8 +264,8 @@ pub(crate) struct Change {
 }
 
 impl Change {
-    pub(crate) fn worktree(&self) -> PathBuf {
-        self.capsule.join("worktree")
+    pub(crate) fn workspace(&self) -> PathBuf {
+        self.capsule.join("workspace")
     }
 }
 
@@ -384,13 +278,13 @@ pub(crate) fn initialize_title(capsule: &Path, expected_id: &str, title: &str) -
     })
 }
 
-pub(crate) fn mark_closing(capsule: &Path, expected_id: &str, closure: Closure) -> Result<()> {
+pub(crate) fn mark_closing(capsule: &Path, expected_id: &str, closing: Closing) -> Result<()> {
     update_record(capsule, expected_id, |record| {
         if !matches!(record.state, State::Active) {
             bail!("change '{}' is not active", record.id);
         }
         record.state = State::Closing;
-        record.closure = Some(closure);
+        record.closing = Some(closing);
         Ok(())
     })
 }
@@ -404,12 +298,13 @@ pub(crate) fn mark_archived(capsule: &Path, expected_id: &str) -> Result<()> {
             .duration_since(UNIX_EPOCH)
             .context("system clock is before the Unix epoch")?
             .as_secs();
-        record
-            .closure
-            .as_mut()
-            .context("closing change has no closure facts")?
-            .closed_at = Some(closed_at);
+        let closing = record
+            .closing
+            .take()
+            .context("closing change has no closing facts")?;
         record.state = State::Archived;
+        record.archived_at = Some(closed_at);
+        record.outcome = Some(closing.outcome);
         Ok(())
     })
 }
@@ -420,7 +315,7 @@ pub(crate) fn restore_active(capsule: &Path, expected_id: &str) -> Result<()> {
             bail!("change '{}' is not closing", record.id);
         }
         record.state = State::Active;
-        record.closure = None;
+        record.closing = None;
         Ok(())
     })
 }

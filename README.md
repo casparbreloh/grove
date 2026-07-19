@@ -2,7 +2,7 @@
 
 Grove is a small, Pi-first layer over Git worktrees. Git remains the source of
 truth. Grove adds a durable local **Change** around each task so that creating,
-leaving, finding, resuming, and safely removing Pi work stays simple.
+leaving, finding, resuming, and safely archiving Pi work stays simple.
 
 ```sh
 grove new
@@ -10,7 +10,7 @@ grove new
 
 grove switch   # pick the Change by title and resume Pi
 grove list
-grove remove   # remove the current Change, or pick one from the primary checkout
+grove archive  # archive the current Change, or pick one from the primary checkout
 ```
 
 See [VISION.md](VISION.md) for the product direction and [CONTEXT.md](CONTEXT.md)
@@ -23,7 +23,7 @@ grove new [--from REF] [--shell]
 grove switch [--shell]
 grove list
 grove sync
-grove remove [--force]
+grove archive [--force]
 grove init fish|zsh
 ```
 
@@ -50,22 +50,24 @@ creation parent, it archives Changes already integrated upstream through the
 same safe archive-before-delete path and rebases eligible linear Changes onto
 the fetched upstream. Rebase rewrites Change commits. Grove conservatively
 skips Changes whose creation base is absent from either fetched upstream or the
-Change tip, Changes with merge history, conflicting rebases, dirty or busy
-Changes (including Changes with an active Pi process), Git-locked or missing
-worktrees, and Changes created from another parent branch. Sync is a
-best-effort batch: skipped Changes remain untouched, while completed archives
-and rebases are not rolled back if a later operation fails. Its summary reports
-only archived, rebased, and skipped totals.
+Change tip, Changes with merge history, failed rebases, dirty or busy Changes
+(including Changes with an active Pi process), Git-locked or missing worktrees,
+and Changes created from another parent branch. Sync is a best-effort batch:
+skipped Changes remain untouched, while completed archives and rebases are not
+rolled back if a later operation fails. It reports one ordered outcome and
+reason for every active Change, followed by archived, rebased, and skipped
+totals.
 
-`remove` targets the current managed Change. From the primary checkout it opens
-the same picker. Safe removal accepts work integrated by merge, cherry-pick or
+`archive` targets the current managed Change. From the primary checkout it opens
+the same picker. Safe archival accepts work integrated by merge, cherry-pick or
 rebase-shaped history, or an equivalent squash. It refuses dirty or genuinely
 unmerged work, including unique content hidden in a merge resolution. `--force`
-explicitly archives and discards that work. `delete` is an alias for `remove`.
+explicitly and irreversibly discards that work. Both paths delete an attached local
+branch without a configured upstream; tracking branches are preserved.
 
 `--shell` skips Pi and writes a navigation directive instead. It is useful for
 creating or entering a Change with a normal shell. `new --shell`, `switch
---shell`, and removal from the current Change are the only operations that
+--shell`, and archival from the current Change are the only operations that
 request parent-shell navigation. Selecting the main repository in ordinary
 `switch` also navigates without opening Pi. After managed Pi exits, the caller
 stays in the directory where it invoked Grove.
@@ -75,7 +77,7 @@ stays in the directory where it invoked Grove.
 Managed Pi is a direct, blocking child process:
 
 ```text
-pi --session-dir <capsule>/sessions/pi --continue --extension <grove-extension>
+pi --session-dir <capsule>/pi --continue --extension <temporary-grove-extension>
 ```
 
 There is no multiplexer, background server, detach/reattach protocol, or live
@@ -85,7 +87,7 @@ Pi with the same `--session-dir --continue` arguments so it resumes
 automatically. You never need to copy or remember a Pi session ID.
 
 Grove holds a per-Change advisory lock while Pi is open. A second managed Pi or
-removal, including forced removal, refuses to proceed until the first process
+archival, including forced archival, refuses to proceed until the first process
 exits. Starting `pi` manually is unmanaged: Grove does not install its extension
 globally or discover arbitrary sessions.
 
@@ -107,60 +109,61 @@ terms.
 ## Change identity and storage
 
 Each Change has one immutable Grove-owned 8-character lowercase hexadecimal ID,
-unique within its repository. Git uses that exact ID as a local branch name, but the normal UI hides it.
-The human title and Pi session IDs are separate identities; neither renames the
-branch or capsule.
+unique within its repository and used only for its capsule identity. Grove
+creates `workspace/` as a native Git worktree with detached HEAD and finds it by
+its exact capsule path, not by a branch name. Native detached commits are
+supported. If the user or an agent later creates a branch, Grove may rebase its
+checked-out commits during explicit `sync`. Archival deletes that local branch
+only when it has no configured upstream; a tracking branch is preserved. The
+human Title and Pi session IDs remain separate identities.
 
 Everything local to a Change lives together:
 
 ```text
 ~/.grove/
-  repositories/
-    <repository-name>-<path-hash>/
-      repository.json
-      <change-id>/
-        change.json
-        .activity.lock
-        .metadata.lock
-        worktree/
-        sessions/pi/
-          <Pi-native session>.jsonl
-        artifacts/
-          change.patch
-          stats.json
-  runtime/
+  <repository-name>-<path-hash>/
+    <change-id>/
+      change.json
+      .activity.lock
+      .metadata.lock
+      workspace/          # active Changes only
+      pi/
+        <Pi-native session>.jsonl
 ```
 
-Repository directories always combine the readable repository name with a
-short hash of the canonical Git common directory. This makes repository claims
-deterministic without a global lock. `repository.json` records that canonical
-directory, while `change.json` records Grove-owned identity, creation lineage, stable title, and
-the `active` → `closing` → `archived` lifecycle. Pi JSONL is the canonical
-conversation, usage, and tool history. Before deletion, Grove snapshots the
-non-ignored base-to-final worktree as a binary-capable patch and machine-
-readable statistics. Successful removal deletes only `worktree/` and the local
-ID branch; the record, Pi sessions, and artifacts remain for later inspection
-or analytics.
+The repository directory combines its readable name with a 8-hex digest of
+the canonical Git common directory; there is no repository registry. The
+minimal `change.json` records identity, title, state, creation base and parent,
+plus archival time and outcome. Detailed recovery facts exist only while the
+record is `closing`. Pi JSONL remains the canonical conversation, usage, and
+tool history.
+
+Grove stores no source snapshot or statistics. Successful archival removes
+`workspace/` and any attached local branch without a configured upstream.
+Tracking branches, the record, and Pi sessions remain. A registered detached
+worktree keeps commits reachable while active; after archival, unbranched
+source history is intentionally gone.
 
 The two empty lock files have separate purposes: `.activity.lock` excludes a
-second managed Pi and removal while Pi is open; `.metadata.lock` serializes
+second managed Pi and archival while Pi is open; `.metadata.lock` serializes
 atomic `change.json` updates. They contain no persistent state.
 
 Capsules are local-only and private (`0700` directories and `0600` Grove-owned
-records/artifacts on Unix). They can contain source, prompts, tool output, and
+records on Unix). They can contain source, prompts, tool output, and
 secrets. Beyond the documented title request, Grove performs no implicit
 network activity.
 
-This is a pre-1.0 clean break. Grove does not migrate or delete worktrees,
-branch metadata, session-runtime data, or other state created by earlier
-versions. Retain or remove that old data manually.
+This is a pre-1.0 clean break. Grove accepts only the current Change record
+version and does not contain runtime migration or compatibility paths. Existing
+local capsules can be converted once with explicit Git and filesystem commands;
+Pi sessions remain untouched.
 
 ## Shell setup
 
 The wrapper lets Grove change the calling shell's directory and supplies
 command/flag completion. It does not edit shell configuration and does not
 complete Change titles as positional arguments because `switch` and primary
-`remove` use the picker. Add the appropriate line to your shell configuration
+`archive` use the picker. Add the appropriate line to your shell configuration
 so it loads in every terminal; `--shell` fails before mutation when the wrapper
 is not loaded.
 

@@ -18,12 +18,14 @@ version-control system, agent framework, or terminal multiplexer.
 
 ## Foundation
 
-Grove provides ID-backed Git worktrees, title-based list and picker navigation,
-direct Pi launch/resume, recorded creation lineage, archive-before-delete
-safety, and explicit upstream synchronization. A Change's hidden
-repository-scoped 8-hex ID is also its durable local Git branch. Its capsule
-groups the record, worktree, Pi-native sessions, and final Git artifacts
-beneath one `~/.grove` path.
+Grove provides path-backed Git workspaces, title-based list and picker navigation,
+direct Pi launch/resume, recorded creation lineage, destructive validation, and
+explicit upstream synchronization. A Change's repository-scoped 8-hex ID
+identifies only its capsule. Each workspace is a native Git worktree created
+with detached HEAD; branches appear only when a user or agent needs one.
+Archival cleans up local-only branches while preserving tracking branches. The
+capsule groups minimal Grove metadata, the active workspace, and Pi-native
+sessions beneath one `~/.grove` path.
 
 Bare `grove new` creates the complete Change before starting Pi. A small managed
 extension links each native Pi session and makes one isolated, best-effort title
@@ -49,8 +51,7 @@ Close the path from local work to review while keeping every remote effect
 explicit:
 
 - Generate a commit message from the archived or current diff, with review.
-- Give an opaque local branch an appropriate publication name if hosting needs
-  one.
+- Create an appropriate publication branch when hosting needs one.
 - Push and create or update a pull request through an explicit command.
 - Show concise remote, pull-request, and CI state without weakening the local
   Change model.
