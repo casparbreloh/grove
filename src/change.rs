@@ -157,6 +157,10 @@ pub(crate) struct Lock {
 }
 
 pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
+    try_lock(capsule)?.context("change is already open in another Grove process")
+}
+
+pub(crate) fn try_lock(capsule: &Path) -> Result<Option<Lock>> {
     let path = capsule.join(".activity.lock");
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
@@ -166,10 +170,8 @@ pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
         .open(&path)
         .with_context(|| format!("failed to open change lock {}", path.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Lock { _file: file }),
-        Err(fs::TryLockError::WouldBlock) => {
-            bail!("change is already open in another Grove process")
-        }
+        Ok(()) => Ok(Some(Lock { _file: file })),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => Err(error)
             .with_context(|| format!("failed to lock change capsule {}", capsule.display())),
     }

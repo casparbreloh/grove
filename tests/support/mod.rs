@@ -37,11 +37,12 @@ impl TestRepo {
         let root = tempfile::tempdir().expect("create test directory");
         let repo = root.path().join("repo");
         let home = root.path().join("home");
+        fs::create_dir(&home).expect("create test home");
+        let home = home.canonicalize().expect("canonicalize test home");
         let git_config = root.path().join("gitconfig");
         let navigation = root.path().join("navigation");
         let agent_log = root.path().join("agent.log");
         let agent = root.path().join("agent");
-        fs::create_dir(&home).expect("create test home");
 
         let fixture = Self {
             _root: root,
@@ -69,6 +70,32 @@ impl TestRepo {
         let repo = self._root.path().join(relative);
         self.initialize(&repo);
         repo
+    }
+
+    pub fn create_local_origin(&self) -> PathBuf {
+        let origin = self._root.path().join("origin.git");
+        self.git_from(
+            self._root.path(),
+            [
+                OsStr::new("init"),
+                OsStr::new("--bare"),
+                OsStr::new("--initial-branch=main"),
+                origin.as_os_str(),
+            ],
+        );
+        self.git(["remote", "add", "origin", origin.to_str().unwrap()]);
+        self.git(["push", "--set-upstream", "origin", "main"]);
+
+        let publisher = self._root.path().join("publisher");
+        self.git_from(
+            self._root.path(),
+            [
+                OsStr::new("clone"),
+                origin.as_os_str(),
+                publisher.as_os_str(),
+            ],
+        );
+        publisher
     }
 
     pub fn path(&self) -> &Path {
@@ -371,7 +398,14 @@ impl TestRepo {
     fn pty(&self, directory: &Path, program: &OsStr) -> Command {
         let mut command = Command::new("script");
         command
-            .args([OsStr::new("-q"), OsStr::new("/dev/null")])
+            .args([
+                OsStr::new("-q"),
+                OsStr::new("/dev/null"),
+                OsStr::new("/bin/sh"),
+                OsStr::new("-c"),
+                OsStr::new("stty rows 40 cols \"${GROVE_TEST_COLUMNS:-120}\"; exec \"$@\""),
+                OsStr::new("grove-test-pty"),
+            ])
             .arg(program);
         self.configure_grove(&mut command, directory);
         command
