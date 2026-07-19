@@ -17,8 +17,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::change::{
-    Change, Closure, Creation, LockAttempt, Outcome, Record, RepositoryDirectory,
-    lock as lock_change, mark_archived, mark_closing, restore_active, try_lock as try_lock_change,
+    Change, Closure, Creation, Outcome, Record, RepositoryDirectory, lock as lock_change,
+    mark_archived, mark_closing, restore_active, try_lock as try_lock_change,
 };
 
 #[derive(Clone)]
@@ -69,15 +69,6 @@ pub(crate) struct SyncResult {
     pub(crate) archived: usize,
     pub(crate) rebased: usize,
     pub(crate) skipped: usize,
-    pub(crate) conflicts: usize,
-    pub(crate) dirty: usize,
-    pub(crate) busy: usize,
-    pub(crate) locked: usize,
-    pub(crate) missing: usize,
-    pub(crate) other_base: usize,
-    pub(crate) diverged_base: usize,
-    pub(crate) rewritten_change: usize,
-    pub(crate) merge_history: usize,
 }
 
 pub(crate) struct PreparedRemoval {
@@ -457,12 +448,18 @@ impl Git {
             )
             .with_context(|| format!("primary branch '{primary_branch}' has no merge ref"))?;
 
-        self.checked_at(&primary.path, &["fetch", "--quiet", "--prune", &remote])
-            .with_context(|| format!("failed to fetch remote '{remote}'"))?;
         let upstream_refspec = format!("+{merge_ref}:{upstream}");
         self.checked_at(
             &primary.path,
-            &["fetch", "--quiet", &remote, &upstream_refspec],
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--no-prune",
+                "--no-recurse-submodules",
+                &remote,
+                &upstream_refspec,
+            ],
         )
         .with_context(|| {
             format!(
@@ -474,62 +471,50 @@ impl Git {
             .with_context(|| format!("fetched upstream '{upstream}' is not a commit"))?;
 
         let repository = self.repository()?;
+        let mut skipped = 0;
         let mut locks = Vec::new();
-        let mut changes = Vec::new();
-        let mut dirty = 0;
-        let mut busy = 0;
-        let mut locked = 0;
-        let mut missing = 0;
-        let mut other_base = 0;
+        let mut candidates = Vec::new();
         for (capsule, record) in repository.records()? {
             if !record.state.is_active() {
                 continue;
             }
             if record.creation.parent.as_deref() != Some(primary_branch) {
-                other_base += 1;
+                skipped += 1;
                 continue;
             }
             let expected_path = capsule.join("worktree");
             let Some(worktree) = managed_worktree(&worktrees, &record.id, &expected_path) else {
-                missing += 1;
+                skipped += 1;
                 continue;
             };
-            if worktree.prunable || !worktree.path.exists() {
-                missing += 1;
+            if worktree.prunable || !worktree.path.exists() || worktree.locked {
+                skipped += 1;
                 continue;
             }
-            if worktree.locked {
-                locked += 1;
+            let Some(activity_lock) = try_lock_change(&capsule)? else {
+                skipped += 1;
                 continue;
-            }
-
-            let activity_lock = match try_lock_change(&capsule)? {
-                LockAttempt::Acquired(lock) => lock,
-                LockAttempt::Busy => {
-                    busy += 1;
-                    continue;
-                }
             };
             locks.push(activity_lock);
+            candidates.push((record, expected_path));
+        }
 
-            let refreshed = self.worktrees()?;
+        let refreshed = self.worktrees()?;
+        let mut changes = Vec::new();
+        for (record, expected_path) in candidates {
             let Some(worktree) = managed_worktree(&refreshed, &record.id, &expected_path) else {
-                missing += 1;
+                skipped += 1;
                 continue;
             };
-            if worktree.prunable || !worktree.path.exists() {
-                missing += 1;
-                continue;
-            }
-            if worktree.locked {
-                locked += 1;
+            if worktree.prunable || !worktree.path.exists() || worktree.locked {
+                skipped += 1;
                 continue;
             }
             if self.branch_oid(&record.id)? != self.peel_commit_at(&worktree.path, "HEAD")? {
                 bail!("change branch '{}' does not match its worktree", record.id);
             }
             if self.is_dirty(&worktree.path)? {
-                dirty += 1;
+                skipped += 1;
                 continue;
             }
             changes.push((record.id, worktree.path.clone(), record.creation.base_oid));
@@ -537,30 +522,19 @@ impl Git {
 
         let mut integrated = Vec::new();
         let mut remaining = Vec::new();
-        let mut diverged_base = 0;
-        let mut rewritten_change = 0;
         for (id, path, creation_base_oid) in changes {
-            let resolved_base = self.peel_commit(&creation_base_oid).with_context(|| {
-                format!(
-                    "change '{id}' has invalid recorded creation base OID '{creation_base_oid}'"
-                )
-            })?;
-            if resolved_base != creation_base_oid {
-                bail!("change '{id}' has invalid recorded creation base OID '{creation_base_oid}'");
-            }
-            if !self
-                .is_ancestor(&creation_base_oid, &upstream_oid)
-                .with_context(|| {
-                    format!("failed to validate recorded creation base OID for change '{id}'")
+            if !self.is_full_commit(&creation_base_oid)
+                || !self
+                    .is_ancestor(&creation_base_oid, &upstream_oid)
+                    .with_context(|| {
+                        format!("failed to validate recorded creation base OID for change '{id}'")
+                    })?
+                || !self.is_ancestor(&creation_base_oid, &id).with_context(|| {
+                    format!("failed to validate recorded creation base topology for change '{id}'")
                 })?
+                || self.has_merge_history(&creation_base_oid, &id)?
             {
-                diverged_base += 1;
-                continue;
-            }
-            if !self.is_ancestor(&creation_base_oid, &id).with_context(|| {
-                format!("failed to validate recorded creation base topology for change '{id}'")
-            })? {
-                rewritten_change += 1;
+                skipped += 1;
                 continue;
             }
             if let Some(prepared) = self.prepare_sync_removal(&id, &upstream, &upstream_oid)? {
@@ -575,17 +549,11 @@ impl Git {
             self.remove(prepared)?;
         }
         let mut rebased = 0;
-        let mut conflicts = 0;
-        let mut merge_history = 0;
         for (id, path, creation_base_oid) in &remaining {
-            if self.has_merge_history(creation_base_oid, id)? {
-                merge_history += 1;
-                continue;
-            }
             if self.rebase_change(path, id, &upstream_oid, creation_base_oid)? {
                 rebased += 1;
             } else {
-                conflicts += 1;
+                skipped += 1;
             }
         }
         drop(locks);
@@ -593,24 +561,7 @@ impl Git {
         Ok(SyncResult {
             archived,
             rebased,
-            skipped: dirty
-                + conflicts
-                + busy
-                + locked
-                + missing
-                + other_base
-                + diverged_base
-                + rewritten_change
-                + merge_history,
-            conflicts,
-            dirty,
-            busy,
-            locked,
-            missing,
-            other_base,
-            diverged_base,
-            rewritten_change,
-            merge_history,
+            skipped,
         })
     }
 
@@ -842,7 +793,11 @@ impl Git {
             "ancestor"
         } else if self.same_tree(&expected_oid, upstream_oid)? {
             "same-tree"
-        } else if self.merge_adds_no_change(&expected_oid, upstream_oid)? {
+        } else if self.merge_adds_no_change(
+            &expected_oid,
+            upstream_oid,
+            Some(&record.creation.base_oid),
+        )? {
             "merge-equivalent"
         } else {
             return Ok(None);
@@ -1245,14 +1200,10 @@ impl Git {
             .removal_ref
             .as_deref()
             .context("the default branch cannot be removed as a linked worktree")?;
-        self.branch_integrated_with(branch, comparison)
-    }
-
-    fn branch_integrated_with(&self, branch: &str, comparison: &str) -> Result<bool> {
         if self.is_ancestor(branch, comparison)? || self.same_tree(branch, comparison)? {
             return Ok(true);
         }
-        self.merge_adds_no_change(branch, comparison)
+        self.merge_adds_no_change(branch, comparison, None)
     }
 
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
@@ -1351,15 +1302,25 @@ impl Git {
         self.predicate(&["diff", "--quiet", branch, base])
     }
 
-    fn merge_adds_no_change(&self, branch: &str, base: &str) -> Result<bool> {
-        let output = self.raw(&["merge-tree", "--write-tree", base, branch])?;
+    fn merge_adds_no_change(
+        &self,
+        branch: &str,
+        comparison: &str,
+        merge_base: Option<&str>,
+    ) -> Result<bool> {
+        let mut args = vec!["merge-tree", "--write-tree"];
+        if let Some(merge_base) = merge_base {
+            args.extend(["--merge-base", merge_base]);
+        }
+        args.extend([comparison, branch]);
+        let output = self.raw(&args)?;
         if !output.status.success() {
             return match output.status.code() {
                 Some(1) => Ok(false),
                 _ => {
                     check(
                         output,
-                        &["merge-tree", "--write-tree", "<base>", "<branch>"],
+                        &["merge-tree", "--write-tree", "<comparison>", "<branch>"],
                     )?;
                     unreachable!()
                 }
@@ -1370,7 +1331,7 @@ impl Git {
             .next()
             .context("git merge-tree did not return a tree")?
             .to_owned();
-        Ok(merged_tree == self.text(&["rev-parse", &format!("{base}^{{tree}}")])?)
+        Ok(merged_tree == self.text(&["rev-parse", &format!("{comparison}^{{tree}}")])?)
     }
 
     fn rollback_created_worktree(&self, path: &Path, branch: &str) -> Result<()> {

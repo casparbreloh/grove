@@ -263,29 +263,9 @@ impl<W: Write> Drop for PickerMode<'_, W> {
 
 fn sync(git: &Git) -> Result<()> {
     let result = git.sync()?;
-    let reasons = [
-        (result.conflicts, "conflict"),
-        (result.dirty, "dirty"),
-        (result.busy, "busy"),
-        (result.locked, "locked"),
-        (result.missing, "missing"),
-        (result.other_base, "other base"),
-        (result.diverged_base, "diverged base"),
-        (result.rewritten_change, "rewritten change"),
-        (result.merge_history, "merge history"),
-    ]
-    .into_iter()
-    .filter(|(count, _)| *count > 0)
-    .map(|(count, reason)| format!("{count} {reason}"))
-    .collect::<Vec<_>>();
-    let reasons = if reasons.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", reasons.join(", "))
-    };
     eprintln!(
-        "✓ Synced: {} archived, {} rebased, {} skipped{}",
-        result.archived, result.rebased, result.skipped, reasons
+        "✓ Synced: {} archived, {} rebased, {} skipped",
+        result.archived, result.rebased, result.skipped
     );
     Ok(())
 }

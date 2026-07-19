@@ -42,18 +42,20 @@ keys and press Enter to select. Ordinary, detached, and otherwise unmanaged Git
 worktrees are not included.
 
 `sync` is an explicit network operation that must run from the primary worktree
-and requires its current branch to have a configured upstream. It fetches and
-prunes that upstream's remote, without moving the local primary branch. Among
-clean active Changes recorded with the primary branch as their creation parent,
-it archives Changes already integrated upstream through the same safe
-archive-before-delete path and rebases the rest onto the fetched upstream.
-Rebase rewrites Change commits. Before integration detection or rebasing,
-Grove conservatively preserves and skips a Change if its recorded creation base
-is no longer in the Change's history. It also preserves rather than rebases
-non-integrated Changes whose work history contains a merge, and it aborts and
-skips a conflicting linear rebase. It also skips dirty or busy Changes
-(including Changes with an active Pi process), Git-locked or missing worktrees,
-and Changes created from another parent branch.
+and requires its current branch to have a configured upstream. It quietly
+fetches exactly the configured merge ref into that upstream-tracking ref; it
+does not fetch or prune unrelated refs, and it does not move the local primary
+branch. Among clean active Changes recorded with the primary branch as their
+creation parent, it archives Changes already integrated upstream through the
+same safe archive-before-delete path and rebases eligible linear Changes onto
+the fetched upstream. Rebase rewrites Change commits. Grove conservatively
+skips Changes whose creation base is absent from either fetched upstream or the
+Change tip, Changes with merge history, conflicting rebases, dirty or busy
+Changes (including Changes with an active Pi process), Git-locked or missing
+worktrees, and Changes created from another parent branch. Sync is a
+best-effort batch: skipped Changes remain untouched, while completed archives
+and rebases are not rolled back if a later operation fails. Its summary reports
+only archived, rebased, and skipped totals.
 
 `remove` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe removal accepts work integrated by merge, cherry-pick or

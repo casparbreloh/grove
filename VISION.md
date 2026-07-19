@@ -35,11 +35,13 @@ no daemon, PTY host, detach key, or multiplexer. `grove switch` starts Pi again
 against the same native session directory, which is the simpler persistence the
 product actually needs.
 
-`grove sync` explicitly fetches the primary branch's upstream while leaving the
-local primary branch in place. It archives clean integrated Changes, rebases
-other eligible clean Changes onto the fetched upstream, and conservatively
-skips Changes that cannot be synchronized safely. This is the local foundation
-for eventually shipping a Change.
+`grove sync` explicitly fetches exactly the primary branch's configured merge
+ref into its upstream-tracking ref while leaving the local primary branch and
+unrelated remote refs in place. It archives clean integrated Changes, rebases
+eligible clean linear Changes onto the fetched upstream, and conservatively
+skips Changes that cannot be synchronized safely. The batch is best-effort and
+may be partially completed if a later operation fails. This is the local
+foundation for eventually shipping a Change.
 
 ## Next: shipping a Change
 
