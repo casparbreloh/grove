@@ -4,21 +4,20 @@ const LINK_TYPE = "grove";
 const LINK_SCHEMA = 1;
 const NAMING_LIFECYCLES = new Set(["startup", "new", "fork"]);
 
-export default function grove(pi: any): void {
-  let currentSessionId: string | undefined;
-  let armedSessionId: string | undefined;
+export default function grove(pi, spawnProcess = spawn) {
+  let currentSessionId;
+  let armedSessionId;
 
-  pi.on("session_start", (event: any, ctx: any) => {
+  pi.on("session_start", (event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     currentSessionId = sessionId;
     armedSessionId = undefined;
-    if (!NAMING_LIFECYCLES.has(event.reason)) return;
 
     const changeId = process.env.GROVE_CHANGE_ID;
     if (!changeId) return;
 
     const linked = ctx.sessionManager.getEntries().some(
-      (entry: any) =>
+      (entry) =>
         entry.type === "custom" &&
         entry.customType === LINK_TYPE &&
         entry.data?.schema === LINK_SCHEMA &&
@@ -27,7 +26,7 @@ export default function grove(pi: any): void {
     if (!linked) {
       pi.appendEntry(LINK_TYPE, { schema: LINK_SCHEMA, changeId });
     }
-    if (!pi.getSessionName()) {
+    if (NAMING_LIFECYCLES.has(event.reason) && !pi.getSessionName()) {
       armedSessionId = sessionId;
     }
   });
@@ -37,7 +36,7 @@ export default function grove(pi: any): void {
     armedSessionId = undefined;
   });
 
-  pi.on("input", (event: any, ctx: any) => {
+  pi.on("input", (event, ctx) => {
     if (event.source !== "interactive") return { action: "continue" };
     const prompt = String(event.text ?? "").trim();
     const executable = process.env.GROVE_EXECUTABLE;
@@ -55,7 +54,7 @@ export default function grove(pi: any): void {
 
     armedSessionId = undefined;
     let stdout = "";
-    const child = spawn(
+    const child = spawnProcess(
       executable,
       ["__title", "--change", changeId, "--session", capturedSessionId],
       {
@@ -65,7 +64,7 @@ export default function grove(pi: any): void {
       },
     );
     child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    child.stdout.on("data", (chunk) => {
       stdout += chunk;
       if (stdout.length > 256) child.kill();
     });
@@ -91,7 +90,7 @@ export default function grove(pi: any): void {
     child.on("error", () => {});
     child.stdin.on("error", () => child.kill());
     child.stdin.end(prompt);
-    (child.stdout as any).unref?.();
+    child.stdout.unref?.();
     child.unref();
     return { action: "continue" };
   });

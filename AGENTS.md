@@ -30,7 +30,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 git diff --check
 ```
 
-Safe squash detection requires Git 2.38 or newer.
+Safe squash detection requires Git 2.38 or newer. The extension contract test
+requires Node.js, matching Pi's runtime.
 
 ## Testing
 

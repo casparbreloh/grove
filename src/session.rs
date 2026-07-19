@@ -47,13 +47,13 @@ impl Session {
                 sessions.display()
             )
         })?;
-        let extension = materialize_extension()?;
         let executable = env::current_exe().context("failed to locate the Grove executable")?;
         let change_id = self
             .capsule
             .file_name()
             .and_then(|name| name.to_str())
             .context("change capsule has no valid ID")?;
+        let extension = materialize_extension()?;
         let status = Command::new("pi")
             .arg("--session-dir")
             .arg(&sessions)
@@ -135,7 +135,7 @@ pub(crate) fn infer_title(
 }
 
 fn materialize_extension() -> Result<PathBuf> {
-    let temporary = temporary_path(&env::temp_dir(), "grove-pi-extension");
+    let temporary = temporary_path(&env::temp_dir(), "grove-pi-extension").with_extension("ts");
     let mut options = fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]

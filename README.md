@@ -43,9 +43,10 @@ worktrees are not included.
 
 `sync` is an explicit network operation that must run from the primary worktree
 and requires its current branch to have a configured upstream. It quietly
-fetches exactly the configured merge ref into that upstream-tracking ref; it
-does not fetch or prune unrelated refs, and it does not move the local primary
-branch. Among clean active Changes recorded with the primary branch as their
+fetches exactly the configured merge ref into that upstream-tracking ref, then
+fast-forwards the local primary branch to it; it does not fetch or prune
+unrelated refs and refuses divergent primary history or an unsafe worktree
+update. Among clean active Changes recorded with the primary branch as their
 creation parent, it archives Changes already integrated upstream through the
 same safe archive-before-delete path and rebases eligible linear Changes onto
 the fetched upstream. Rebase rewrites Change commits. Grove conservatively

@@ -285,6 +285,9 @@ impl Git {
                 &["config", "--get", &format!("branch.{primary_branch}.merge")],
             )
             .with_context(|| format!("primary branch '{primary_branch}' has no merge ref"))?;
+        if self.is_dirty(&primary.path)? {
+            bail!("primary worktree has uncommitted changes");
+        }
 
         let upstream_refspec = format!("+{merge_ref}:{upstream}");
         self.checked_at(
@@ -307,6 +310,34 @@ impl Git {
         let upstream_oid = self
             .peel_commit_at(&primary.path, &upstream)
             .with_context(|| format!("fetched upstream '{upstream}' is not a commit"))?;
+        let primary_ref = format!("refs/heads/{primary_branch}");
+        if self.symbolic_head_at(&primary.path)?.as_deref() != Some(&primary_ref)
+            || self.peel_commit_at(&primary.path, "HEAD")? != primary.head_oid
+        {
+            bail!("primary branch changed while fetching upstream");
+        }
+        if self.is_dirty(&primary.path)? {
+            bail!("primary worktree changed while fetching upstream");
+        }
+        if !self.is_ancestor(&primary.head_oid, &upstream_oid)? {
+            bail!("primary branch '{primary_branch}' cannot be fast-forwarded to '{upstream}'");
+        }
+        self.checked_at(
+            &primary.path,
+            &[
+                "merge",
+                "--quiet",
+                "--ff-only",
+                "--no-autostash",
+                &upstream_oid,
+            ],
+        )
+        .with_context(|| {
+            format!("failed to fast-forward primary branch '{primary_branch}' to '{upstream}'")
+        })?;
+        if self.peel_commit_at(&primary.path, "HEAD")? != upstream_oid {
+            bail!("primary branch changed while fast-forwarding to '{upstream}'");
+        }
 
         let repository = self.repository()?;
         let mut records = repository

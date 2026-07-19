@@ -1,6 +1,6 @@
 mod support;
 
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 use support::{TestChange, TestRepo};
 
@@ -369,6 +369,21 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
 }
 
 #[test]
+fn pi_extension_links_and_names_native_sessions() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new("node")
+        .arg(root.join("tests/support/pi-extension.mjs"))
+        .arg(root.join("src/pi-extension.ts"))
+        .output()
+        .expect("Node.js is required to test the Pi extension");
+    assert!(
+        output.status.success(),
+        "Pi extension contract failed:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let repo = TestRepo::new();
     let gate = repo.block_title_generator();
@@ -394,6 +409,19 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     repo.wait_for_agent_log("arg=<--system-prompt>");
     let log = repo.agent_log();
     assert!(log.contains("mode=interactive"), "{log}");
+    let arguments = log
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("arg=<")
+                .and_then(|argument| argument.strip_suffix('>'))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--extension" && pair[1].ends_with(".ts")),
+        "Pi extension path must retain its TypeScript suffix: {log}"
+    );
     assert!(
         log.contains(&format!(
             "cwd={}",
@@ -815,7 +843,8 @@ fn sync_fetches_exact_upstream_archives_and_rebases_safely() {
             ("Protected Refs Change", "rebased", "upstream"),
         ],
     );
-    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_ne!(fetched_upstream, stale_main);
+    assert_eq!(repo.git(["rev-parse", "main"]), fetched_upstream);
     assert_eq!(
         repo.git(["rev-parse", "refs/remotes/origin/main"]),
         fetched_upstream
@@ -925,14 +954,19 @@ fn sync_conservatively_preserves_unsafe_topology_and_lineage() {
     diverged.git_from(&publisher, ["reset", "--hard", &format!("{base}^")]);
     diverged.commit_file(&publisher, "replacement.txt", "replacement history\n");
     diverged.git_from(&publisher, ["push", "--force", "origin", "HEAD:main"]);
+    let fetched_upstream = diverged.git_from(&publisher, ["rev-parse", "main"]);
     let output = diverged.grove().arg("sync").output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(
-        &output,
-        &[("Diverged Upstream Change", "skipped", "creation base")],
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("cannot be fast-forwarded"),
+        "{output:?}"
     );
     assert_eq!(diverged.change_head(&change), tip);
     assert_eq!(diverged.git(["rev-parse", "main"]), base);
+    assert_eq!(
+        diverged.git(["rev-parse", "refs/remotes/origin/main"]),
+        fetched_upstream
+    );
 }
 
 #[test]
@@ -1032,6 +1066,38 @@ fn sync_validation_and_fetch_failures_happen_before_mutation() {
         assert_eq!(worktree_bytes(&change.path), worktree_before);
         assert_eq!(fs::read(record_path).unwrap(), record_before);
     }
+
+    {
+        let repo = TestRepo::new();
+        let publisher = repo.create_local_origin();
+        let stale_main = repo.git(["rev-parse", "main"]);
+        let stale_upstream = repo.git(["rev-parse", "refs/remotes/origin/main"]);
+        fs::write(
+            repo.path().join("README.md"),
+            "# Local uncommitted change\n",
+        )
+        .unwrap();
+        repo.commit_file(&publisher, "README.md", "# Conflicting upstream change\n");
+        repo.git_from(&publisher, ["push", "origin", "main"]);
+        repo.git(["config", "merge.autostash", "true"]);
+
+        let output = repo.grove().arg("sync").output().unwrap();
+
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            stderr(&output).contains("primary worktree has uncommitted changes"),
+            "{output:?}"
+        );
+        assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+        assert_eq!(
+            repo.git(["rev-parse", "refs/remotes/origin/main"]),
+            stale_upstream
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("README.md")).unwrap(),
+            "# Local uncommitted change\n"
+        );
+    }
 }
 
 #[test]
@@ -1075,7 +1141,8 @@ fn sync_aborts_conflicts_continues_rebases_and_skips_dirty_changes() {
         ],
     );
 
-    assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+    assert_ne!(fetched_upstream, stale_main);
+    assert_eq!(repo.git(["rev-parse", "main"]), fetched_upstream);
     assert_eq!(
         repo.git(["rev-parse", "refs/remotes/origin/main"]),
         fetched_upstream

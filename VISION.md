@@ -38,8 +38,8 @@ against the same native session directory, which is the simpler persistence the
 product actually needs.
 
 `grove sync` explicitly fetches exactly the primary branch's configured merge
-ref into its upstream-tracking ref while leaving the local primary branch and
-unrelated remote refs in place. It archives clean integrated Changes, rebases
+ref into its upstream-tracking ref, fast-forwards the local primary branch, and
+leaves unrelated remote refs in place. It archives clean integrated Changes, rebases
 eligible clean linear Changes onto the fetched upstream, and conservatively
 skips Changes that cannot be synchronized safely. The batch is best-effort and
 may be partially completed if a later operation fails. This is the local
