@@ -219,6 +219,41 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
 }
 
 #[test]
+fn new_requires_a_commit_backed_default_base() {
+    let repo = TestRepo::new();
+    let original = repo.git(["rev-parse", "main"]);
+    repo.git(["update-ref", "-d", "refs/heads/main"]);
+    let worktrees = repo.git(["worktree", "list", "--porcelain"]);
+
+    let output = repo
+        .grove()
+        .args(["new", "--shell"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    assert!(
+        stderr(&output).contains("create an initial commit or pass --from a commit"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(repo.change_capsules().is_empty());
+    assert_eq!(repo.git(["worktree", "list", "--porcelain"]), worktrees);
+
+    repo.grove()
+        .args(["new", "--shell", "--from", &original])
+        .assert()
+        .success();
+    let capsule = repo.change_capsules().pop().expect("created capsule");
+    assert_eq!(
+        repo.git_from(&repo.navigation(), ["rev-parse", "HEAD"]),
+        original
+    );
+    assert_eq!(repo.change_record(&capsule)["base_oid"], original);
+}
+
+#[test]
 fn id_capsules_record_bases_rollback_and_repository_isolation() {
     let repo = TestRepo::new();
     repo.remove_pi();

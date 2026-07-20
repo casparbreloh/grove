@@ -99,11 +99,19 @@ struct Lineage {
 
 impl Lineage {
     fn resolve_creation_base(git: &Git, source: Option<&str>) -> Result<Creation> {
-        let source = match source {
-            Some(source) => source.to_owned(),
-            None => git.default_branch()?,
+        let (source, default_base) = match source {
+            Some(source) => (source.to_owned(), false),
+            None => (git.default_branch()?, true),
         };
-        let base_oid = git.peel_commit(&source)?;
+        let base_oid = if default_base {
+            git.peel_commit(&source).with_context(|| {
+                format!(
+                    "cannot create a Change from default base '{source}': create an initial commit or pass --from a commit"
+                )
+            })?
+        } else {
+            git.peel_commit(&source)?
+        };
         let parent = if source == "@" {
             git.text(&["symbolic-ref", "--quiet", "--short", "HEAD"])
                 .ok()
