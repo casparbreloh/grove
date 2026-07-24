@@ -177,14 +177,13 @@ fn navigate_raw(
     rows: &[Row],
     rendered_lines: &mut usize,
 ) -> Result<Option<NavigatorAction>> {
-    let mut filter = String::new();
-    let mut selected = 1_usize;
-    redraw_navigator(output, main, rows, &filter, selected, rendered_lines)?;
+    let mut selected = 1;
+    redraw_navigator(output, main, rows, selected, rendered_lines)?;
     loop {
         let key = match event::read().context("read navigator input")? {
             Event::Key(key) => key,
             Event::Resize(_, _) => {
-                redraw_navigator(output, main, rows, &filter, selected, rendered_lines)?;
+                redraw_navigator(output, main, rows, selected, rendered_lines)?;
                 continue;
             }
             _ => continue,
@@ -192,32 +191,17 @@ fn navigate_raw(
         if key.kind == KeyEventKind::Release {
             continue;
         }
-        let matching = matching_rows(rows, &filter);
         let action = match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
             KeyCode::Esc => return Ok(None),
-            KeyCode::Enter => navigator_action(&matching, selected, false),
-            KeyCode::Tab => navigator_action(&matching, selected, true),
+            KeyCode::Enter => navigator_action(rows, selected, false),
+            KeyCode::Tab => navigator_action(rows, selected, true),
             KeyCode::Up => {
                 selected = selected.saturating_sub(1);
                 None
             }
             KeyCode::Down => {
-                selected = (selected + 1).min(matching.len() + 1);
-                None
-            }
-            KeyCode::Backspace => {
-                filter.pop();
-                selected = 1;
-                None
-            }
-            KeyCode::Char(character)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                filter.push(character);
-                selected = 1;
+                selected = (selected + 1).min(rows.len() + 1);
                 None
             }
             _ => continue,
@@ -225,19 +209,19 @@ fn navigate_raw(
         if let Some(action) = action {
             return Ok(Some(action));
         }
-        redraw_navigator(output, main, rows, &filter, selected, rendered_lines)?;
+        redraw_navigator(output, main, rows, selected, rendered_lines)?;
     }
 }
 
-fn navigator_action(rows: &[&Row], selected: usize, shell: bool) -> Option<NavigatorAction> {
+fn navigator_action(rows: &[Row], selected: usize, shell: bool) -> Option<NavigatorAction> {
     if selected == 0 {
         return Some(NavigatorAction::Main);
     }
     if let Some(row) = rows.get(selected - 1) {
         return Some(if shell {
-            NavigatorAction::Workspace((*row).clone())
+            NavigatorAction::Workspace(row.clone())
         } else {
-            NavigatorAction::Pi((*row).clone())
+            NavigatorAction::Pi(row.clone())
         });
     }
     Some(if shell {
@@ -245,13 +229,6 @@ fn navigator_action(rows: &[&Row], selected: usize, shell: bool) -> Option<Navig
     } else {
         NavigatorAction::NewPi
     })
-}
-
-fn matching_rows<'a>(rows: &'a [Row], filter: &str) -> Vec<&'a Row> {
-    let filter = filter.to_lowercase();
-    rows.iter()
-        .filter(|row| row.filter_title.to_lowercase().contains(&filter))
-        .collect()
 }
 
 fn navigator_dimensions() -> (usize, usize) {
@@ -274,13 +251,12 @@ fn redraw_navigator(
     output: &mut impl Write,
     main: &Row,
     rows: &[Row],
-    filter: &str,
     selected: usize,
     rendered_lines: &mut usize,
 ) -> Result<()> {
     clear_rendered(output, *rendered_lines)?;
     *rendered_lines = 0;
-    *rendered_lines = render_navigator(output, main, rows, filter, selected)?;
+    *rendered_lines = render_navigator(output, main, rows, selected)?;
     output.flush()?;
     Ok(())
 }
@@ -300,36 +276,17 @@ fn render_navigator(
     output: &mut impl Write,
     main: &Row,
     rows: &[Row],
-    filter: &str,
     selected: usize,
 ) -> Result<usize> {
     let (max_width, height) = navigator_dimensions();
-    if height < 9 {
-        bail!("interactive Change navigation requires at least 9 terminal rows");
+    if height < 6 {
+        bail!("interactive Change navigation requires at least 6 terminal rows");
     }
-    let matching = matching_rows(rows, filter);
-    let capacity = height - 8;
-    let change_selected = selected
-        .saturating_sub(1)
-        .min(matching.len().saturating_sub(1));
+    let capacity = height - 5;
+    let change_selected = selected.saturating_sub(1).min(rows.len().saturating_sub(1));
     let start = change_selected.saturating_sub(capacity.saturating_sub(1));
-    let shown = matching
-        .iter()
-        .skip(start)
-        .take(capacity)
-        .copied()
-        .collect::<Vec<_>>();
+    let shown = rows.iter().skip(start).take(capacity).collect::<Vec<_>>();
     let styled = navigator_styling();
-    let mut lines = 0;
-
-    writeln!(
-        output,
-        "{} {}\r",
-        dim("Filter:", styled),
-        fit_width(filter.to_owned(), Some(max_width.saturating_sub(8)))
-    )?;
-    writeln!(output, "\r")?;
-    lines += 2;
 
     let new_row = Row::new_change();
     let mut visible = Vec::with_capacity(shown.len() + 2);
@@ -340,31 +297,24 @@ fn render_navigator(
             .enumerate()
             .map(|(index, row)| (start + index + 1, *row)),
     );
-    visible.push((matching.len() + 1, &new_row));
+    visible.push((rows.len() + 1, &new_row));
     let layout_rows = visible.iter().map(|(_, row)| *row).collect::<Vec<_>>();
-    let layout = TableLayout::new(&layout_rows, max_width, 3);
-    writeln!(output, "{}\r", dim(&layout.header(), styled))?;
-    lines += 1;
+    let layout = TableLayout::new(&layout_rows, max_width, 2);
+    writeln!(output, "{}\r", bold(&layout.header(), styled))?;
     for (logical_index, row) in visible {
-        writeln!(
-            output,
-            "{}\r",
-            layout.navigator_row(row, logical_index == selected, styled)
-        )?;
-        lines += 1;
+        writeln!(output, "{}\r", layout.row(row, logical_index == selected))?;
     }
-    writeln!(output, "\r")?;
-    let footer = if selected == 0 {
-        "↑↓ move  enter shell  esc close"
+    let legend = if selected == 0 {
+        "  ↑↓ move  enter shell  esc close"
     } else {
-        "↑↓ move  enter agent  tab shell  esc close"
+        "  ↑↓ move  enter agent  tab shell  esc close"
     };
     writeln!(
         output,
         "{}\r",
-        dim(&fit_width(footer.to_owned(), Some(max_width)), styled)
+        dim(&fit_width(legend.to_owned(), Some(max_width)), styled)
     )?;
-    Ok(lines + 2)
+    Ok(layout_rows.len() + 2)
 }
 
 struct TableLayout {
@@ -418,19 +368,7 @@ impl TableLayout {
         header
     }
 
-    fn navigator_row(&self, row: &Row, selected: bool, styled: bool) -> String {
-        let selection = if selected { '›' } else { ' ' };
-        let current = if row.current { '@' } else { ' ' };
-        let (title, mut metadata) = self.title(row);
-        self.push_columns(&mut metadata, row_values(row));
-        format!(
-            "{selection}{current} {}{}",
-            bold(&title, selected && styled),
-            dim(&metadata, styled)
-        )
-    }
-
-    fn picker_row(&self, row: &Row, selected: bool) -> String {
+    fn row(&self, row: &Row, selected: bool) -> String {
         let (title, mut metadata) = self.title(row);
         self.push_columns(&mut metadata, row_values(row));
         format!("{} {title}{metadata}", if selected { '›' } else { ' ' })
@@ -445,7 +383,10 @@ impl TableLayout {
             .unwrap_or_default();
         let suffix_width = UnicodeWidthStr::width(suffix.as_str()).min(self.title_width);
         let title = fit_width(
-            row.filter_title.clone(),
+            row.title_label
+                .strip_suffix(&suffix)
+                .unwrap_or(&row.title_label)
+                .to_owned(),
             Some(self.title_width.saturating_sub(suffix_width)),
         );
         let used = UnicodeWidthStr::width(title.as_str()) + suffix_width;
@@ -551,11 +492,7 @@ fn render_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> Resu
     let layout = TableLayout::new(&rows, usize::from(columns.saturating_sub(1)), 2);
     writeln!(output, "{}\r", bold(&layout.header(), true))?;
     for (index, row) in rows.into_iter().enumerate() {
-        writeln!(
-            output,
-            "{}\r",
-            layout.picker_row(row, start + index == selected)
-        )?;
+        writeln!(output, "{}\r", layout.row(row, start + index == selected))?;
     }
     Ok(visible.len() + 1)
 }
@@ -716,10 +653,6 @@ fn change_rows(git: &Git) -> Result<Vec<Row>> {
             current: worktree.current,
             change_id: Some(worktree.id.clone()),
             worktree_path: worktree.path.clone(),
-            filter_title: worktree
-                .title
-                .clone()
-                .unwrap_or_else(|| "Untitled".to_owned()),
             title_label,
             base: worktree.base.clone(),
             changes,
@@ -741,7 +674,6 @@ fn main_row(git: &Git) -> Result<Row> {
         current: current == primary,
         change_id: None,
         worktree_path: primary.clone(),
-        filter_title: "Main".to_owned(),
         title_label: "Main".to_owned(),
         base: String::new(),
         changes: String::new(),
@@ -755,7 +687,6 @@ struct Row {
     current: bool,
     change_id: Option<String>,
     worktree_path: PathBuf,
-    filter_title: String,
     title_label: String,
     base: String,
     changes: String,
@@ -769,7 +700,6 @@ impl Row {
             current: false,
             change_id: None,
             worktree_path: PathBuf::new(),
-            filter_title: "New Change".to_owned(),
             title_label: "New Change".to_owned(),
             base: String::new(),
             changes: String::new(),
