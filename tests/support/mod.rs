@@ -261,7 +261,7 @@ impl TestRepo {
 
     pub fn navigator_in_short_pty(&self) -> Output {
         let mut command = self.sh_picker(&self.repo, "");
-        command.env("GROVE_TEST_ROWS", "8");
+        command.env("GROVE_TEST_ROWS", "4");
         self.run_pty(command, "Main", b"\x1b", "short Grove navigator")
     }
 

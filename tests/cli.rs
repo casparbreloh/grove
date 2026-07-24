@@ -634,20 +634,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
     assert!(!terminal.contains("Filter:"), "{terminal}");
     assert!(terminal.contains("› Main"), "{terminal}");
-    assert!(
-        terminal
-            .lines()
-            .any(|line| line.starts_with("  enter shell")),
-        "{terminal}"
-    );
-    let legend = terminal.find("  enter shell").expect("indented legend");
-    assert_eq!(
-        terminal[titled_new..legend].matches("\r\n").count(),
-        2,
-        "{terminal}"
-    );
-    assert!(!terminal.contains("enter agent"), "{terminal}");
-    assert!(!terminal.contains("tab shell"), "{terminal}");
+    assert_no_navigator_legend(&terminal);
     assert_no_sgr(&terminal);
     assert_inline_terminal_restored(&terminal);
 
@@ -656,11 +643,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
         repo.navigator_in_pty(repo.path(), "New Change", b"ignored text\x7f\x1b[B\x1b[B\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    assert!(terminal.contains("  enter agent · tab shell"), "{terminal}");
-    assert!(
-        !terminal.contains("↑↓ move") && !terminal.contains("esc close"),
-        "{terminal}"
-    );
+    assert_no_navigator_legend(&terminal);
     assert!(
         terminal.contains("\x1b[1m  Title"),
         "header is not bold: {terminal:?}"
@@ -669,7 +652,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
         !terminal.contains("\x1b[1mCapture Native Sessions"),
         "selected row became bold: {terminal:?}"
     );
-    assert_only_muted(&terminal, "enter");
+    assert!(!terminal.contains("\x1b[2m"), "{terminal:?}");
     assert_no_foreground_colors(&terminal);
     assert_eq!(
         repo.agent_log().matches("mode=interactive").count(),
@@ -701,7 +684,6 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
         let main = repo.navigator_without_color_in_pty(repo.path(), "New Change", input);
         assert!(main.status.success(), "{main:?}");
         assert_eq!(repo.navigation(), repo.path().canonicalize().unwrap());
-        assert!(stdout(&main).contains("enter shell"), "{:?}", stdout(&main));
         assert_eq!(
             repo.agent_log().matches("mode=interactive").count(),
             before_pi,
@@ -764,7 +746,6 @@ fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
     assert!(!terminal.contains(&full_path), "{terminal}");
     assert!(terminal.contains(&first.id), "{terminal}");
     assert!(terminal.contains(&second.id), "{terminal}");
-    assert!(terminal.contains("enter agent"), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
     assert_inline_terminal_restored(&terminal);
 
@@ -1581,20 +1562,35 @@ fn assert_inline_terminal_restored(terminal: &str) {
         !terminal.contains("\x1b[?1049l"),
         "left alternate screen: {terminal:?}"
     );
-    let legend = ["tab shell", "enter shell"]
-        .into_iter()
-        .filter_map(|text| terminal.rfind(text))
-        .max()
-        .expect("navigator legend");
+    let hidden = terminal.rfind("\x1b[?25l").expect("navigator hides cursor");
+    let shown = terminal
+        .rfind("\x1b[?25h")
+        .expect("navigator restores cursor");
     let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
         .into_iter()
         .filter_map(|sequence| terminal.rfind(sequence))
         .max()
         .expect("navigator clears its transient UI before exit");
     assert!(
-        legend < cleared,
+        hidden < cleared && cleared < shown,
         "navigator UI was not cleared before exit: {terminal:?}"
     );
+}
+
+fn assert_no_navigator_legend(terminal: &str) {
+    for text in [
+        "↑↓",
+        "enter shell",
+        "enter agent",
+        "tab shell",
+        "esc close",
+        "esc/ctrl-c",
+    ] {
+        assert!(
+            !terminal.contains(text),
+            "navigator rendered {text:?}: {terminal}"
+        );
+    }
 }
 
 fn sgr_parameters(terminal: &str) -> impl Iterator<Item = &str> {
@@ -1608,19 +1604,6 @@ fn assert_no_sgr(terminal: &str) {
     assert!(
         sgr_parameters(terminal).next().is_none(),
         "styling was not disabled: {terminal:?}"
-    );
-}
-
-fn assert_only_muted(terminal: &str, expected: &str) {
-    let muted = terminal
-        .split("\x1b[2m")
-        .skip(1)
-        .filter_map(|segment| segment.split_once("\x1b[0m").map(|(styled, _)| styled))
-        .collect::<Vec<_>>();
-    assert!(!muted.is_empty(), "nothing is muted: {terminal:?}");
-    assert!(
-        muted.iter().all(|styled| styled.contains(expected)),
-        "something other than {expected:?} is muted: {muted:?}"
     );
 }
 

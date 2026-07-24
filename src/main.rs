@@ -263,10 +263,10 @@ fn render_navigator(
     selected: usize,
 ) -> Result<usize> {
     let (max_width, height) = navigator_dimensions();
-    if height < 6 {
-        bail!("interactive Change navigation requires at least 6 terminal rows");
+    if height < 4 {
+        bail!("interactive Change navigation requires at least 4 terminal rows");
     }
-    let capacity = height - 5;
+    let capacity = height - 3;
     let change_selected = selected.saturating_sub(1).min(rows.len().saturating_sub(1));
     let start = change_selected.saturating_sub(capacity.saturating_sub(1));
     let shown = rows.iter().skip(start).take(capacity).collect::<Vec<_>>();
@@ -286,18 +286,7 @@ fn render_navigator(
     for (logical_index, row) in visible {
         writeln!(output, "{}\r", layout.row(row, logical_index == selected))?;
     }
-    writeln!(output, "\r")?;
-    let legend = if selected == 0 {
-        "  enter shell"
-    } else {
-        "  enter agent · tab shell"
-    };
-    writeln!(
-        output,
-        "{}\r",
-        dim(&fit_width(legend.to_owned(), Some(max_width)), styled)
-    )?;
-    Ok(layout_rows.len() + 3)
+    Ok(layout_rows.len() + 1)
 }
 
 struct TableLayout {
@@ -401,14 +390,6 @@ fn measured_width<'a>(rows: &'a [&Row], header: &str, value: impl Fn(&'a Row) ->
         .max()
         .unwrap_or(0)
         .max(UnicodeWidthStr::width(header))
-}
-
-fn dim(value: &str, enabled: bool) -> String {
-    if enabled {
-        format!("\x1b[2m{value}\x1b[0m")
-    } else {
-        value.to_owned()
-    }
 }
 
 fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
