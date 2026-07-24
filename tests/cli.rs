@@ -62,7 +62,7 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             &shell_repo.path().join("matching/subdirectory"),
             shell,
             "Navigate With Shell",
-            b"nAvIgAtE\t",
+            b"nAvIgAtE\x1b[B\t",
         );
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
@@ -112,7 +112,7 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             &shell_repo.path().join("main-only"),
             shell,
             "Navigate With Shell",
-            b"\t",
+            b"\x1b[B\t",
         );
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
@@ -459,7 +459,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     assert!(session_before.contains(r#""schema":1"#));
     assert!(session_before.contains(&format!(r#""changeId":"{id}""#)));
 
-    let resumed = repo.resume_pi_in_pty("Implement Native Session Titles", b"\r");
+    let resumed = repo.resume_pi_in_pty("Implement Native Session Titles", b"\x1b[B\r");
     assert!(resumed.status.success(), "{resumed:?}");
     assert_eq!(repo.agent_log().matches("mode=interactive").count(), 2);
     assert_eq!(repo.pi_session_files().len(), 1);
@@ -552,7 +552,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let locked_worktree = locked_capsule.join("workspace");
     assert!(locked_capsule.join(".activity.lock").is_file());
     assert!(!locked_capsule.join(".lock").exists());
-    let resumed = locked.resume_pi_in_pty("Untitled", b"\r");
+    let resumed = locked.resume_pi_in_pty("Untitled", b"\x1b[B\r");
     assert!(!resumed.status.success());
     assert!(
         stdout(&resumed).contains("already open"),
@@ -633,28 +633,34 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     }
     assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
     assert!(!terminal.contains("Filter:"), "{terminal}");
+    assert!(terminal.contains("› Main"), "{terminal}");
     assert!(
-        terminal.lines().any(|line| line.starts_with("  ↑↓ move")),
+        terminal
+            .lines()
+            .any(|line| line.starts_with("  enter shell")),
         "{terminal}"
     );
-    let legend = terminal.find("  ↑↓ move").expect("indented legend");
+    let legend = terminal.find("  enter shell").expect("indented legend");
     assert_eq!(
         terminal[titled_new..legend].matches("\r\n").count(),
         2,
         "{terminal}"
     );
-    assert!(terminal.contains("enter agent"), "{terminal}");
-    assert!(terminal.contains("tab shell"), "{terminal}");
+    assert!(!terminal.contains("enter agent"), "{terminal}");
+    assert!(!terminal.contains("tab shell"), "{terminal}");
     assert_no_sgr(&terminal);
     assert_inline_terminal_restored(&terminal);
 
     let before_pi = repo.agent_log().matches("mode=interactive").count();
-    let selected = repo.navigator_in_pty(repo.path(), "New Change", b"ignored text\x7f\x1b[B\r");
+    let selected =
+        repo.navigator_in_pty(repo.path(), "New Change", b"ignored text\x7f\x1b[B\x1b[B\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    for action in ["↑↓ move", "enter agent", "tab shell", "esc close"] {
-        assert!(terminal.contains(action), "{terminal}");
-    }
+    assert!(terminal.contains("  enter agent · tab shell"), "{terminal}");
+    assert!(
+        !terminal.contains("↑↓ move") && !terminal.contains("esc close"),
+        "{terminal}"
+    );
     assert!(
         terminal.contains("\x1b[1m  Title"),
         "header is not bold: {terminal:?}"
@@ -663,7 +669,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
         !terminal.contains("\x1b[1mCapture Native Sessions"),
         "selected row became bold: {terminal:?}"
     );
-    assert_only_muted(&terminal, "↑↓ move");
+    assert_only_muted(&terminal, "enter");
     assert_no_foreground_colors(&terminal);
     assert_eq!(
         repo.agent_log().matches("mode=interactive").count(),
@@ -681,7 +687,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     assert_inline_terminal_restored(&terminal);
 
     let before_pi = repo.agent_log().matches("mode=interactive").count();
-    let workspace = repo.navigator_in_pty(repo.path(), "New Change", b"\x1b[B\x1b[B\t");
+    let workspace = repo.navigator_in_pty(repo.path(), "New Change", b"\x1b[B\x1b[B\x1b[B\t");
     assert!(workspace.status.success(), "{workspace:?}");
     assert_eq!(repo.navigation(), changes[2].path.canonicalize().unwrap());
     assert_eq!(
@@ -758,7 +764,7 @@ fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
     assert!(!terminal.contains(&full_path), "{terminal}");
     assert!(terminal.contains(&first.id), "{terminal}");
     assert!(terminal.contains(&second.id), "{terminal}");
-    assert!(terminal.contains("↑↓ move"), "{terminal}");
+    assert!(terminal.contains("enter agent"), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
     assert_inline_terminal_restored(&terminal);
 
@@ -1575,14 +1581,18 @@ fn assert_inline_terminal_restored(terminal: &str) {
         !terminal.contains("\x1b[?1049l"),
         "left alternate screen: {terminal:?}"
     );
-    let footer = terminal.rfind("esc close").expect("navigator footer");
+    let legend = ["tab shell", "enter shell"]
+        .into_iter()
+        .filter_map(|text| terminal.rfind(text))
+        .max()
+        .expect("navigator legend");
     let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
         .into_iter()
         .filter_map(|sequence| terminal.rfind(sequence))
         .max()
         .expect("navigator clears its transient UI before exit");
     assert!(
-        footer < cleared,
+        legend < cleared,
         "navigator UI was not cleared before exit: {terminal:?}"
     );
 }

@@ -31,14 +31,16 @@ uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
 Bare `grove` opens a transient inline navigator. Main is pinned first and active
-Changes follow it. The arrow keys move the selection. Enter launches or natively
-resumes Pi for a Change, while Tab navigates the calling shell to it. Main
+Changes follow it. Main is selected initially and the arrow keys move the
+selection. Enter launches or natively resumes Pi for a Change, while Tab
+navigates the calling shell to it. Main
 navigates to the primary worktree with either key. Escape or Ctrl-C closes the
 navigator. Change creation remains explicit through `grove new`.
 
 The navigator uses the terminal's default foreground throughout, with a plain
 `›` selection marker and no selected-row emphasis. One blank line separates the
-rows from the concise muted key legend, which aligns with the Title column. The
+rows from the concise muted action hint, which aligns with the Title column and
+shows only `enter agent · tab shell` for a Change or `enter shell` for Main. The
 header remains bold. Styling honors `NO_COLOR` and `TERM=dumb`. Until naming succeeds, Grove
 shows `Untitled`; duplicate and untitled rows include a short opaque ID only to
 disambiguate them. Ordinary,

@@ -18,7 +18,7 @@ grove init fish|zsh
 
 The navigator is one ordered selection model:
 
-1. Main, pinned first;
+1. Main, pinned first and selected initially;
 2. active Changes.
 
 - Up and Down move the selection.
@@ -27,10 +27,9 @@ The navigator is one ordered selection model:
 - Enter or Tab on Main navigates the calling shell to Main.
 - Escape and Ctrl-C close the navigator.
 
-Change creation remains explicit through `grove new`. The agent is the primary
-action. The legend below the picker is contextual and concise: Change rows show
-`↑↓ move`, `enter agent`, `tab shell`, and `esc close`; Main shows `enter shell`
-instead of agent language.
+Change creation remains explicit through `grove new`. The hint below the picker
+is contextual and concise: Change rows show `enter agent · tab shell`; Main
+shows `enter shell`.
 
 `grove switch`, `grove list`, and every `--shell` option are removed without
 aliases or compatibility behavior.
@@ -42,7 +41,7 @@ aliases or compatibility behavior.
 - Separate the rows from the legend with exactly one blank line.
 - Use the terminal's default foreground for the header and every row.
 - Mark selection only with `›`; do not emphasize the selected row.
-- Mute only the legend and indent it to align with the Title column.
+- Mute only the action hint and indent it to align with the Title column.
 - Use no foreground-color palette and honor `NO_COLOR` and `TERM=dumb`.
 - Show Base, Changes, Base↕, and Path when width permits; drop secondary columns
   before truncating title/Change identity.

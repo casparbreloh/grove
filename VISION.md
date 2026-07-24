@@ -76,18 +76,18 @@ local facts such as creation base, changed lines, conflicts, divergence, and
 path. Narrow terminals remove secondary information before compromising Change
 identity.
 
-Main is pinned first as the base workspace and active Changes follow it. Arrow
-keys move the selection. The agent is the obvious primary action: Enter launches
-or natively resumes Pi for a selected Change, while Tab performs the secondary
-shell action. Main navigates to the primary worktree with either key. Change
+Main is pinned first as the base workspace, selected initially, and followed by
+active Changes. Arrow keys move the selection. The agent is the obvious primary
+action for a Change: Enter launches or natively resumes Pi, while Tab performs
+the secondary shell action. Main navigates to the primary worktree with either key. Change
 creation remains an explicit `grove new` operation.
 
 The navigator renders in the normal terminal flow rather than taking over an
 empty alternate screen and clears its transient region before returning. Its
 header and rows use the terminal's default foreground, selection is shown only
 with `›`, and the selected row receives no extra emphasis. One blank line
-separates the rows from the concise, muted, Title-aligned key legend. Styling must honor `NO_COLOR`
-and `TERM=dumb`.
+separates the rows from a concise, muted, Title-aligned hint containing only the
+contextual Enter and Tab actions. Styling must honor `NO_COLOR` and `TERM=dumb`.
 
 It is a selector and launcher, not a dashboard or replacement for Pi. It has no
 preview panes, tab system, transcript view, agent activity model, background
