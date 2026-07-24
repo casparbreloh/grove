@@ -38,12 +38,13 @@ requires Node.js, matching Pi's runtime.
 - For behavior changes, invoke the `tdd` skill when available. In every environment, observe RED at the compiled CLI seam, implement the smallest GREEN change, then refactor with the suite green.
 - Exercise the real binary against real disposable Git repositories. Do not mock Git.
 - Fake only the external `pi` executable; keep its native session shape and launch contract visible.
-- Keep a minimal, potent suite that describes the current pre-1.0 product. Fold changed behavior into the smallest coherent workflow, replace obsolete assertions, and do not accumulate tests per bug, helper, or historical regression.
+- Keep a minimal, potent suite that describes only the current pre-1.0 product. Fold changed behavior and enduring safety boundaries into the smallest coherent replacement workflows, replace obsolete tests and assertions, and do not retain regression or compatibility tests for removed behavior.
 - Assert user-visible output plus Git and filesystem state, not private call structure.
 
 ## Conventions
 
 - Use **Change**, **Change ID**, **Title**, and **Pi session** as defined in `CONTEXT.md`; do not reintroduce a semantic branch name or Grove session identity.
+- Treat feature replacements as clean breaks: remove superseded commands, options, code paths, and tests in the same change. Do not add deprecations, aliases, or backward-compatibility surfaces unless explicitly requested.
 - Keep `main.rs` thin and deepen `change.rs`, `git.rs`, or `session.rs` around their existing authority.
 - Let rustfmt and Clippy define mechanical Rust style.
 - Return contextual `Result`s for recoverable Git, filesystem, Pi, and process failures. Reserve panics for genuine invariants and tests.

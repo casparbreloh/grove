@@ -54,10 +54,6 @@ pub(crate) struct WorktreeView {
     pub(crate) current: bool,
 }
 
-pub(crate) struct Archive {
-    pub(crate) navigate_to: Option<PathBuf>,
-}
-
 pub(crate) struct SyncEntry {
     pub(crate) id: String,
     pub(crate) title: Option<String>,
@@ -77,7 +73,6 @@ pub(crate) struct PreparedArchive {
     id: String,
     capsule: PathBuf,
     primary: PathBuf,
-    current: PathBuf,
     expected_head_oid: String,
     target_oid: Option<String>,
     target_ref: Option<String>,
@@ -630,7 +625,6 @@ impl Git {
             .context("repository has no worktrees")?
             .path
             .clone();
-        let current = self.current_root()?;
         let (capsule, record) = self
             .repository()?
             .record(id)?
@@ -678,7 +672,6 @@ impl Git {
             id: id.to_owned(),
             capsule,
             primary,
-            current,
             expected_head_oid,
             target_oid,
             target_ref,
@@ -701,7 +694,6 @@ impl Git {
             .context("repository has no worktrees")?
             .path
             .clone();
-        let current = self.current_root()?;
         let (capsule, record) = self
             .repository()?
             .record(id)?
@@ -734,7 +726,6 @@ impl Git {
             id: id.to_owned(),
             capsule,
             primary,
-            current,
             expected_head_oid: head_oid.to_owned(),
             target_oid: Some(upstream_oid.to_owned()),
             target_ref: Some(upstream_ref.to_owned()),
@@ -748,7 +739,7 @@ impl Git {
         }))
     }
 
-    pub(crate) fn finish_archive(&self, prepared: PreparedArchive) -> Result<Archive> {
+    pub(crate) fn finish_archive(&self, prepared: PreparedArchive) -> Result<()> {
         self.validate_archive_state(&prepared)?;
         mark_closing(
             &prepared.capsule,
@@ -772,9 +763,7 @@ impl Git {
         }
         mark_archived(&prepared.capsule, &prepared.id)
             .context("Change worktree was removed, but its archive record did not close")?;
-        Ok(Archive {
-            navigate_to: (prepared.path == prepared.current).then_some(prepared.primary),
-        })
+        Ok(())
     }
 
     fn validate_archive_state(&self, prepared: &PreparedArchive) -> Result<()> {
