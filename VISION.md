@@ -69,35 +69,40 @@ best-effort and may be partially completed if a later operation fails.
 
 ## Phase 1: Grove as the navigator
 
-Bare `grove` becomes the primary interface. It is an interactive form of the
-same Git-backed inventory as `grove list`: adaptive to terminal width,
-information-dense, and visually quiet. Titles remain dominant while concise
-columns expose useful local facts such as creation base, changed lines,
-conflicts, divergence, and path. Narrow terminals remove secondary information
-before compromising Change identity.
+Bare `grove` becomes the primary and only inventory interface. It is an inline,
+transient, Git-backed navigator: adaptive to terminal width, information-dense,
+and visually quiet. Titles remain dominant while concise columns expose useful
+local facts such as creation base, changed lines, conflicts, divergence, and
+path. Narrow terminals remove secondary information before compromising Change
+identity.
 
-The navigator supports incremental title filtering and a small visible action
-vocabulary. Enter is reserved for activating the selected Change by launching
-or natively resuming Pi. Shell navigation, returning to Main, and shell-only
-creation use separate, visibly labeled shortcuts. From one screen a user can:
+Main is pinned first as the base workspace, active Changes fill the middle, and
+New Change is pinned last. Incremental case-insensitive title filtering is
+always active and accepts every printable character, including spaces; it
+filters only Changes while keeping Main and New Change available. Arrow keys
+move the selection. The agent is the obvious primary action: Enter launches or
+natively resumes Pi for a selected Change, while Tab performs the secondary
+shell action. Main navigates to the primary worktree with either key. On New
+Change, Enter creates and launches Pi while Tab creates for shell work.
 
-- launch or natively resume Pi for the selected Change;
-- navigate the calling shell to its workspace;
-- return to Main; or
-- create a new Change with the same dependable semantics as `grove new`, either
-  launching Pi or navigating into the new workspace for shell work.
+The navigator renders in the normal terminal flow rather than taking over an
+empty alternate screen, clears its transient region before returning, and uses
+blank lines for restrained grouping. Coloring remains minimal: normal titles,
+a bold selected title with a non-color marker, and muted filter chrome, headers,
+Git metadata, paths, and contextual key hints. Styling must honor `NO_COLOR` and
+`TERM=dumb`.
 
 It is a selector and launcher, not a dashboard or replacement for Pi. It has no
 preview panes, tab system, transcript view, agent activity model, background
-refresh, or implicit network queries. `grove list` remains the non-interactive
-snapshot of the same inventory for terminals and scripts.
+refresh, implicit network queries, separate `list` snapshot, or secondary
+action palette.
 
-This interface completely replaces `grove switch` and both uses of `--shell`.
-The `switch` command and the `new --shell` option are removed without aliases,
-migration paths, or compatibility surfaces. The navigator expresses shell
-navigation through its visible actions while the calling-shell wrapper remains
-the thin mechanism that performs it. Grove is pre-1.0 and should prefer the
-smaller final workflow over preserving obsolete commands or options.
+This interface completely replaces `grove switch`, `grove list`, and both uses
+of `--shell`. The commands and options are removed without aliases, migration
+paths, or compatibility surfaces. The navigator expresses shell navigation
+through its selected row while the calling-shell wrapper remains the thin
+mechanism that performs it. Grove is pre-1.0 and should prefer the smaller final
+workflow over preserving obsolete commands or options.
 
 Shell navigation should preserve an equivalent relative subdirectory when it
 exists in the destination and otherwise use the workspace root. Actions that

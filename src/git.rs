@@ -28,7 +28,6 @@ struct Worktree {
 }
 
 pub(crate) struct Status {
-    pub(crate) changed: bool,
     pub(crate) added: usize,
     pub(crate) deleted: usize,
     pub(crate) conflicts: usize,
@@ -1011,7 +1010,6 @@ impl Git {
             }
         }
         Ok(Status {
-            changed: !porcelain.is_empty(),
             added,
             deleted,
             conflicts,

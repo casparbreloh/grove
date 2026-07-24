@@ -13,12 +13,9 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 use crossterm::{
     QueueableCommand,
-    cursor::{Hide, MoveTo, MoveToColumn, MoveUp, Show},
+    cursor::{Hide, MoveToColumn, MoveUp, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{
-        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
-    },
+    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -47,8 +44,6 @@ enum Cmd {
         #[arg(long, value_name = "REF")]
         from: Option<String>,
     },
-    /// List Main and active Changes
-    List,
     /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
     Sync,
     /// Archive an active Change
@@ -87,7 +82,6 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         None => navigator(&Git::discover()?),
         Some(Cmd::New { from }) => new(&Git::discover()?, from.as_deref()),
-        Some(Cmd::List) => list(&Git::discover()?),
         Some(Cmd::Sync) => sync(&Git::discover()?),
         Some(Cmd::Archive { force }) => archive(&Git::discover()?, force),
         Some(Cmd::Init { shell }) => init(shell),
@@ -118,7 +112,6 @@ fn new(git: &Git, from: Option<&str>) -> Result<()> {
     Session::for_workspace(&path)?.attach()
 }
 
-#[derive(Clone)]
 enum NavigatorAction {
     Pi(Row),
     Workspace(Row),
@@ -128,8 +121,9 @@ enum NavigatorAction {
 }
 
 fn navigator(git: &Git) -> Result<()> {
-    let (rows, _) = change_rows(git)?;
-    let Some(action) = navigate_interactively(rows)? else {
+    let rows = change_rows(git)?;
+    let main = main_row(git)?;
+    let Some(action) = navigate_interactively(main, rows)? else {
         return Ok(());
     };
     match action {
@@ -161,28 +155,36 @@ fn navigator(git: &Git) -> Result<()> {
     }
 }
 
-fn navigate_interactively(rows: Vec<Row>) -> Result<Option<NavigatorAction>> {
+fn navigate_interactively(main: Row, rows: Vec<Row>) -> Result<Option<NavigatorAction>> {
     let stderr = std::io::stderr();
     if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
         bail!("interactive Change navigation requires a terminal");
     }
     let mut output = stderr.lock();
-    let mut mode = TerminalMode::enter(&mut output, true)?;
-    let action = navigate_raw(mode.output(), &rows);
-    mode.restore()?;
+    let mut mode = TerminalMode::enter(&mut output)?;
+    let mut rendered_lines = 0;
+    let action = navigate_raw(mode.output(), &main, &rows, &mut rendered_lines);
+    let cleared = clear_rendered(mode.output(), rendered_lines).context("clear navigator");
+    let restored = mode.restore();
+    cleared?;
+    restored?;
     action
 }
 
-fn navigate_raw(output: &mut impl Write, rows: &[Row]) -> Result<Option<NavigatorAction>> {
+fn navigate_raw(
+    output: &mut impl Write,
+    main: &Row,
+    rows: &[Row],
+    rendered_lines: &mut usize,
+) -> Result<Option<NavigatorAction>> {
     let mut filter = String::new();
-    let mut selected = 0_usize;
-    render_navigator(output, rows, &filter, selected)?;
-    output.flush()?;
+    let mut selected = 1_usize;
+    redraw_navigator(output, main, rows, &filter, selected, rendered_lines)?;
     loop {
         let key = match event::read().context("read navigator input")? {
             Event::Key(key) => key,
             Event::Resize(_, _) => {
-                redraw_navigator(output, rows, &filter, selected)?;
+                redraw_navigator(output, main, rows, &filter, selected, rendered_lines)?;
                 continue;
             }
             _ => continue,
@@ -193,31 +195,20 @@ fn navigate_raw(output: &mut impl Write, rows: &[Row]) -> Result<Option<Navigato
         let matching = matching_rows(rows, &filter);
         let action = match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
-            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(Some(NavigatorAction::NewPi));
-            }
-            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(Some(NavigatorAction::NewWorkspace));
-            }
             KeyCode::Esc => return Ok(None),
-            KeyCode::Home => return Ok(Some(NavigatorAction::Main)),
-            KeyCode::Enter => matching
-                .get(selected)
-                .map(|row| NavigatorAction::Pi((*row).clone())),
-            KeyCode::Tab => matching
-                .get(selected)
-                .map(|row| NavigatorAction::Workspace((*row).clone())),
+            KeyCode::Enter => navigator_action(&matching, selected, false),
+            KeyCode::Tab => navigator_action(&matching, selected, true),
             KeyCode::Up => {
                 selected = selected.saturating_sub(1);
                 None
             }
             KeyCode::Down => {
-                selected = (selected + 1).min(matching.len().saturating_sub(1));
+                selected = (selected + 1).min(matching.len() + 1);
                 None
             }
             KeyCode::Backspace => {
                 filter.pop();
-                selected = 0;
+                selected = 1;
                 None
             }
             KeyCode::Char(character)
@@ -226,7 +217,7 @@ fn navigate_raw(output: &mut impl Write, rows: &[Row]) -> Result<Option<Navigato
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 filter.push(character);
-                selected = 0;
+                selected = 1;
                 None
             }
             _ => continue,
@@ -234,8 +225,26 @@ fn navigate_raw(output: &mut impl Write, rows: &[Row]) -> Result<Option<Navigato
         if let Some(action) = action {
             return Ok(Some(action));
         }
-        redraw_navigator(output, rows, &filter, selected)?;
+        redraw_navigator(output, main, rows, &filter, selected, rendered_lines)?;
     }
+}
+
+fn navigator_action(rows: &[&Row], selected: usize, shell: bool) -> Option<NavigatorAction> {
+    if selected == 0 {
+        return Some(NavigatorAction::Main);
+    }
+    if let Some(row) = rows.get(selected - 1) {
+        return Some(if shell {
+            NavigatorAction::Workspace((*row).clone())
+        } else {
+            NavigatorAction::Pi((*row).clone())
+        });
+    }
+    Some(if shell {
+        NavigatorAction::NewWorkspace
+    } else {
+        NavigatorAction::NewPi
+    })
 }
 
 fn matching_rows<'a>(rows: &'a [Row], filter: &str) -> Vec<&'a Row> {
@@ -243,36 +252,6 @@ fn matching_rows<'a>(rows: &'a [Row], filter: &str) -> Vec<&'a Row> {
     rows.iter()
         .filter(|row| row.filter_title.to_lowercase().contains(&filter))
         .collect()
-}
-
-const NAVIGATOR_FOOTER: [&str; 6] = [
-    "Enter Pi",
-    "Tab Shell",
-    "Home Main",
-    "Ctrl-N New + Pi",
-    "Ctrl-T New + Shell",
-    "Esc/Ctrl-C Cancel",
-];
-
-fn navigator_footer(max_width: usize) -> Vec<String> {
-    let max_width = max_width.max(1);
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for label in NAVIGATOR_FOOTER {
-        let added_width = if line.is_empty() { 0 } else { 2 } + UnicodeWidthStr::width(label);
-        if !line.is_empty() && UnicodeWidthStr::width(line.as_str()) + added_width > max_width {
-            lines.push(line);
-            line = String::new();
-        }
-        if !line.is_empty() {
-            line.push_str("  ");
-        }
-        line.push_str(label);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
 }
 
 fn navigator_dimensions() -> (usize, usize) {
@@ -286,60 +265,226 @@ fn navigator_dimensions() -> (usize, usize) {
         .unwrap_or((79, 24))
 }
 
-fn render_navigator(
-    output: &mut impl Write,
-    rows: &[Row],
-    filter: &str,
-    selected: usize,
-) -> Result<()> {
-    let (max_width, height) = navigator_dimensions();
-    let matching = matching_rows(rows, filter);
-    let mut footer = navigator_footer(max_width);
-    let reserved = if matching.is_empty() { 3 } else { 4 };
-    footer.truncate(height.saturating_sub(reserved));
-    let capacity = if matching.is_empty() {
-        0
-    } else {
-        height.saturating_sub(footer.len() + 3).max(1)
-    };
-    let start = selected.saturating_sub(capacity.saturating_sub(1));
-    let shown = matching
-        .iter()
-        .skip(start)
-        .take(capacity)
-        .map(|row| (*row).clone())
-        .collect::<Vec<_>>();
-    let local_selected = selected
-        .saturating_sub(start)
-        .min(shown.len().saturating_sub(1));
-    print_rows(
-        &shown,
-        output,
-        true,
-        "\r\n",
-        (!shown.is_empty()).then_some(local_selected),
-    )?;
-    writeln!(
-        output,
-        "{}\r",
-        fit_width(format!("Filter: {filter}"), Some(max_width))
-    )?;
-    for line in &footer {
-        writeln!(output, "{}\r", fit_width(line.clone(), Some(max_width)))?;
-    }
-    Ok(())
+fn navigator_styling() -> bool {
+    std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+        && std::env::var_os("TERM").is_none_or(|value| value != "dumb")
 }
 
 fn redraw_navigator(
     output: &mut impl Write,
+    main: &Row,
     rows: &[Row],
     filter: &str,
     selected: usize,
+    rendered_lines: &mut usize,
 ) -> Result<()> {
-    output.queue(MoveTo(0, 0))?.queue(Clear(ClearType::All))?;
-    render_navigator(output, rows, filter, selected)?;
+    clear_rendered(output, *rendered_lines)?;
+    *rendered_lines = 0;
+    *rendered_lines = render_navigator(output, main, rows, filter, selected)?;
     output.flush()?;
     Ok(())
+}
+
+fn clear_rendered(output: &mut impl Write, rendered_lines: usize) -> std::io::Result<()> {
+    if rendered_lines > 0 {
+        output
+            .queue(MoveUp(u16::try_from(rendered_lines).unwrap_or(u16::MAX)))?
+            .queue(MoveToColumn(0))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .flush()?;
+    }
+    Ok(())
+}
+
+fn render_navigator(
+    output: &mut impl Write,
+    main: &Row,
+    rows: &[Row],
+    filter: &str,
+    selected: usize,
+) -> Result<usize> {
+    let (max_width, height) = navigator_dimensions();
+    if height < 9 {
+        bail!("interactive Change navigation requires at least 9 terminal rows");
+    }
+    let matching = matching_rows(rows, filter);
+    let capacity = height - 8;
+    let change_selected = selected
+        .saturating_sub(1)
+        .min(matching.len().saturating_sub(1));
+    let start = change_selected.saturating_sub(capacity.saturating_sub(1));
+    let shown = matching
+        .iter()
+        .skip(start)
+        .take(capacity)
+        .copied()
+        .collect::<Vec<_>>();
+    let styled = navigator_styling();
+    let mut lines = 0;
+
+    writeln!(
+        output,
+        "{} {}\r",
+        dim("Filter:", styled),
+        fit_width(filter.to_owned(), Some(max_width.saturating_sub(8)))
+    )?;
+    writeln!(output, "\r")?;
+    lines += 2;
+
+    let new_row = Row::new_change();
+    let mut visible = Vec::with_capacity(shown.len() + 2);
+    visible.push((0, main));
+    visible.extend(
+        shown
+            .iter()
+            .enumerate()
+            .map(|(index, row)| (start + index + 1, *row)),
+    );
+    visible.push((matching.len() + 1, &new_row));
+    let layout_rows = visible.iter().map(|(_, row)| *row).collect::<Vec<_>>();
+    let layout = TableLayout::new(&layout_rows, max_width, 3);
+    writeln!(output, "{}\r", dim(&layout.header(), styled))?;
+    lines += 1;
+    for (logical_index, row) in visible {
+        writeln!(
+            output,
+            "{}\r",
+            layout.navigator_row(row, logical_index == selected, styled)
+        )?;
+        lines += 1;
+    }
+    writeln!(output, "\r")?;
+    let footer = if selected == 0 {
+        "↑↓ move  enter shell  esc close"
+    } else {
+        "↑↓ move  enter agent  tab shell  esc close"
+    };
+    writeln!(
+        output,
+        "{}\r",
+        dim(&fit_width(footer.to_owned(), Some(max_width)), styled)
+    )?;
+    Ok(lines + 2)
+}
+
+struct TableLayout {
+    leading_width: usize,
+    title_width: usize,
+    column_widths: [usize; 4],
+    columns: usize,
+}
+
+impl TableLayout {
+    fn new(rows: &[&Row], max_width: usize, leading_width: usize) -> Self {
+        let mut title_width = measured_width(rows, "Title", |row| &row.title_label);
+        let column_widths = [
+            measured_width(rows, "Base", |row| &row.base),
+            measured_width(rows, "Changes", |row| &row.changes),
+            measured_width(rows, "Base↕", |row| &row.divergence),
+            measured_width(rows, "Path", |row| &row.path),
+        ];
+        let mut columns = column_widths.len();
+        while columns > 0
+            && leading_width
+                + title_width
+                + column_widths[..columns]
+                    .iter()
+                    .map(|width| width + 2)
+                    .sum::<usize>()
+                > max_width
+        {
+            columns -= 1;
+        }
+        let secondary_width = column_widths[..columns]
+            .iter()
+            .map(|width| width + 2)
+            .sum::<usize>();
+        title_width = title_width.min(max_width.saturating_sub(leading_width + secondary_width));
+        Self {
+            leading_width,
+            title_width,
+            column_widths,
+            columns,
+        }
+    }
+
+    fn header(&self) -> String {
+        let mut header = format!(
+            "{}{}",
+            " ".repeat(self.leading_width),
+            padded("Title", self.title_width)
+        );
+        self.push_columns(&mut header, ["Base", "Changes", "Base↕", "Path"]);
+        header
+    }
+
+    fn navigator_row(&self, row: &Row, selected: bool, styled: bool) -> String {
+        let selection = if selected { '›' } else { ' ' };
+        let current = if row.current { '@' } else { ' ' };
+        let (title, mut metadata) = self.title(row);
+        self.push_columns(&mut metadata, row_values(row));
+        format!(
+            "{selection}{current} {}{}",
+            bold(&title, selected && styled),
+            dim(&metadata, styled)
+        )
+    }
+
+    fn picker_row(&self, row: &Row, selected: bool) -> String {
+        let (title, mut metadata) = self.title(row);
+        self.push_columns(&mut metadata, row_values(row));
+        format!("{} {title}{metadata}", if selected { '›' } else { ' ' })
+    }
+
+    fn title(&self, row: &Row) -> (String, String) {
+        let suffix = row
+            .change_id
+            .as_deref()
+            .map(|id| format!(" · {id}"))
+            .filter(|suffix| row.title_label.ends_with(suffix))
+            .unwrap_or_default();
+        let suffix_width = UnicodeWidthStr::width(suffix.as_str()).min(self.title_width);
+        let title = fit_width(
+            row.filter_title.clone(),
+            Some(self.title_width.saturating_sub(suffix_width)),
+        );
+        let used = UnicodeWidthStr::width(title.as_str()) + suffix_width;
+        let metadata = format!(
+            "{}{}",
+            fit_width(suffix, Some(suffix_width)),
+            " ".repeat(self.title_width.saturating_sub(used))
+        );
+        (title, metadata)
+    }
+
+    fn push_columns<'a>(&self, line: &mut String, values: impl IntoIterator<Item = &'a str>) {
+        for (index, value) in values.into_iter().take(self.columns).enumerate() {
+            line.push_str("  ");
+            line.push_str(&padded(value, self.column_widths[index]));
+        }
+    }
+}
+
+fn row_values(row: &Row) -> [&str; 4] {
+    [&row.base, &row.changes, &row.divergence, &row.path]
+}
+
+fn measured_width<'a>(rows: &'a [&Row], header: &str, value: impl Fn(&'a Row) -> &'a str) -> usize {
+    rows.iter()
+        .copied()
+        .map(value)
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0)
+        .max(UnicodeWidthStr::width(header))
+}
+
+fn dim(value: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[2m{value}\x1b[0m")
+    } else {
+        value.to_owned()
+    }
 }
 
 fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
@@ -355,19 +500,24 @@ fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
 }
 
 fn select(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
-    let mut mode = TerminalMode::enter(output, false)?;
+    let mut mode = TerminalMode::enter(output)?;
     let selection = select_raw(mode.output(), choices);
     mode.restore()?;
     selection
 }
 
 fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
-    print_picker(choices, 0, output)?;
+    let mut selected = 0;
+    let mut rendered_lines = render_picker(output, choices, selected)?;
     output.flush()?;
-    let mut selected: usize = 0;
     loop {
-        let Event::Key(key) = event::read().context("read picker input")? else {
-            continue;
+        let key = match event::read().context("read picker input")? {
+            Event::Key(key) => key,
+            Event::Resize(_, _) => {
+                redraw_picker(output, choices, selected, &mut rendered_lines)?;
+                continue;
+            }
+            _ => continue,
         };
         if key.kind == KeyEventKind::Release {
             continue;
@@ -383,51 +533,62 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
             _ => continue,
         };
         if next != selected {
-            redraw_picker(output, choices, next)?;
             selected = next;
+            redraw_picker(output, choices, selected, &mut rendered_lines)?;
         }
     }
 }
 
-fn print_picker(rows: &[Row], selected: usize, output: &mut impl Write) -> std::io::Result<()> {
-    print_rows(rows, output, true, "\r\n", Some(selected))
+fn render_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> Result<usize> {
+    let (columns, height) = terminal::size().unwrap_or((80, 24));
+    if height < 3 {
+        bail!("interactive Change selection requires at least 3 terminal rows");
+    }
+    let capacity = usize::from(height - 2);
+    let start = selected.saturating_sub(capacity.saturating_sub(1));
+    let visible = &rows[start..rows.len().min(start + capacity)];
+    let rows = visible.iter().collect::<Vec<_>>();
+    let layout = TableLayout::new(&rows, usize::from(columns.saturating_sub(1)), 2);
+    writeln!(output, "{}\r", bold(&layout.header(), true))?;
+    for (index, row) in rows.into_iter().enumerate() {
+        writeln!(
+            output,
+            "{}\r",
+            layout.picker_row(row, start + index == selected)
+        )?;
+    }
+    Ok(visible.len() + 1)
 }
 
-fn redraw_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> std::io::Result<()> {
-    let distance = u16::try_from(rows.len() + 1).unwrap_or(u16::MAX);
-    output
-        .queue(MoveUp(distance))?
-        .queue(MoveToColumn(0))?
-        .queue(Clear(ClearType::FromCursorDown))?;
-    print_picker(rows, selected, output)?;
-    output.flush()
+fn redraw_picker(
+    output: &mut impl Write,
+    rows: &[Row],
+    selected: usize,
+    rendered_lines: &mut usize,
+) -> Result<()> {
+    clear_rendered(output, *rendered_lines)?;
+    *rendered_lines = 0;
+    *rendered_lines = render_picker(output, rows, selected)?;
+    output.flush()?;
+    Ok(())
 }
 
 struct TerminalMode<'a, W: Write> {
     output: &'a mut W,
-    alternate_screen: bool,
     active: bool,
 }
 
 impl<'a, W: Write> TerminalMode<'a, W> {
-    fn enter(output: &'a mut W, alternate_screen: bool) -> Result<Self> {
+    fn enter(output: &'a mut W) -> Result<Self> {
         enable_raw_mode().context("enable raw mode for terminal selection")?;
         let mode = Self {
             output,
-            alternate_screen,
             active: true,
         };
-        let opened = if alternate_screen {
-            mode.output
-                .queue(EnterAlternateScreen)
-                .and_then(|output| output.queue(Hide))
-                .and_then(|output| output.queue(Clear(ClearType::All)))
-                .and_then(|output| output.queue(MoveTo(0, 0)))
-                .and_then(|output| output.flush())
-        } else {
-            mode.output.queue(Hide).and_then(|output| output.flush())
-        };
-        opened.context("open terminal selection")?;
+        mode.output
+            .queue(Hide)
+            .and_then(|output| output.flush())
+            .context("open terminal selection")?;
         Ok(mode)
     }
 
@@ -445,11 +606,8 @@ impl<'a, W: Write> TerminalMode<'a, W> {
     }
 
     fn restore_screen(&mut self) -> Result<()> {
-        self.output.queue(Show)?;
-        if self.alternate_screen {
-            self.output.queue(LeaveAlternateScreen)?;
-        }
         self.output
+            .queue(Show)?
             .flush()
             .context("restore screen after terminal selection")
     }
@@ -533,34 +691,16 @@ fn sync(git: &Git) -> Result<()> {
     Ok(())
 }
 
-fn list(git: &Git) -> Result<()> {
-    let (mut rows, changed) = change_rows(git)?;
-    let changes = rows.len();
-    rows.insert(0, main_row(git)?);
-    let stdout = std::io::stdout();
-    let terminal = stdout.is_terminal();
-    let mut output = stdout.lock();
-    print_rows(&rows, &mut output, terminal, "\n", None)?;
-    output.flush()?;
-    eprint!("\n○ Showing {changes} changes");
-    if changed > 0 {
-        eprint!(", {changed} with changes");
-    }
-    eprintln!();
-    Ok(())
-}
-
-fn change_rows(git: &Git) -> Result<(Vec<Row>, usize)> {
+fn change_rows(git: &Git) -> Result<Vec<Row>> {
     let worktrees = git.inventory()?;
     let current = git.current_path()?;
-    let mut title_counts = HashMap::from([("Main", 1_usize)]);
+    let mut title_counts = HashMap::from([("Main", 1_usize), ("New Change", 1)]);
     for worktree in &worktrees {
         if let Some(title) = &worktree.title {
             *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
         }
     }
     let mut rows = Vec::new();
-    let mut changed = 0;
     for worktree in &worktrees {
         let short_id = &worktree.id[..8];
         let title_label = match &worktree.title {
@@ -570,12 +710,7 @@ fn change_rows(git: &Git) -> Result<(Vec<Row>, usize)> {
         };
         let changes = match &worktree.state {
             WorktreeState::Missing => "missing".to_owned(),
-            WorktreeState::Present(status) => {
-                if status.changed {
-                    changed += 1;
-                }
-                format_changes(status)
-            }
+            WorktreeState::Present(status) => format_changes(status),
         };
         rows.push(Row {
             current: worktree.current,
@@ -596,7 +731,7 @@ fn change_rows(git: &Git) -> Result<(Vec<Row>, usize)> {
             path: display_path(&worktree.path, &current),
         });
     }
-    Ok((rows, changed))
+    Ok(rows)
 }
 
 fn main_row(git: &Git) -> Result<Row> {
@@ -628,6 +763,22 @@ struct Row {
     path: String,
 }
 
+impl Row {
+    fn new_change() -> Self {
+        Self {
+            current: false,
+            change_id: None,
+            worktree_path: PathBuf::new(),
+            filter_title: "New Change".to_owned(),
+            title_label: "New Change".to_owned(),
+            base: String::new(),
+            changes: String::new(),
+            divergence: String::new(),
+            path: String::new(),
+        }
+    }
+}
+
 fn format_changes(status: &git::Status) -> String {
     let mut parts = Vec::new();
     if status.added > 0 {
@@ -656,105 +807,14 @@ fn format_divergence(divergence: &git::Divergence) -> String {
     }
 }
 
-fn print_rows(
-    rows: &[Row],
-    output: &mut impl Write,
-    is_terminal: bool,
-    newline: &str,
-    selected: Option<usize>,
-) -> std::io::Result<()> {
-    let max_width = is_terminal
-        .then(|| terminal::size().ok())
-        .flatten()
-        .map(|(columns, _)| usize::from(columns.saturating_sub(1)));
-    let title_width = width(rows, "Title", |row| &row.title_label);
-    let column_widths = [
-        width(rows, "Base", |row| &row.base),
-        width(rows, "Changes", |row| &row.changes),
-        width(rows, "Base↕", |row| &row.divergence),
-        width(rows, "Path", |row| &row.path),
-    ];
-    let mut columns = column_widths.len();
-    if let Some(max_width) = max_width {
-        while columns > 0
-            && 2 + title_width
-                + column_widths[..columns]
-                    .iter()
-                    .map(|width| width + 2)
-                    .sum::<usize>()
-                > max_width
-        {
-            columns -= 1;
-        }
-    }
-    let secondary_width = column_widths[..columns]
-        .iter()
-        .map(|width| width + 2)
-        .sum::<usize>();
-    let title_width = max_width
-        .map(|max_width| title_width.min(max_width.saturating_sub(2 + secondary_width)))
-        .unwrap_or(title_width);
-
-    let mut header = format!("  {}", padded("Title", title_width));
-    for (index, label) in ["Base", "Changes", "Base↕", "Path"]
-        .into_iter()
-        .take(columns)
-        .enumerate()
-    {
-        header.push_str("  ");
-        header.push_str(&padded(label, column_widths[index]));
-    }
-    let header = fit_width(header, max_width);
-    write!(output, "{}{newline}", bold(&header, is_terminal))?;
-    for (index, row) in rows.iter().enumerate() {
-        let marker = if let Some(selected) = selected {
-            if index == selected { '›' } else { ' ' }
-        } else if row.current {
-            '@'
-        } else {
-            '+'
-        };
-        let values = [
-            row.base.as_str(),
-            row.changes.as_str(),
-            row.divergence.as_str(),
-            row.path.as_str(),
-        ];
-        let mut line = format!("{marker} {}", fitted_title(row, title_width));
-        for (index, value) in values.into_iter().take(columns).enumerate() {
-            line.push_str("  ");
-            line.push_str(&padded(value, column_widths[index]));
-        }
-        write!(output, "{}{newline}", fit_width(line, max_width))?;
-    }
-    Ok(())
-}
-
-fn fitted_title(row: &Row, width: usize) -> String {
-    let fitted = row
-        .change_id
-        .as_deref()
-        .map(|id| format!(" · {id}"))
-        .filter(|suffix| row.title_label.ends_with(suffix))
-        .and_then(|suffix| {
-            let suffix_width = UnicodeWidthStr::width(suffix.as_str());
-            (suffix_width <= width).then(|| {
-                let title = row.title_label.strip_suffix(&suffix).unwrap_or_default();
-                format!(
-                    "{}{}",
-                    fit_width(title.to_owned(), Some(width - suffix_width)),
-                    suffix
-                )
-            })
-        })
-        .unwrap_or_else(|| fit_width(row.title_label.clone(), Some(width)));
-    padded(&fitted, width)
-}
-
 fn padded(value: &str, width: usize) -> String {
+    let value = value
+        .chars()
+        .filter(|character| terminal_safe(*character))
+        .collect::<String>();
     format!(
         "{value}{}",
-        " ".repeat(width.saturating_sub(UnicodeWidthStr::width(value)))
+        " ".repeat(width.saturating_sub(UnicodeWidthStr::width(value.as_str())))
     )
 }
 
@@ -762,7 +822,7 @@ fn fit_width(mut value: String, max_width: Option<usize>) -> String {
     let Some(max_width) = max_width else {
         return value;
     };
-    value.retain(|character| UnicodeWidthChar::width(character).is_some());
+    value.retain(terminal_safe);
     if UnicodeWidthStr::width(value.as_str()) <= max_width {
         return value;
     }
@@ -784,21 +844,24 @@ fn fit_width(mut value: String, max_width: Option<usize>) -> String {
     fitted
 }
 
+fn terminal_safe(character: char) -> bool {
+    UnicodeWidthChar::width(character).is_some()
+        && !matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 fn bold(value: &str, enabled: bool) -> String {
     if enabled {
         format!("\x1b[1m{value}\x1b[0m")
     } else {
         value.to_owned()
     }
-}
-
-fn width<'a>(rows: &'a [Row], header: &str, value: impl Fn(&'a Row) -> &'a str) -> usize {
-    rows.iter()
-        .map(value)
-        .map(UnicodeWidthStr::width)
-        .max()
-        .unwrap_or(0)
-        .max(UnicodeWidthStr::width(header))
 }
 
 fn init(shell: Shell) -> Result<()> {
@@ -856,7 +919,7 @@ fn archive(git: &Git, force: bool) -> Result<()> {
         return Ok(());
     }
     let current = git.current_path()?;
-    let (rows, _) = change_rows(git)?;
+    let rows = change_rows(git)?;
     let selected = if let Some(current) = rows.iter().find(|row| row.current) {
         Some(current.clone())
     } else if current == git.primary_path()? {

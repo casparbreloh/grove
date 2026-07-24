@@ -262,12 +262,10 @@ impl TestRepo {
         )
     }
 
-    pub fn list_in_narrow_pty(&self) -> Output {
-        let mut command = self.sh_picker(&self.repo, "list");
-        command
-            .env("GROVE_TEST_COLUMNS", "48")
-            .output()
-            .expect("run narrow Grove list")
+    pub fn archive_in_short_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.sh_picker(&self.repo, "archive");
+        command.env("GROVE_TEST_ROWS", "5");
+        self.run_pty(command, ready, input, "short Grove archive")
     }
 
     pub fn resume_pi_in_pty(&self, ready: &str, input: &[u8]) -> Output {
@@ -276,10 +274,29 @@ impl TestRepo {
         self.run_pty(command, ready, input, "Grove navigator Pi resume")
     }
 
+    pub fn navigator_without_color_in_pty(
+        &self,
+        directory: &Path,
+        ready: &str,
+        input: &[u8],
+    ) -> Output {
+        let mut command = self.sh_picker(directory, "");
+        command.env("NO_COLOR", "1");
+        self.run_pty(command, ready, input, "unstyled Grove navigator")
+    }
+
     pub fn navigator_in_narrow_pty(&self, ready: &str, input: &[u8]) -> Output {
         let mut command = self.sh_picker(&self.repo, "");
         command.env("GROVE_TEST_COLUMNS", "48");
         self.run_pty(command, ready, input, "narrow Grove navigator")
+    }
+
+    pub fn navigator_in_short_pty(&self) -> Output {
+        let mut command = self.sh_picker(&self.repo, "");
+        command
+            .env("GROVE_TEST_ROWS", "8")
+            .output()
+            .expect("run short Grove navigator")
     }
 
     pub fn agent_log(&self) -> String {
@@ -431,7 +448,9 @@ impl TestRepo {
                 OsStr::new("/dev/null"),
                 OsStr::new("/bin/sh"),
                 OsStr::new("-c"),
-                OsStr::new("stty rows 40 cols \"${GROVE_TEST_COLUMNS:-120}\"; exec \"$@\""),
+                OsStr::new(
+                    "stty rows \"${GROVE_TEST_ROWS:-40}\" cols \"${GROVE_TEST_COLUMNS:-120}\"; exec \"$@\"",
+                ),
                 OsStr::new("grove-test-pty"),
             ])
             .arg(program);
