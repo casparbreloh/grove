@@ -166,7 +166,7 @@ fn navigate_raw(
     rows: &[Row],
     rendered_lines: &mut usize,
 ) -> Result<Option<NavigatorAction>> {
-    let mut selected = usize::from(!rows.is_empty());
+    let mut selected = 0;
     redraw_navigator(output, main, rows, selected, rendered_lines)?;
     loop {
         let key = match event::read().context("read navigator input")? {
@@ -288,9 +288,9 @@ fn render_navigator(
     }
     writeln!(output, "\r")?;
     let legend = if selected == 0 {
-        "  ↑↓ move  enter shell  esc close"
+        "  enter shell"
     } else {
-        "  ↑↓ move  enter agent  tab shell  esc close"
+        "  enter agent · tab shell"
     };
     writeln!(
         output,
