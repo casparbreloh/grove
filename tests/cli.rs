@@ -8,27 +8,9 @@ use support::{TestChange, TestRepo};
 fn command_and_shell_navigation_is_one_coherent_workflow() {
     let repo = TestRepo::new();
     let help = stdout(repo.grove().arg("--help").assert().success().get_output());
-    for command in ["new", "list", "sync", "archive", "init"] {
+    for command in ["new", "sync", "archive", "init"] {
         assert!(help.contains(command), "{help}");
     }
-    assert!(!help.contains("  switch"), "{help}");
-    let removed = repo
-        .grove()
-        .arg("switch")
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    assert!(stderr(&removed).contains("unrecognized subcommand 'switch'"));
-    let removed = repo
-        .grove()
-        .args(["new", "--shell"])
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    assert!(stderr(&removed).contains("unexpected argument '--shell'"));
-
     for (command, usage, flag) in [
         ("new", "Usage: grove new [OPTIONS]", "--from <REF>"),
         ("archive", "Usage: grove archive [OPTIONS]", "--force"),
@@ -43,10 +25,7 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
         let text = stdout(&output);
         assert!(text.contains(usage), "{text}");
         assert!(text.contains(flag), "{text}");
-        assert!(
-            !text.contains("--shell") && !text.contains("BRANCH"),
-            "{text}"
-        );
+        assert!(!text.contains("BRANCH"), "{text}");
         if command == "new" {
             assert!(
                 text.contains("additional, asynchronous provider request"),
@@ -110,7 +89,7 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             &change.path.join("matching/subdirectory"),
             shell,
             "Navigate With Shell",
-            b"\x1b[H",
+            b"\x1b[A\r",
         );
         assert!(output.status.success(), "{shell}: {output:?}");
         let terminal = stdout(&output);
@@ -144,28 +123,36 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             )),
             "{shell}: {terminal}"
         );
+
+        let before = shell_repo.change_capsules();
+        let before_pi = shell_repo.agent_log().matches("mode=interactive").count();
+        let output = shell_repo.navigator_from_shell_in_pty(
+            shell_repo.path(),
+            shell,
+            "New Change",
+            b"\x1b[B\t",
+        );
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let created = shell_repo
+            .change_capsules()
+            .into_iter()
+            .find(|capsule| !before.contains(capsule))
+            .expect("New Change Tab creates a Change");
+        let terminal = stdout(&output);
+        assert!(
+            terminal.contains(&format!(
+                "__PWD__{}",
+                created.join("workspace").canonicalize().unwrap().display()
+            )),
+            "{shell}: {terminal}"
+        );
+        assert_eq!(
+            shell_repo.agent_log().matches("mode=interactive").count(),
+            before_pi,
+            "New Change Tab must not open Pi"
+        );
+        assert_inline_terminal_restored(&terminal);
     }
-
-    let blocked = TestRepo::new();
-    let worktrees = blocked.git(["worktree", "list", "--porcelain"]);
-    let output =
-        blocked.navigator_without_directive_in_pty(blocked.path(), "Ctrl-T New + Shell", b"\x14");
-    assert!(!output.status.success(), "{output:?}");
-    assert!(stdout(&output).contains("shell integration is not loaded"));
-    assert!(blocked.change_capsules().is_empty());
-    assert_eq!(blocked.git(["worktree", "list", "--porcelain"]), worktrees);
-
-    let invalid = TestRepo::new();
-    let worktrees = invalid.git(["worktree", "list", "--porcelain"]);
-    let output = invalid.navigator_with_invalid_directive_in_pty(
-        invalid.path(),
-        "Ctrl-T New + Shell",
-        b"\x14",
-    );
-    assert!(!output.status.success(), "{output:?}");
-    assert!(stdout(&output).contains("shell navigation directive"));
-    assert!(invalid.change_capsules().is_empty());
-    assert_eq!(invalid.git(["worktree", "list", "--porcelain"]), worktrees);
 
     let change = repo.create_change(None);
     let output = repo
@@ -201,7 +188,6 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             .get_output(),
     );
     assert!(commands.contains("archive\t"), "{commands}");
-    assert!(!commands.contains("switch\t"), "{commands}");
     let flags = stdout(
         repo.grove()
             .env("COMPLETE", "fish")
@@ -211,7 +197,6 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             .get_output(),
     );
     assert!(flags.contains("--from"), "{flags}");
-    assert!(!flags.contains("--shell"), "{flags}");
 }
 
 #[test]
@@ -621,9 +606,10 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
 }
 
 #[test]
-fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
+fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
     let repo = TestRepo::new();
     let mut changes = [
+        repo.create_change(None),
         repo.create_change(None),
         repo.create_change(None),
         repo.create_change(None),
@@ -640,58 +626,73 @@ fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
     repo.set_change_title(&changes[0], "Capture Native Sessions");
     repo.set_change_title(&changes[1], "Capture Native Sessions");
     repo.set_change_title(&changes[2], "Deploy API");
+    repo.set_change_title(&changes[4], "New Change");
+    fs::write(changes[2].path.join("uncommitted.txt"), "change\n").unwrap();
+    repo.commit_file(repo.path(), "main-advance.txt", "main advance\n");
+
     let ordinary = repo.home().join("ordinary");
     repo.git(["branch", "ordinary"]);
     repo.git(["worktree", "add", ordinary.to_str().unwrap(), "ordinary"]);
     let detached = repo.home().join("detached");
     repo.git(["worktree", "add", "--detach", detached.to_str().unwrap()]);
 
-    let listed = repo
-        .grove()
-        .arg("list")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let table = stdout(&listed);
+    let unstyled = repo.navigator_without_color_in_pty(repo.path(), "New Change", b"\x1b");
+    assert!(unstyled.status.success(), "{unstyled:?}");
+    let terminal = stdout(&unstyled);
+    let main = terminal.find("Main").expect("Main row");
+    let first = terminal
+        .find("Capture Native Sessions")
+        .expect("first filtered Change row");
+    let deploy = terminal.find("Deploy API").expect("Change row");
+    let untitled = terminal.find("Untitled").expect("untitled Change row");
+    let titled_new = terminal
+        .find("New Change ·")
+        .expect("Change title colliding with pinned New Change");
+    let new = terminal.rfind("New Change").expect("pinned New Change row");
     assert!(
-        table.contains("Title") && !table.contains("Branch"),
-        "{table}"
+        main < first
+            && first < deploy
+            && deploy < untitled
+            && untitled < titled_new
+            && titled_new < new,
+        "{terminal}"
     );
-    assert!(table.contains(&format!("Capture Native Sessions · {}", changes[0].id)));
-    assert!(table.contains(&format!("Capture Native Sessions · {}", changes[1].id)));
-    assert!(table.contains("Deploy API"), "{table}");
-    assert!(
-        table.contains(&format!("Untitled · {}", changes[3].id)),
-        "{table}"
-    );
-    assert!(
-        !table.contains("ordinary") && !table.contains("detached"),
-        "{table}"
-    );
-    assert!(stderr(&listed).contains("Showing 4 changes"));
+    for change in &changes {
+        assert!(terminal.contains(&change.id), "{terminal}");
+    }
+    for metadata in ["Base", "Changes", "Base↕", "Path"] {
+        assert!(
+            terminal.contains(metadata),
+            "missing {metadata}: {terminal}"
+        );
+    }
+    assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
+    assert!(terminal.contains("@ Main"), "{terminal}");
+    assert_blank_line_between(&terminal, "Filter:", "Main");
+    assert_blank_line_between(&terminal, "New Change", "↑↓ move");
+    assert!(terminal.contains("enter agent"), "{terminal}");
+    assert!(terminal.contains("tab shell"), "{terminal}");
+    assert_no_sgr(&terminal);
+    assert_inline_terminal_restored(&terminal);
 
     let before_pi = repo.agent_log().matches("mode=interactive").count();
-    let selected =
-        repo.navigator_in_pty(repo.path(), "Capture Native Sessions", b"cApTuRe\x1b[B\r");
+    let selected = repo.navigator_in_pty(repo.path(), "New Change", b"cApTuRe x\x7f\x7f\x1b[B\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    assert!(terminal.contains("Filter: cApTuRe"), "{terminal}");
-    for action in [
-        "Enter Pi",
-        "Tab Shell",
-        "Home Main",
-        "Ctrl-N New + Pi",
-        "Ctrl-T New + Shell",
-        "Esc/Ctrl-C Cancel",
-    ] {
+    let plain = without_styles(&terminal);
+    assert!(plain.contains("Filter: cApTuRe x"), "{terminal}");
+    assert!(plain.contains("Filter: cApTuRe"), "{terminal}");
+    for action in ["↑↓ move", "enter agent", "tab shell", "esc close"] {
         assert!(terminal.contains(action), "{terminal}");
     }
     assert!(
-        terminal.contains("✓ Using Capture Native Sessions"),
-        "{terminal}"
+        terminal.contains("\x1b[1mCapture Native Sessions\x1b[0m"),
+        "selected title is not bold: {terminal:?}"
     );
-    assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
+    for muted in ["Filter:", "Title", "↓1", "↑↓ move"] {
+        assert_muted(&terminal, muted);
+    }
+    assert_no_foreground_colors(&terminal);
     assert_eq!(
         repo.agent_log().matches("mode=interactive").count(),
         before_pi + 1
@@ -705,10 +706,10 @@ fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
         )),
         "{last_launch}"
     );
-    assert_terminal_restored(&terminal);
+    assert_inline_terminal_restored(&terminal);
 
     let before_pi = repo.agent_log().matches("mode=interactive").count();
-    let workspace = repo.navigator_in_pty(repo.path(), "Deploy API", b"dEpLoY\t");
+    let workspace = repo.navigator_in_pty(repo.path(), "New Change", b"dEpLoY\t");
     assert!(workspace.status.success(), "{workspace:?}");
     assert_eq!(repo.navigation(), changes[2].path.canonicalize().unwrap());
     assert_eq!(
@@ -717,17 +718,31 @@ fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
         "Tab must only navigate"
     );
 
+    for input in [b"\x1b[A\r".as_slice(), b"does not match\x1b[A\t".as_slice()] {
+        let before_pi = repo.agent_log().matches("mode=interactive").count();
+        let main = repo.navigator_without_color_in_pty(repo.path(), "New Change", input);
+        assert!(main.status.success(), "{main:?}");
+        assert_eq!(repo.navigation(), repo.path().canonicalize().unwrap());
+        assert!(stdout(&main).contains("enter shell"), "{:?}", stdout(&main));
+        assert_eq!(
+            repo.agent_log().matches("mode=interactive").count(),
+            before_pi,
+            "Main must never launch Pi"
+        );
+        assert_inline_terminal_restored(&stdout(&main));
+    }
+
     let before = repo.navigation();
-    let unmanaged = repo.navigator_in_pty(&ordinary, "Deploy API", b"\x1b");
+    let unmanaged = repo.navigator_in_pty(&ordinary, "New Change", b"\x1b");
     assert!(unmanaged.status.success(), "{unmanaged:?}");
     assert!(!stdout(&unmanaged).contains("ordinary"));
     assert_eq!(repo.navigation(), before);
-    assert_terminal_restored(&stdout(&unmanaged));
+    assert_inline_terminal_restored(&stdout(&unmanaged));
     for input in [b"\x1b".as_slice(), b"\x03".as_slice()] {
-        let cancelled = repo.navigator_in_pty(repo.path(), "Deploy API", input);
+        let cancelled = repo.navigator_in_pty(repo.path(), "New Change", input);
         assert!(cancelled.status.success(), "{cancelled:?}");
         assert_eq!(repo.navigation(), before);
-        assert_terminal_restored(&stdout(&cancelled));
+        assert_inline_terminal_restored(&stdout(&cancelled));
     }
 
     let non_tty = repo.grove().assert().failure().get_output().clone();
@@ -741,17 +756,6 @@ fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
         .clone();
     assert!(stderr(&non_tty_archive).contains("interactive Change selection requires a terminal"));
 
-    let removable = TestRepo::new();
-    let change = removable.create_change(None);
-    removable.set_change_title(&change, "Archive Finished Change");
-    let cancelled = removable.archive_in_pty("Archive Finished Change", b"\x1b");
-    assert!(cancelled.status.success(), "{cancelled:?}");
-    assert!(change.path.exists());
-    let archived = removable.archive_in_pty("Archive Finished Change", b"\r");
-    assert!(archived.status.success(), "{archived:?}");
-    assert!(stdout(&archived).contains("✓ Archived Archive Finished Change"));
-    assert!(!change.path.exists());
-
     let corrupt = TestRepo::new();
     let change = corrupt.create_change(None);
     fs::write(
@@ -759,61 +763,44 @@ fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
         "not json\n",
     )
     .unwrap();
-    let error = corrupt
-        .grove()
-        .arg("list")
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
+    let error = corrupt.grove().assert().failure().get_output().clone();
     assert!(stderr(&error).contains("invalid change record"));
     assert!(change.path.exists());
+}
 
-    let empty = TestRepo::new();
-    let listed = empty
-        .grove()
-        .arg("list")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    assert!(stdout(&listed).contains("@ Main"));
-    assert!(stderr(&listed).contains("Showing 0 changes"));
-    for input in [b"\x1b".as_slice(), b"\x03".as_slice()] {
-        let cancelled = empty.navigator_in_pty(empty.path(), "Ctrl-N New + Pi", input);
-        assert!(cancelled.status.success(), "{cancelled:?}");
-        assert!(empty.change_capsules().is_empty());
-    }
-    let main = empty.navigator_in_pty(empty.path(), "Home Main", b"\x1b[H");
-    assert!(main.status.success(), "{main:?}");
-    assert_eq!(empty.navigation(), empty.path().canonicalize().unwrap());
-
+#[test]
+fn pinned_new_change_actions_create_only_after_their_required_validation() {
     let new_pi = TestRepo::new();
-    let created = new_pi.navigator_in_pty(new_pi.path(), "Ctrl-N New + Pi", b"\x0e");
+    let created = new_pi.navigator_in_pty(new_pi.path(), "New Change", b"does not match\x1b[B\r");
     assert!(created.status.success(), "{created:?}");
     assert_eq!(new_pi.change_capsules().len(), 1);
     assert_eq!(new_pi.agent_log().matches("mode=interactive").count(), 1);
     assert!(!new_pi.navigation_exists());
+    assert_inline_terminal_restored(&stdout(&created));
 
-    let new_workspace = TestRepo::new();
-    fs::create_dir(new_workspace.path().join("nested")).unwrap();
-    new_workspace.commit_file(new_workspace.path(), "nested/tracked.txt", "tracked\n");
-    let created = new_workspace.navigator_in_pty(
-        &new_workspace.path().join("nested"),
-        "Ctrl-T New + Shell",
-        b"\x14",
-    );
-    assert!(created.status.success(), "{created:?}");
-    let capsule = new_workspace.change_capsules().pop().unwrap();
-    assert_eq!(
-        new_workspace.navigation(),
-        capsule.join("workspace/nested").canonicalize().unwrap()
-    );
-    assert_eq!(new_workspace.agent_log(), "");
+    let blocked = TestRepo::new();
+    let worktrees = blocked.git(["worktree", "list", "--porcelain"]);
+    let output =
+        blocked.navigator_without_directive_in_pty(blocked.path(), "New Change", b"\x1b[B\t");
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("shell integration is not loaded"));
+    assert!(blocked.change_capsules().is_empty());
+    assert_eq!(blocked.git(["worktree", "list", "--porcelain"]), worktrees);
+    assert_inline_terminal_restored(&stdout(&output));
+
+    let invalid = TestRepo::new();
+    let worktrees = invalid.git(["worktree", "list", "--porcelain"]);
+    let output =
+        invalid.navigator_with_invalid_directive_in_pty(invalid.path(), "New Change", b"\x1b[B\t");
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("shell navigation directive"));
+    assert!(invalid.change_capsules().is_empty());
+    assert_eq!(invalid.git(["worktree", "list", "--porcelain"]), worktrees);
+    assert_inline_terminal_restored(&stdout(&output));
 }
 
 #[test]
-fn terminal_tables_stay_within_the_terminal_width() {
+fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
     let repo = TestRepo::new();
     let first = repo.create_change(None);
     let second = repo.create_change(None);
@@ -824,24 +811,23 @@ fn terminal_tables_stay_within_the_terminal_width() {
         first.path.strip_prefix(repo.home()).unwrap().display()
     );
 
-    let listed = repo.list_in_narrow_pty();
-    assert!(listed.status.success(), "{listed:?}");
-    let terminal = stdout(&listed);
-    assert!(!terminal.contains(&full_path), "{terminal}");
-
-    let redirected = repo.grove().arg("list").output().unwrap();
-    assert!(redirected.status.success(), "{redirected:?}");
-    assert!(stdout(&redirected).contains(&full_path));
-
-    let navigated = repo.navigator_in_narrow_pty("A Very Long Duplicate", b"\x1b[B\x1b");
+    let navigated = repo.navigator_in_narrow_pty("New Change", b"\x1b[B\x1b");
     assert!(navigated.status.success(), "{navigated:?}");
     let terminal = stdout(&navigated);
     assert!(!terminal.contains(&full_path), "{terminal}");
     assert!(terminal.contains(&first.id), "{terminal}");
     assert!(terminal.contains(&second.id), "{terminal}");
-    assert!(terminal.contains("Ctrl-T New + Shell"), "{terminal}");
+    assert!(terminal.contains("New Change"), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
-    assert_terminal_restored(&terminal);
+    assert_inline_terminal_restored(&terminal);
+
+    let short = repo.navigator_in_short_pty();
+    assert!(!short.status.success(), "{short:?}");
+    assert!(
+        stdout(&short).contains("requires at least 9 terminal rows"),
+        "{}",
+        stdout(&short)
+    );
 }
 
 #[test]
@@ -1483,6 +1469,35 @@ fn merge_resolution_only_content_is_never_mistaken_for_integration() {
 }
 
 #[test]
+fn archive_picker_cancels_or_archives_the_selected_change() {
+    let repo = TestRepo::new();
+    let mut changes = (0..4).map(|_| repo.create_change(None)).collect::<Vec<_>>();
+    changes.sort_by_key(|change| {
+        (
+            repo.change_record(change.path.parent().unwrap())["created_at"]
+                .as_u64()
+                .unwrap(),
+            change.id.clone(),
+        )
+    });
+    for (index, change) in changes.iter().enumerate() {
+        repo.set_change_title(change, &format!("Archive Change {}", index + 1));
+    }
+
+    let cancelled = repo.archive_in_pty("Archive Change 1", b"\x1b");
+    assert!(cancelled.status.success(), "{cancelled:?}");
+    assert!(changes.iter().all(|change| change.path.exists()));
+    assert_terminal_restored(&stdout(&cancelled));
+
+    let archived = repo.archive_in_short_pty("Archive Change 1", b"\x1b[B\x1b[B\x1b[B\r");
+    assert!(archived.status.success(), "{archived:?}");
+    assert!(stdout(&archived).contains("✓ Archived Archive Change 4"));
+    assert!(changes[..3].iter().all(|change| change.path.exists()));
+    assert!(!changes[3].path.exists());
+    assert_terminal_restored(&stdout(&archived));
+}
+
+#[test]
 fn archive_preserves_native_sessions_and_excludes_change() {
     let repo = TestRepo::new();
     let change = repo.create_change(Some("main"));
@@ -1510,15 +1525,10 @@ fn archive_preserves_native_sessions_and_excludes_change() {
     assert!(record["archived_at"].is_number());
     assert_eq!(record["closing"], serde_json::Value::Null);
     assert!(!capsule.join("artifacts").exists());
-    let listed = repo
-        .grove()
-        .arg("list")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    assert!(!stdout(&listed).contains("Archive Finished Change"));
-    assert!(stderr(&listed).contains("Showing 0 changes"));
+    let navigator = repo.navigator_without_color_in_pty(repo.path(), "New Change", b"\x1b");
+    assert!(navigator.status.success(), "{navigator:?}");
+    assert!(!stdout(&navigator).contains("Archive Finished Change"));
+    assert_inline_terminal_restored(&stdout(&navigator));
 }
 
 #[test]
@@ -1608,6 +1618,13 @@ fn stderr(output: &std::process::Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8")
 }
 
+fn without_styles(terminal: &str) -> String {
+    terminal
+        .replace("\x1b[0m", "")
+        .replace("\x1b[1m", "")
+        .replace("\x1b[2m", "")
+}
+
 fn assert_terminal_restored(terminal: &str) {
     let flags = terminal.split_whitespace().collect::<Vec<_>>();
     assert!(flags.contains(&"icanon"), "{terminal:?}");
@@ -1615,4 +1632,74 @@ fn assert_terminal_restored(terminal: &str) {
     let hidden = terminal.rfind("\x1b[?25l").expect("picker hides cursor");
     let shown = terminal.rfind("\x1b[?25h").expect("picker restores cursor");
     assert!(hidden < shown, "{terminal:?}");
+}
+
+fn assert_inline_terminal_restored(terminal: &str) {
+    assert_terminal_restored(terminal);
+    assert!(
+        !terminal.contains("\x1b[?1049h"),
+        "entered alternate screen: {terminal:?}"
+    );
+    assert!(
+        !terminal.contains("\x1b[?1049l"),
+        "left alternate screen: {terminal:?}"
+    );
+    let footer = terminal.rfind("esc close").expect("navigator footer");
+    let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
+        .into_iter()
+        .filter_map(|sequence| terminal.rfind(sequence))
+        .max()
+        .expect("navigator clears its transient UI before exit");
+    assert!(
+        footer < cleared,
+        "navigator UI was not cleared before exit: {terminal:?}"
+    );
+}
+
+fn assert_blank_line_between(terminal: &str, before: &str, after: &str) {
+    let start = terminal
+        .find(before)
+        .unwrap_or_else(|| panic!("missing {before:?}: {terminal}"));
+    let end = terminal[start..]
+        .find(after)
+        .map(|offset| start + offset)
+        .unwrap_or_else(|| panic!("missing {after:?} after {before:?}: {terminal}"));
+    assert!(terminal[start..end].contains("\r\n\r\n"), "{terminal}");
+}
+
+fn sgr_parameters(terminal: &str) -> impl Iterator<Item = &str> {
+    terminal.split("\x1b[").skip(1).filter_map(|escape| {
+        let end = escape.find(|character: char| !character.is_ascii_digit() && character != ';')?;
+        (escape.as_bytes()[end] == b'm').then_some(&escape[..end])
+    })
+}
+
+fn assert_no_sgr(terminal: &str) {
+    assert!(
+        sgr_parameters(terminal).next().is_none(),
+        "styling was not disabled: {terminal:?}"
+    );
+}
+
+fn assert_muted(terminal: &str, expected: &str) {
+    let muted = terminal.split("\x1b[2m").skip(1).any(|segment| {
+        segment
+            .split_once("\x1b[0m")
+            .is_some_and(|(styled, _)| styled.contains(expected))
+    });
+    assert!(muted, "{expected:?} is not muted: {terminal:?}");
+}
+
+fn assert_no_foreground_colors(terminal: &str) {
+    for parameters in sgr_parameters(terminal) {
+        for parameter in parameters
+            .split(';')
+            .filter_map(|value| value.parse::<u8>().ok())
+        {
+            assert!(
+                !matches!(parameter, 30..=39 | 90..=97),
+                "titles must not be globally colored: {terminal:?}"
+            );
+        }
+    }
 }
