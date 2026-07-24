@@ -175,3 +175,25 @@ secret copying, archived-source restoration, multi-agent orchestration,
 uploads, cloud sandboxes, and live process persistence remain outside Grove.
 The capsule and independent identities keep future integrations possible
 without committing the core product to them now.
+
+### Possible AI-native ideas, not a roadmap
+
+These are small directions to reconsider only after the navigator and shipping
+workflow prove what users actually need. Each would be an explicit command
+backed by a bounded Pi `--print` worker, never implicit background activity.
+
+- **Create from an issue or task.** Start a Change from an issue URL or concise
+  goal, let Pi inspect the repository and available issue context, and hand a
+  focused brief to the new interactive session.
+- **Address pull-request feedback.** Read unresolved review comments and failing
+  CI, implement and validate fixes, create Conventional Commits, and update the
+  existing pull request.
+- **Resolve synchronization conflicts.** In an explicitly requested mode, let
+  Pi resolve a blocked rebase with repository context and tests while retaining
+  Grove's ability to abort safely.
+- **Review a Change independently.** Use a fresh worker to report correctness,
+  test, security, scope, and commit-quality findings without silently changing
+  the work.
+- **Compare alternative Changes.** Evaluate implementations from a shared base,
+  run relevant tests or benchmarks, explain tradeoffs, and recommend one
+  approach without turning Grove into an agent scheduler.
