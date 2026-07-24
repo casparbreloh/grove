@@ -293,10 +293,8 @@ impl TestRepo {
 
     pub fn navigator_in_short_pty(&self) -> Output {
         let mut command = self.sh_picker(&self.repo, "");
-        command
-            .env("GROVE_TEST_ROWS", "8")
-            .output()
-            .expect("run short Grove navigator")
+        command.env("GROVE_TEST_ROWS", "8");
+        self.run_pty(command, "New Change", b"\x1b", "short Grove navigator")
     }
 
     pub fn agent_log(&self) -> String {

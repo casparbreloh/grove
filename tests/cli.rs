@@ -606,7 +606,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
 }
 
 #[test]
-fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
+fn bare_navigator_restores_the_plain_picker_and_dispatches_pinned_rows() {
     let repo = TestRepo::new();
     let mut changes = [
         repo.create_change(None),
@@ -642,7 +642,7 @@ fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
     let main = terminal.find("Main").expect("Main row");
     let first = terminal
         .find("Capture Native Sessions")
-        .expect("first filtered Change row");
+        .expect("first Change row");
     let deploy = terminal.find("Deploy API").expect("Change row");
     let untitled = terminal.find("Untitled").expect("untitled Change row");
     let titled_new = terminal
@@ -667,31 +667,38 @@ fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
         );
     }
     assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
-    assert!(terminal.contains("@ Main"), "{terminal}");
-    assert_blank_line_between(&terminal, "Filter:", "Main");
-    assert_blank_line_between(&terminal, "New Change", "↑↓ move");
+    assert!(!terminal.contains("Filter:"), "{terminal}");
+    assert!(
+        terminal.lines().any(|line| line.starts_with("  ↑↓ move")),
+        "{terminal}"
+    );
+    let legend = terminal.find("  ↑↓ move").expect("indented legend");
+    assert_eq!(
+        terminal[new..legend].matches("\r\n").count(),
+        1,
+        "{terminal}"
+    );
     assert!(terminal.contains("enter agent"), "{terminal}");
     assert!(terminal.contains("tab shell"), "{terminal}");
     assert_no_sgr(&terminal);
     assert_inline_terminal_restored(&terminal);
 
     let before_pi = repo.agent_log().matches("mode=interactive").count();
-    let selected = repo.navigator_in_pty(repo.path(), "New Change", b"cApTuRe x\x7f\x7f\x1b[B\r");
+    let selected = repo.navigator_in_pty(repo.path(), "New Change", b"ignored text\x7f\x1b[B\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    let plain = without_styles(&terminal);
-    assert!(plain.contains("Filter: cApTuRe x"), "{terminal}");
-    assert!(plain.contains("Filter: cApTuRe"), "{terminal}");
     for action in ["↑↓ move", "enter agent", "tab shell", "esc close"] {
         assert!(terminal.contains(action), "{terminal}");
     }
     assert!(
-        terminal.contains("\x1b[1mCapture Native Sessions\x1b[0m"),
-        "selected title is not bold: {terminal:?}"
+        terminal.contains("\x1b[1m  Title"),
+        "header is not bold: {terminal:?}"
     );
-    for muted in ["Filter:", "Title", "↓1", "↑↓ move"] {
-        assert_muted(&terminal, muted);
-    }
+    assert!(
+        !terminal.contains("\x1b[1mCapture Native Sessions"),
+        "selected row became bold: {terminal:?}"
+    );
+    assert_only_muted(&terminal, "↑↓ move");
     assert_no_foreground_colors(&terminal);
     assert_eq!(
         repo.agent_log().matches("mode=interactive").count(),
@@ -709,7 +716,7 @@ fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
     assert_inline_terminal_restored(&terminal);
 
     let before_pi = repo.agent_log().matches("mode=interactive").count();
-    let workspace = repo.navigator_in_pty(repo.path(), "New Change", b"dEpLoY\t");
+    let workspace = repo.navigator_in_pty(repo.path(), "New Change", b"\x1b[B\x1b[B\t");
     assert!(workspace.status.success(), "{workspace:?}");
     assert_eq!(repo.navigation(), changes[2].path.canonicalize().unwrap());
     assert_eq!(
@@ -718,7 +725,7 @@ fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
         "Tab must only navigate"
     );
 
-    for input in [b"\x1b[A\r".as_slice(), b"does not match\x1b[A\t".as_slice()] {
+    for input in [b"\x1b[A\r".as_slice(), b"\x1b[A\t".as_slice()] {
         let before_pi = repo.agent_log().matches("mode=interactive").count();
         let main = repo.navigator_without_color_in_pty(repo.path(), "New Change", input);
         assert!(main.status.success(), "{main:?}");
@@ -771,7 +778,7 @@ fn bare_navigator_renders_filters_and_dispatches_pinned_rows() {
 #[test]
 fn pinned_new_change_actions_create_only_after_their_required_validation() {
     let new_pi = TestRepo::new();
-    let created = new_pi.navigator_in_pty(new_pi.path(), "New Change", b"does not match\x1b[B\r");
+    let created = new_pi.navigator_in_pty(new_pi.path(), "New Change", b"\r");
     assert!(created.status.success(), "{created:?}");
     assert_eq!(new_pi.change_capsules().len(), 1);
     assert_eq!(new_pi.agent_log().matches("mode=interactive").count(), 1);
@@ -780,8 +787,7 @@ fn pinned_new_change_actions_create_only_after_their_required_validation() {
 
     let blocked = TestRepo::new();
     let worktrees = blocked.git(["worktree", "list", "--porcelain"]);
-    let output =
-        blocked.navigator_without_directive_in_pty(blocked.path(), "New Change", b"\x1b[B\t");
+    let output = blocked.navigator_without_directive_in_pty(blocked.path(), "New Change", b"\t");
     assert!(!output.status.success(), "{output:?}");
     assert!(stdout(&output).contains("shell integration is not loaded"));
     assert!(blocked.change_capsules().is_empty());
@@ -791,7 +797,7 @@ fn pinned_new_change_actions_create_only_after_their_required_validation() {
     let invalid = TestRepo::new();
     let worktrees = invalid.git(["worktree", "list", "--porcelain"]);
     let output =
-        invalid.navigator_with_invalid_directive_in_pty(invalid.path(), "New Change", b"\x1b[B\t");
+        invalid.navigator_with_invalid_directive_in_pty(invalid.path(), "New Change", b"\t");
     assert!(!output.status.success(), "{output:?}");
     assert!(stdout(&output).contains("shell navigation directive"));
     assert!(invalid.change_capsules().is_empty());
@@ -822,12 +828,9 @@ fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
     assert_inline_terminal_restored(&terminal);
 
     let short = repo.navigator_in_short_pty();
-    assert!(!short.status.success(), "{short:?}");
-    assert!(
-        stdout(&short).contains("requires at least 9 terminal rows"),
-        "{}",
-        stdout(&short)
-    );
+    assert!(short.status.success(), "{short:?}");
+    assert!(stdout(&short).contains("New Change"), "{}", stdout(&short));
+    assert_inline_terminal_restored(&stdout(&short));
 }
 
 #[test]
@@ -1618,13 +1621,6 @@ fn stderr(output: &std::process::Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8")
 }
 
-fn without_styles(terminal: &str) -> String {
-    terminal
-        .replace("\x1b[0m", "")
-        .replace("\x1b[1m", "")
-        .replace("\x1b[2m", "")
-}
-
 fn assert_terminal_restored(terminal: &str) {
     let flags = terminal.split_whitespace().collect::<Vec<_>>();
     assert!(flags.contains(&"icanon"), "{terminal:?}");
@@ -1656,17 +1652,6 @@ fn assert_inline_terminal_restored(terminal: &str) {
     );
 }
 
-fn assert_blank_line_between(terminal: &str, before: &str, after: &str) {
-    let start = terminal
-        .find(before)
-        .unwrap_or_else(|| panic!("missing {before:?}: {terminal}"));
-    let end = terminal[start..]
-        .find(after)
-        .map(|offset| start + offset)
-        .unwrap_or_else(|| panic!("missing {after:?} after {before:?}: {terminal}"));
-    assert!(terminal[start..end].contains("\r\n\r\n"), "{terminal}");
-}
-
 fn sgr_parameters(terminal: &str) -> impl Iterator<Item = &str> {
     terminal.split("\x1b[").skip(1).filter_map(|escape| {
         let end = escape.find(|character: char| !character.is_ascii_digit() && character != ';')?;
@@ -1681,13 +1666,17 @@ fn assert_no_sgr(terminal: &str) {
     );
 }
 
-fn assert_muted(terminal: &str, expected: &str) {
-    let muted = terminal.split("\x1b[2m").skip(1).any(|segment| {
-        segment
-            .split_once("\x1b[0m")
-            .is_some_and(|(styled, _)| styled.contains(expected))
-    });
-    assert!(muted, "{expected:?} is not muted: {terminal:?}");
+fn assert_only_muted(terminal: &str, expected: &str) {
+    let muted = terminal
+        .split("\x1b[2m")
+        .skip(1)
+        .filter_map(|segment| segment.split_once("\x1b[0m").map(|(styled, _)| styled))
+        .collect::<Vec<_>>();
+    assert!(!muted.is_empty(), "nothing is muted: {terminal:?}");
+    assert!(
+        muted.iter().all(|styled| styled.contains(expected)),
+        "something other than {expected:?} is muted: {muted:?}"
+    );
 }
 
 fn assert_no_foreground_colors(terminal: &str) {

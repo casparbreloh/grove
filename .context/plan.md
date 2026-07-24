@@ -19,12 +19,8 @@ grove init fish|zsh
 The navigator is one ordered selection model:
 
 1. Main, pinned first;
-2. active Changes matching the current title filter;
+2. active Changes;
 3. New Change, pinned last.
-
-Filtering is always active, case-insensitive, and accepts printable characters
-including spaces. Backspace edits it. Main and New Change remain available when
-no Change matches.
 
 - Up and Down move the selection.
 - Enter on a Change launches or natively resumes Pi.
@@ -34,9 +30,9 @@ no Change matches.
 - Tab on New Change validates shell support, creates a Change, and navigates.
 - Escape and Ctrl-C close the navigator.
 
-The agent is the primary action. The footer is contextual and concise: Change
-and New Change rows show `↑↓ move`, `enter agent`, `tab shell`, and `esc close`;
-Main shows `enter shell` instead of agent language.
+The agent is the primary action. The legend below the picker is contextual and
+concise: Change and New Change rows show `↑↓ move`, `enter agent`, `tab shell`,
+and `esc close`; Main shows `enter shell` instead of agent language.
 
 `grove switch`, `grove list`, and every `--shell` option are removed without
 aliases or compatibility behavior.
@@ -45,10 +41,10 @@ aliases or compatibility behavior.
 
 - Render transiently in the normal terminal flow, never the alternate screen.
 - Clear Grove's inline region before launching Pi, navigating, or cancelling.
-- Use blank lines between the filter, inventory, and footer.
-- Keep normal titles in the terminal's default foreground.
-- Bold only the selected title and retain the `›` marker.
-- Mute only the filter label, header, Git metadata, paths, and footer.
+- Keep the picker contiguous, with its legend directly below the rows.
+- Use the terminal's default foreground for the header and every row.
+- Mark selection only with `›`; do not emphasize the selected row.
+- Mute only the legend and indent it to align with the Title column.
 - Use no foreground-color palette and honor `NO_COLOR` and `TERM=dumb`.
 - Show Base, Changes, Base↕, and Path when width permits; drop secondary columns
   before truncating title/Change identity.
@@ -60,10 +56,10 @@ Shell-based creation validates the calling-shell directive before mutation.
 ## Tasks
 
 - [x] Replace the old full-screen key model with the ordered inline selector.
-- [x] Pin Main and New Change around filtered active Changes.
-- [x] Make filtering permanently active, including spaces and Backspace.
+- [x] Pin Main and New Change around active Changes.
+- [x] Keep selection arrow-only with no filter mode.
 - [x] Make Enter agent-primary and Tab the consistent shell alternative.
-- [x] Add restrained muted/bold styling with no-color support.
+- [x] Restore the plain picker styling and mute only its legend.
 - [x] Remove `grove list` and its obsolete tests/helpers/docs.
 - [x] Preserve rich adaptive Git facts and relative shell navigation.
 

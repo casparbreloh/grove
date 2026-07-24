@@ -31,20 +31,18 @@ uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
 Bare `grove` opens a transient inline navigator. Main is pinned first, active
-Changes appear in the middle, and New Change is pinned last. Typing filters
-Change titles by case-insensitive substring, including spaces; Backspace edits
-the filter and the arrow keys move the selection. Enter launches or natively
-resumes Pi for a Change, while Tab navigates the calling shell to it. Main
-navigates to the primary worktree with either key. On New Change, Enter creates
-and launches Pi while Tab creates for shell work. Escape or Ctrl-C closes the
-navigator.
+Changes appear in the middle, and New Change is pinned last. The arrow keys move
+the selection. Enter launches or natively resumes Pi for a Change, while Tab
+navigates the calling shell to it. Main navigates to the primary worktree with
+either key. On New Change, Enter creates and launches Pi while Tab creates for
+shell work. Escape or Ctrl-C closes the navigator.
 
-The agent is the obvious primary action. Titles therefore remain visually
-dominant, while the filter label, headers, Git metadata, paths, and concise
-contextual key hints are muted. The selected title is bold and marked with `›`;
-selection never depends on color alone. Styling honors `NO_COLOR` and
-`TERM=dumb`. Until naming succeeds, Grove shows `Untitled`; duplicate and
-untitled rows include a short opaque ID only to disambiguate them. Ordinary,
+The navigator uses the terminal's default foreground throughout, with a plain
+`›` selection marker and no selected-row emphasis. Only the concise key legend
+below the rows is muted and it aligns with the Title column. The header remains
+bold. Styling honors `NO_COLOR` and `TERM=dumb`. Until naming succeeds, Grove
+shows `Untitled`; duplicate and untitled rows include a short opaque ID only to
+disambiguate them. Ordinary,
 detached, and otherwise unmanaged Git worktrees are excluded. On narrow
 terminals secondary columns disappear from the right before Change identity is
 truncated.

@@ -77,20 +77,18 @@ path. Narrow terminals remove secondary information before compromising Change
 identity.
 
 Main is pinned first as the base workspace, active Changes fill the middle, and
-New Change is pinned last. Incremental case-insensitive title filtering is
-always active and accepts every printable character, including spaces; it
-filters only Changes while keeping Main and New Change available. Arrow keys
-move the selection. The agent is the obvious primary action: Enter launches or
-natively resumes Pi for a selected Change, while Tab performs the secondary
-shell action. Main navigates to the primary worktree with either key. On New
-Change, Enter creates and launches Pi while Tab creates for shell work.
+New Change is pinned last. Arrow keys move the selection. The agent is the
+obvious primary action: Enter launches or natively resumes Pi for a selected
+Change, while Tab performs the secondary shell action. Main navigates to the
+primary worktree with either key. On New Change, Enter creates and launches Pi
+while Tab creates for shell work.
 
 The navigator renders in the normal terminal flow rather than taking over an
-empty alternate screen, clears its transient region before returning, and uses
-blank lines for restrained grouping. Coloring remains minimal: normal titles,
-a bold selected title with a non-color marker, and muted filter chrome, headers,
-Git metadata, paths, and contextual key hints. Styling must honor `NO_COLOR` and
-`TERM=dumb`.
+empty alternate screen and clears its transient region before returning. Its
+header and rows use the terminal's default foreground, selection is shown only
+with `›`, and the selected row receives no extra emphasis. Only the concise,
+Title-aligned key legend below the rows is muted. Styling must honor `NO_COLOR`
+and `TERM=dumb`.
 
 It is a selector and launcher, not a dashboard or replacement for Pi. It has no
 preview panes, tab system, transcript view, agent activity model, background
