@@ -5,20 +5,32 @@ use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 use support::{TestChange, TestRepo};
 
 #[test]
-fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
+fn command_and_shell_navigation_is_one_coherent_workflow() {
     let repo = TestRepo::new();
     let help = stdout(repo.grove().arg("--help").assert().success().get_output());
-    for command in ["new", "switch", "list", "sync", "archive", "init"] {
+    for command in ["new", "list", "sync", "archive", "init"] {
         assert!(help.contains(command), "{help}");
     }
-    assert!(!help.contains("  agent"), "{help}");
-    for unavailable in ["remove", "delete"] {
-        repo.grove().arg(unavailable).assert().failure();
-    }
+    assert!(!help.contains("  switch"), "{help}");
+    let removed = repo
+        .grove()
+        .arg("switch")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(stderr(&removed).contains("unrecognized subcommand 'switch'"));
+    let removed = repo
+        .grove()
+        .args(["new", "--shell"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(stderr(&removed).contains("unexpected argument '--shell'"));
 
     for (command, usage, flag) in [
         ("new", "Usage: grove new [OPTIONS]", "--from <REF>"),
-        ("switch", "Usage: grove switch [OPTIONS]", "--shell"),
         ("archive", "Usage: grove archive [OPTIONS]", "--force"),
     ] {
         let output = repo
@@ -31,17 +43,16 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         let text = stdout(&output);
         assert!(text.contains(usage), "{text}");
         assert!(text.contains(flag), "{text}");
-        assert!(!text.contains("BRANCH"), "{text}");
+        assert!(
+            !text.contains("--shell") && !text.contains("BRANCH"),
+            "{text}"
+        );
         if command == "new" {
             assert!(
                 text.contains("additional, asynchronous provider request"),
                 "{text}"
             );
         }
-        repo.grove()
-            .args([command, "manual-name"])
-            .assert()
-            .failure();
     }
 
     for shell in ["fish", "zsh"] {
@@ -56,46 +67,108 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         assert!(script.contains("GROVE_DIRECTIVE_CD_FILE"), "{script}");
         assert!(script.contains("GROVE_EXECUTABLE"), "{script}");
         assert!(script.contains("COMPLETE"), "{script}");
+
+        let shell_repo = TestRepo::new();
+        fs::create_dir_all(shell_repo.path().join("matching/subdirectory")).unwrap();
+        shell_repo.commit_file(
+            shell_repo.path(),
+            "matching/subdirectory/tracked.txt",
+            "tracked\n",
+        );
+        let change = shell_repo.create_change(None);
+        shell_repo.set_change_title(&change, "Navigate With Shell");
+
+        let before_pi = shell_repo.agent_log().matches("mode=interactive").count();
+        let output = shell_repo.navigator_from_shell_in_pty(
+            &shell_repo.path().join("matching/subdirectory"),
+            shell,
+            "Navigate With Shell",
+            b"nAvIgAtE\t",
+        );
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let terminal = stdout(&output);
+        assert!(
+            terminal.contains(&format!(
+                "__PWD__{}",
+                change
+                    .path
+                    .join("matching/subdirectory")
+                    .canonicalize()
+                    .unwrap()
+                    .display()
+            )),
+            "{shell}: {terminal}"
+        );
+        assert_eq!(
+            shell_repo.agent_log().matches("mode=interactive").count(),
+            before_pi,
+            "Tab must not open Pi"
+        );
+        assert_terminal_restored(&terminal);
+
+        let output = shell_repo.navigator_from_shell_in_pty(
+            &change.path.join("matching/subdirectory"),
+            shell,
+            "Navigate With Shell",
+            b"\x1b[H",
+        );
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let terminal = stdout(&output);
+        assert!(
+            terminal.contains(&format!(
+                "__PWD__{}",
+                shell_repo
+                    .path()
+                    .join("matching/subdirectory")
+                    .canonicalize()
+                    .unwrap()
+                    .display()
+            )),
+            "{shell}: {terminal}"
+        );
+        assert_terminal_restored(&terminal);
+
+        fs::create_dir(shell_repo.path().join("main-only")).unwrap();
+        let output = shell_repo.navigator_from_shell_in_pty(
+            &shell_repo.path().join("main-only"),
+            shell,
+            "Navigate With Shell",
+            b"\t",
+        );
+        assert!(output.status.success(), "{shell}: {output:?}");
+        let terminal = stdout(&output);
+        assert!(
+            terminal.contains(&format!(
+                "__PWD__{}",
+                change.path.canonicalize().unwrap().display()
+            )),
+            "{shell}: {terminal}"
+        );
     }
 
-    let missing_wrapper = TestRepo::new();
-    let output = missing_wrapper
-        .grove()
-        .env_remove("GROVE_DIRECTIVE_CD_FILE")
-        .args(["new", "--shell"])
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    assert!(
-        stderr(&output).contains("shell integration is not loaded"),
-        "{}",
-        stderr(&output)
-    );
-    assert!(missing_wrapper.change_capsules().is_empty());
-    assert_eq!(
-        missing_wrapper.git(["branch", "--format=%(refname:short)"]),
-        "main"
-    );
+    let blocked = TestRepo::new();
+    let worktrees = blocked.git(["worktree", "list", "--porcelain"]);
+    let output =
+        blocked.navigator_without_directive_in_pty(blocked.path(), "Ctrl-T New + Shell", b"\x14");
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("shell integration is not loaded"));
+    assert!(blocked.change_capsules().is_empty());
+    assert_eq!(blocked.git(["worktree", "list", "--porcelain"]), worktrees);
 
-    let invalid_target = TestRepo::new();
-    let output = invalid_target
-        .grove()
-        .env("GROVE_DIRECTIVE_CD_FILE", invalid_target.path())
-        .args(["new", "--shell"])
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    assert!(stderr(&output).contains("shell navigation directive"));
-    assert!(invalid_target.change_capsules().is_empty());
-    assert_eq!(
-        invalid_target.git(["branch", "--format=%(refname:short)"]),
-        "main"
+    let invalid = TestRepo::new();
+    let worktrees = invalid.git(["worktree", "list", "--porcelain"]);
+    let output = invalid.navigator_with_invalid_directive_in_pty(
+        invalid.path(),
+        "Ctrl-T New + Shell",
+        b"\x14",
     );
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("shell navigation directive"));
+    assert!(invalid.change_capsules().is_empty());
+    assert_eq!(invalid.git(["worktree", "list", "--porcelain"]), worktrees);
 
-    let change = missing_wrapper.create_change(None);
-    let output = missing_wrapper
+    let change = repo.create_change(None);
+    let output = repo
         .grove_from(&change.path)
         .env_remove("GROVE_DIRECTIVE_CD_FILE")
         .arg("archive")
@@ -105,12 +178,12 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         .clone();
     assert!(stderr(&output).contains("shell integration is not loaded"));
     assert!(change.path.exists());
-    assert!(!missing_wrapper.branch_exists(&change.id));
 
-    let change = invalid_target.create_change(None);
-    let output = invalid_target
+    let invalid_archive = TestRepo::new();
+    let change = invalid_archive.create_change(None);
+    let output = invalid_archive
         .grove_from(&change.path)
-        .env("GROVE_DIRECTIVE_CD_FILE", invalid_target.path())
+        .env("GROVE_DIRECTIVE_CD_FILE", invalid_archive.path())
         .arg("archive")
         .assert()
         .failure()
@@ -118,104 +191,27 @@ fn command_and_shell_surface_is_small_and_navigation_is_explicit() {
         .clone();
     assert!(stderr(&output).contains("shell navigation directive"));
     assert!(change.path.exists());
-    assert!(!invalid_target.branch_exists(&change.id));
 
-    for shell in ["fish", "zsh"] {
-        let shell_repo = TestRepo::new();
-        let change = shell_repo.create_change(None);
-        shell_repo.set_change_title(&change, "Navigate With Shell");
-        let output = shell_repo.switch_from_shell_in_pty(
-            shell_repo.path(),
-            shell,
-            "grove switch --shell",
-            "Navigate With Shell",
-            b"\r",
-        );
-        assert!(output.status.success(), "{shell}: {output:?}");
-        let terminal = stdout(&output);
-        let expected = change.path.canonicalize().unwrap();
-        assert!(
-            terminal.contains(&format!("__PWD__{}", expected.display())),
-            "{shell}: {terminal}"
-        );
-        assert_terminal_restored(&terminal);
-
-        let output = shell_repo.switch_from_shell_in_pty(
-            &change.path,
-            shell,
-            "grove switch --shell",
-            "Navigate With Shell",
-            b"x\r\x1b",
-        );
-        assert!(output.status.success(), "{shell}: {output:?}");
-        let terminal = stdout(&output);
-        let expected = shell_repo.path().canonicalize().unwrap();
-        assert!(terminal.contains("Main"), "{shell}: {terminal}");
-        assert!(!terminal.contains("Main repository"), "{shell}: {terminal}");
-        assert!(
-            terminal.contains(&format!("__PWD__{}", expected.display())),
-            "{shell}: {terminal}"
-        );
-        assert_terminal_restored(&terminal);
-
-        let output = shell_repo.switch_from_shell_in_pty(
-            &change.path,
-            shell,
-            "grove switch --shell",
-            "Navigate With Shell",
-            b"\x1b[B\r",
-        );
-        assert!(output.status.success(), "{shell}: {output:?}");
-        let terminal = stdout(&output);
-        let expected = change.path.canonicalize().unwrap();
-        assert!(
-            terminal.contains(&format!("__PWD__{}", expected.display())),
-            "{shell}: {terminal}"
-        );
-        assert_terminal_restored(&terminal);
-
-        let output = shell_repo.switch_from_shell_in_pty(
-            &change.path,
-            shell,
-            "grove switch",
-            "Navigate With Shell",
-            b"\r",
-        );
-        assert!(output.status.success(), "{shell}: {output:?}");
-        let terminal = stdout(&output);
-        let expected = shell_repo.path().canonicalize().unwrap();
-        assert!(
-            terminal.contains(&format!("__PWD__{}", expected.display())),
-            "{shell}: {terminal}"
-        );
-        assert_eq!(shell_repo.agent_log(), "");
-        assert_terminal_restored(&terminal);
-    }
-
-    let commands = repo
-        .grove()
-        .env("COMPLETE", "fish")
-        .args(["--", "grove", ""])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let commands = stdout(&commands);
-    assert!(commands.contains("switch\t"), "{commands}");
+    let commands = stdout(
+        repo.grove()
+            .env("COMPLETE", "fish")
+            .args(["--", "grove", ""])
+            .assert()
+            .success()
+            .get_output(),
+    );
     assert!(commands.contains("archive\t"), "{commands}");
-    assert!(!commands.contains("remove\t"), "{commands}");
-    assert!(!commands.contains("delete\t"), "{commands}");
-    let flags = repo
-        .grove()
-        .env("COMPLETE", "fish")
-        .args(["--", "grove", "switch", "--"])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let flags = stdout(&flags);
-    assert!(flags.contains("--shell"), "{flags}");
-    assert!(!flags.contains("manual-name"), "{flags}");
+    assert!(!commands.contains("switch\t"), "{commands}");
+    let flags = stdout(
+        repo.grove()
+            .env("COMPLETE", "fish")
+            .args(["--", "grove", "new", "--"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    assert!(flags.contains("--from"), "{flags}");
+    assert!(!flags.contains("--shell"), "{flags}");
 }
 
 #[test]
@@ -227,7 +223,7 @@ fn new_requires_a_commit_backed_default_base() {
 
     let output = repo
         .grove()
-        .args(["new", "--shell"])
+        .arg("new")
         .assert()
         .failure()
         .get_output()
@@ -242,12 +238,12 @@ fn new_requires_a_commit_backed_default_base() {
     assert_eq!(repo.git(["worktree", "list", "--porcelain"]), worktrees);
 
     repo.grove()
-        .args(["new", "--shell", "--from", &original])
+        .args(["new", "--from", &original])
         .assert()
         .success();
     let capsule = repo.change_capsules().pop().expect("created capsule");
     assert_eq!(
-        repo.git_from(&repo.navigation(), ["rev-parse", "HEAD"]),
+        repo.git_from(&capsule.join("workspace"), ["rev-parse", "HEAD"]),
         original
     );
     assert_eq!(repo.change_record(&capsule)["base_oid"], original);
@@ -256,10 +252,9 @@ fn new_requires_a_commit_backed_default_base() {
 #[test]
 fn id_capsules_record_bases_rollback_and_repository_isolation() {
     let repo = TestRepo::new();
-    repo.remove_pi();
     let original = repo.git(["rev-parse", "main"]);
     let grove_root = repo.home().join(".grove");
-    repo.grove().args(["new", "--shell"]).assert().success();
+    repo.grove().arg("new").assert().success();
 
     let capsule = repo.change_capsules().pop().expect("created capsule");
     let id = capsule.file_name().unwrap().to_str().unwrap();
@@ -282,13 +277,13 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     assert_eq!(record["parent"], "main");
     assert_eq!(record.as_object().unwrap().len(), 7);
     assert!(!repository.join("repository.json").exists());
-    assert_eq!(repo.navigation(), capsule.join("workspace"));
+    assert!(!repo.navigation_exists());
     assert_eq!(
-        repo.git_from(&repo.navigation(), ["branch", "--show-current"]),
+        repo.git_from(&capsule.join("workspace"), ["branch", "--show-current"]),
         ""
     );
     assert_eq!(repo.git(["branch", "--format=%(refname:short)"]), "main");
-    assert_eq!(repo.agent_log(), "");
+    assert!(repo.agent_log().contains("mode=interactive"));
     assert_eq!(
         fs::metadata(&capsule).unwrap().permissions().mode() & 0o777,
         0o700
@@ -327,11 +322,11 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     let before_branches = repo.git(["branch", "--format=%(refname:short)"]);
     let before_worktrees = repo.git(["worktree", "list", "--porcelain"]);
     repo.grove()
-        .args(["new", "--shell", "--from", "does-not-exist"])
+        .args(["new", "--from", "does-not-exist"])
         .assert()
         .failure();
     repo.grove()
-        .args(["new", "--shell", "--from", "HEAD:README.md"])
+        .args(["new", "--from", "HEAD:README.md"])
         .assert()
         .failure();
     assert_eq!(
@@ -384,7 +379,7 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
 
     let blocked = TestRepo::new();
     fs::write(blocked.home().join(".grove"), "not a directory").unwrap();
-    blocked.grove().args(["new", "--shell"]).assert().failure();
+    blocked.grove().arg("new").assert().failure();
     assert_eq!(blocked.git(["branch", "--format=%(refname:short)"]), "main");
     assert!(blocked.change_capsules().is_empty());
 
@@ -393,7 +388,7 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     fs::write(&metadata, "blocked\n").unwrap();
     let error = failed
         .grove()
-        .args(["new", "--shell"])
+        .arg("new")
         .assert()
         .failure()
         .get_output()
@@ -508,7 +503,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     assert!(session_before.contains(r#""schema":1"#));
     assert!(session_before.contains(&format!(r#""changeId":"{id}""#)));
 
-    let resumed = repo.select_agent_in_pty("Implement Native Session Titles", b"\r");
+    let resumed = repo.resume_pi_in_pty("Implement Native Session Titles", b"\r");
     assert!(resumed.status.success(), "{resumed:?}");
     assert_eq!(repo.agent_log().matches("mode=interactive").count(), 2);
     assert_eq!(repo.pi_session_files().len(), 1);
@@ -601,12 +596,12 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let locked_worktree = locked_capsule.join("workspace");
     assert!(locked_capsule.join(".activity.lock").is_file());
     assert!(!locked_capsule.join(".lock").exists());
-    let switch = locked.select_agent_in_pty("Untitled", b"\r");
-    assert!(!switch.status.success());
+    let resumed = locked.resume_pi_in_pty("Untitled", b"\r");
+    assert!(!resumed.status.success());
     assert!(
-        stdout(&switch).contains("already open"),
+        stdout(&resumed).contains("already open"),
         "{}",
-        stdout(&switch)
+        stdout(&resumed)
     );
     let archive = locked
         .grove_from(&locked_worktree)
@@ -626,7 +621,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
 }
 
 #[test]
-fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
+fn inventory_and_bare_navigator_cover_filtering_actions_and_safety() {
     let repo = TestRepo::new();
     let mut changes = [
         repo.create_change(None),
@@ -634,14 +629,17 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         repo.create_change(None),
         repo.create_change(None),
     ];
-    changes.sort_by(|left, right| left.id.cmp(&right.id));
-    let named = &changes[0];
-    let duplicate = &changes[1];
-    let untitled = &changes[2];
-    let fourth = &changes[3];
-    repo.set_change_title(named, "Capture Native Sessions");
-    repo.set_change_title(duplicate, "Capture Native Sessions");
-    repo.set_change_title(fourth, "Main");
+    changes.sort_by_key(|change| {
+        (
+            repo.change_record(change.path.parent().unwrap())["created_at"]
+                .as_u64()
+                .unwrap(),
+            change.id.clone(),
+        )
+    });
+    repo.set_change_title(&changes[0], "Capture Native Sessions");
+    repo.set_change_title(&changes[1], "Capture Native Sessions");
+    repo.set_change_title(&changes[2], "Deploy API");
     let ordinary = repo.home().join("ordinary");
     repo.git(["branch", "ordinary"]);
     repo.git(["worktree", "add", ordinary.to_str().unwrap(), "ordinary"]);
@@ -656,92 +654,102 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         .get_output()
         .clone();
     let table = stdout(&listed);
-    assert!(table.contains("Title"), "{table}");
-    assert!(!table.contains("Branch"), "{table}");
-    assert!(table.contains(&format!("Capture Native Sessions · {}", &named.id[..8])));
-    assert!(table.contains(&format!("Capture Native Sessions · {}", &duplicate.id[..8])));
-    assert!(table.contains(&format!("Untitled · {}", &untitled.id[..8])));
+    assert!(
+        table.contains("Title") && !table.contains("Branch"),
+        "{table}"
+    );
+    assert!(table.contains(&format!("Capture Native Sessions · {}", changes[0].id)));
+    assert!(table.contains(&format!("Capture Native Sessions · {}", changes[1].id)));
+    assert!(table.contains("Deploy API"), "{table}");
+    assert!(
+        table.contains(&format!("Untitled · {}", changes[3].id)),
+        "{table}"
+    );
     assert!(
         !table.contains("ordinary") && !table.contains("detached"),
         "{table}"
     );
-    assert!(
-        table.contains(&format!("Main · {}", &fourth.id[..8])),
-        "{table}"
-    );
     assert!(stderr(&listed).contains("Showing 4 changes"));
 
-    let selected = repo.switch_in_pty(repo.path(), "Capture Native Sessions", b"\r");
+    let before_pi = repo.agent_log().matches("mode=interactive").count();
+    let selected =
+        repo.navigator_in_pty(repo.path(), "Capture Native Sessions", b"cApTuRe\x1b[B\r");
     assert!(selected.status.success(), "{selected:?}");
     let terminal = stdout(&selected);
-    assert!(!terminal.contains('⌕'), "{terminal}");
-    assert!(terminal.contains("✓ Using"), "{terminal}");
-    assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
-    let selected_path = repo.navigation();
+    assert!(terminal.contains("Filter: cApTuRe"), "{terminal}");
+    for action in [
+        "Enter Pi",
+        "Tab Shell",
+        "Home Main",
+        "Ctrl-N New + Pi",
+        "Ctrl-T New + Shell",
+        "Esc/Ctrl-C Cancel",
+    ] {
+        assert!(terminal.contains(action), "{terminal}");
+    }
     assert!(
-        changes
-            .iter()
-            .any(|change| change.path.canonicalize().unwrap() == selected_path),
-        "{}",
-        selected_path.display()
+        terminal.contains("✓ Using Capture Native Sessions"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
+    assert_eq!(
+        repo.agent_log().matches("mode=interactive").count(),
+        before_pi + 1
+    );
+    let log = repo.agent_log();
+    let last_launch = log.rsplit("mode=interactive\n").next().unwrap();
+    assert!(
+        last_launch.contains(&format!(
+            "cwd={}",
+            changes[1].path.canonicalize().unwrap().display()
+        )),
+        "{last_launch}"
     );
     assert_terminal_restored(&terminal);
 
-    let before = repo.navigation();
-    let unmanaged = repo.switch_in_pty(&ordinary, "Capture Native Sessions", b"\x1b");
-    assert!(unmanaged.status.success(), "{unmanaged:?}");
-    let terminal = stdout(&unmanaged);
-    assert_eq!(terminal.matches("Main").count(), 1, "{terminal}");
-    assert!(!terminal.contains("Error:"), "{terminal}");
-    assert_eq!(repo.navigation(), before);
-    assert_terminal_restored(&terminal);
+    let before_pi = repo.agent_log().matches("mode=interactive").count();
+    let workspace = repo.navigator_in_pty(repo.path(), "Deploy API", b"dEpLoY\t");
+    assert!(workspace.status.success(), "{workspace:?}");
+    assert_eq!(repo.navigation(), changes[2].path.canonicalize().unwrap());
+    assert_eq!(
+        repo.agent_log().matches("mode=interactive").count(),
+        before_pi,
+        "Tab must only navigate"
+    );
 
+    let before = repo.navigation();
+    let unmanaged = repo.navigator_in_pty(&ordinary, "Deploy API", b"\x1b");
+    assert!(unmanaged.status.success(), "{unmanaged:?}");
+    assert!(!stdout(&unmanaged).contains("ordinary"));
+    assert_eq!(repo.navigation(), before);
+    assert_terminal_restored(&stdout(&unmanaged));
     for input in [b"\x1b".as_slice(), b"\x03".as_slice()] {
-        let before = repo.navigation();
-        let cancelled = repo.switch_in_pty(repo.path(), "Capture Native Sessions", input);
+        let cancelled = repo.navigator_in_pty(repo.path(), "Deploy API", input);
         assert!(cancelled.status.success(), "{cancelled:?}");
-        let terminal = stdout(&cancelled);
-        assert!(!terminal.contains("Error:"), "{terminal}");
         assert_eq!(repo.navigation(), before);
-        assert_terminal_restored(&terminal);
+        assert_terminal_restored(&stdout(&cancelled));
     }
 
-    let non_tty = repo
-        .grove()
-        .arg("switch")
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    assert!(stderr(&non_tty).contains("interactive Change selection requires a terminal"));
-    let non_tty = repo
+    let non_tty = repo.grove().assert().failure().get_output().clone();
+    assert!(stderr(&non_tty).contains("interactive Change navigation requires a terminal"));
+    let non_tty_archive = repo
         .grove()
         .arg("archive")
         .assert()
         .failure()
         .get_output()
         .clone();
-    assert!(stderr(&non_tty).contains("interactive Change selection requires a terminal"));
-    assert!(named.path.exists() && !repo.branch_exists(&named.id));
+    assert!(stderr(&non_tty_archive).contains("interactive Change selection requires a terminal"));
 
     let removable = TestRepo::new();
     let change = removable.create_change(None);
     removable.set_change_title(&change, "Archive Finished Change");
     let cancelled = removable.archive_in_pty("Archive Finished Change", b"\x1b");
     assert!(cancelled.status.success(), "{cancelled:?}");
-    let terminal = stdout(&cancelled);
-    assert!(!terminal.contains("Error:"), "{terminal}");
-    assert!(change.path.exists() && !removable.branch_exists(&change.id));
-    assert_terminal_restored(&terminal);
-
+    assert!(change.path.exists());
     let archived = removable.archive_in_pty("Archive Finished Change", b"\r");
     assert!(archived.status.success(), "{archived:?}");
-    let terminal = stdout(&archived);
-    assert!(
-        terminal.contains("✓ Archived Archive Finished Change"),
-        "{terminal}"
-    );
-    assert_terminal_restored(&terminal);
+    assert!(stdout(&archived).contains("✓ Archived Archive Finished Change"));
     assert!(!change.path.exists());
 
     let corrupt = TestRepo::new();
@@ -759,7 +767,7 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         .get_output()
         .clone();
     assert!(stderr(&error).contains("invalid change record"));
-    assert!(change.path.exists() && !corrupt.branch_exists(&change.id));
+    assert!(change.path.exists());
 
     let empty = TestRepo::new();
     let listed = empty
@@ -769,19 +777,39 @@ fn title_first_list_and_picker_exclude_unmanaged_and_fail_safely() {
         .success()
         .get_output()
         .clone();
-    let table = stdout(&listed);
-    assert!(table.contains("Title"));
-    assert!(table.contains("@ Main"), "{table}");
-    assert!(!table.contains("Main repository"), "{table}");
+    assert!(stdout(&listed).contains("@ Main"));
     assert!(stderr(&listed).contains("Showing 0 changes"));
-    let error = empty
-        .grove()
-        .arg("switch")
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    assert!(stderr(&error).contains("no active changes to switch to"));
+    for input in [b"\x1b".as_slice(), b"\x03".as_slice()] {
+        let cancelled = empty.navigator_in_pty(empty.path(), "Ctrl-N New + Pi", input);
+        assert!(cancelled.status.success(), "{cancelled:?}");
+        assert!(empty.change_capsules().is_empty());
+    }
+    let main = empty.navigator_in_pty(empty.path(), "Home Main", b"\x1b[H");
+    assert!(main.status.success(), "{main:?}");
+    assert_eq!(empty.navigation(), empty.path().canonicalize().unwrap());
+
+    let new_pi = TestRepo::new();
+    let created = new_pi.navigator_in_pty(new_pi.path(), "Ctrl-N New + Pi", b"\x0e");
+    assert!(created.status.success(), "{created:?}");
+    assert_eq!(new_pi.change_capsules().len(), 1);
+    assert_eq!(new_pi.agent_log().matches("mode=interactive").count(), 1);
+    assert!(!new_pi.navigation_exists());
+
+    let new_workspace = TestRepo::new();
+    fs::create_dir(new_workspace.path().join("nested")).unwrap();
+    new_workspace.commit_file(new_workspace.path(), "nested/tracked.txt", "tracked\n");
+    let created = new_workspace.navigator_in_pty(
+        &new_workspace.path().join("nested"),
+        "Ctrl-T New + Shell",
+        b"\x14",
+    );
+    assert!(created.status.success(), "{created:?}");
+    let capsule = new_workspace.change_capsules().pop().unwrap();
+    assert_eq!(
+        new_workspace.navigation(),
+        capsule.join("workspace/nested").canonicalize().unwrap()
+    );
+    assert_eq!(new_workspace.agent_log(), "");
 }
 
 #[test]
@@ -789,8 +817,8 @@ fn terminal_tables_stay_within_the_terminal_width() {
     let repo = TestRepo::new();
     let first = repo.create_change(None);
     let second = repo.create_change(None);
-    repo.set_change_title(&first, "First Narrow Picker Change");
-    repo.set_change_title(&second, "Second Narrow Picker Change");
+    repo.set_change_title(&first, "A Very Long Duplicate Narrow Picker Change Title");
+    repo.set_change_title(&second, "A Very Long Duplicate Narrow Picker Change Title");
     let full_path = format!(
         "~/{}",
         first.path.strip_prefix(repo.home()).unwrap().display()
@@ -800,16 +828,18 @@ fn terminal_tables_stay_within_the_terminal_width() {
     assert!(listed.status.success(), "{listed:?}");
     let terminal = stdout(&listed);
     assert!(!terminal.contains(&full_path), "{terminal}");
-    assert!(terminal.contains('…'), "{terminal}");
 
     let redirected = repo.grove().arg("list").output().unwrap();
     assert!(redirected.status.success(), "{redirected:?}");
     assert!(stdout(&redirected).contains(&full_path));
 
-    let archived = repo.archive_in_narrow_pty("First Narrow Picker Change", b"\x1b[B\x1b");
-    assert!(archived.status.success(), "{archived:?}");
-    let terminal = stdout(&archived);
+    let navigated = repo.navigator_in_narrow_pty("A Very Long Duplicate", b"\x1b[B\x1b");
+    assert!(navigated.status.success(), "{navigated:?}");
+    let terminal = stdout(&navigated);
     assert!(!terminal.contains(&full_path), "{terminal}");
+    assert!(terminal.contains(&first.id), "{terminal}");
+    assert!(terminal.contains(&second.id), "{terminal}");
+    assert!(terminal.contains("Ctrl-T New + Shell"), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
     assert_terminal_restored(&terminal);
 }

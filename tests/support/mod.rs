@@ -157,17 +157,24 @@ impl TestRepo {
     }
 
     pub fn create_change_from(&self, directory: &Path, from: Option<&str>) -> TestChange {
+        let before = self.change_capsules();
         let mut command = self.grove_from(directory);
-        command.args(["new", "--shell"]);
+        command.arg("new");
         if let Some(from) = from {
             command.args(["--from", from]);
         }
         command.assert().success();
-        let path = self.navigation();
+        let added = self
+            .change_capsules()
+            .into_iter()
+            .filter(|capsule| !before.contains(capsule))
+            .collect::<Vec<_>>();
+        assert_eq!(added.len(), 1, "new must add exactly one Change capsule");
+        let capsule = &added[0];
+        let path = capsule.join("workspace");
         assert_eq!(self.git_from(&path, ["branch", "--show-current"]), "");
-        let id = path
-            .parent()
-            .and_then(Path::file_name)
+        let id = capsule
+            .file_name()
             .expect("Change ID")
             .to_string_lossy()
             .into_owned();
@@ -178,20 +185,51 @@ impl TestRepo {
         assert_cmd::Command::from_std(self.compiled_grove(directory))
     }
 
-    pub fn switch_in_pty(&self, directory: &Path, ready: &str, input: &[u8]) -> Output {
+    pub fn navigator_in_pty(&self, directory: &Path, ready: &str, input: &[u8]) -> Output {
         self.run_pty(
-            self.sh_picker(directory, "switch --shell"),
+            self.sh_picker(directory, ""),
             ready,
             input,
-            "Grove switch",
+            "Grove navigator",
         )
     }
 
-    pub fn switch_from_shell_in_pty(
+    pub fn navigator_without_directive_in_pty(
+        &self,
+        directory: &Path,
+        ready: &str,
+        input: &[u8],
+    ) -> Output {
+        let mut command = self.sh_picker(directory, "");
+        command.env_remove("GROVE_DIRECTIVE_CD_FILE");
+        self.run_pty(
+            command,
+            ready,
+            input,
+            "Grove navigator without shell integration",
+        )
+    }
+
+    pub fn navigator_with_invalid_directive_in_pty(
+        &self,
+        directory: &Path,
+        ready: &str,
+        input: &[u8],
+    ) -> Output {
+        let mut command = self.sh_picker(directory, "");
+        command.env("GROVE_DIRECTIVE_CD_FILE", &self.repo);
+        self.run_pty(
+            command,
+            ready,
+            input,
+            "Grove navigator with invalid directive",
+        )
+    }
+
+    pub fn navigator_from_shell_in_pty(
         &self,
         directory: &Path,
         shell: &str,
-        invocation: &str,
         ready: &str,
         input: &[u8],
     ) -> Output {
@@ -201,12 +239,8 @@ impl TestRepo {
             .expect("resolve Grove test executable");
         let shell_path = find_executable(shell);
         let script = match shell {
-            "fish" => format!(
-                "\"$GROVE_TEST_BINARY\" init fish | source\n{invocation}\nset status_code $status\nprintf '__PWD__%s\\n' $PWD\nstty -a\nexit $status_code"
-            ),
-            "zsh" => format!(
-                "eval \"$(\"$GROVE_TEST_BINARY\" init zsh)\"\n{invocation}\nstatus_code=$?\nprintf '__PWD__%s\\n' \"$PWD\"\nstty -a\nexit $status_code"
-            ),
+            "fish" => "\"$GROVE_TEST_BINARY\" init fish | source\ngrove\nset status_code $status\nprintf '__PWD__%s\\n' $PWD\nstty -a\nexit $status_code".to_owned(),
+            "zsh" => "eval \"$(\"$GROVE_TEST_BINARY\" init zsh)\"\ngrove\nstatus_code=$?\nprintf '__PWD__%s\\n' \"$PWD\"\nstty -a\nexit $status_code".to_owned(),
             _ => panic!("unsupported test shell {shell}"),
         };
         let mut command = self.pty(directory, shell_path.as_os_str());
@@ -214,9 +248,9 @@ impl TestRepo {
             .args(["-c", &script])
             .env("GROVE_TEST_BINARY", &binary)
             .env("GROVE_EXECUTABLE", &binary)
-            .env("PATH", self.test_path_with(binary.parent().unwrap()))
+            .env("PATH", self.test_path())
             .env_remove("GROVE_DIRECTIVE_CD_FILE");
-        self.run_pty(command, ready, input, "Grove shell switch")
+        self.run_pty(command, ready, input, "Grove shell navigator")
     }
 
     pub fn archive_in_pty(&self, ready: &str, input: &[u8]) -> Output {
@@ -228,12 +262,6 @@ impl TestRepo {
         )
     }
 
-    pub fn archive_in_narrow_pty(&self, ready: &str, input: &[u8]) -> Output {
-        let mut command = self.sh_picker(&self.repo, "archive");
-        command.env("GROVE_TEST_COLUMNS", "48");
-        self.run_pty(command, ready, input, "narrow Grove archive")
-    }
-
     pub fn list_in_narrow_pty(&self) -> Output {
         let mut command = self.sh_picker(&self.repo, "list");
         command
@@ -242,11 +270,16 @@ impl TestRepo {
             .expect("run narrow Grove list")
     }
 
-    pub fn select_agent_in_pty(&self, ready: &str, input: &[u8]) -> Output {
+    pub fn resume_pi_in_pty(&self, ready: &str, input: &[u8]) -> Output {
         let binary = self.compiled_binary();
-        let mut command = self.pty(&self.repo, binary.as_os_str());
-        command.arg("switch");
-        self.run_pty(command, ready, input, "Grove switch")
+        let command = self.pty(&self.repo, binary.as_os_str());
+        self.run_pty(command, ready, input, "Grove navigator Pi resume")
+    }
+
+    pub fn navigator_in_narrow_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.sh_picker(&self.repo, "");
+        command.env("GROVE_TEST_COLUMNS", "48");
+        self.run_pty(command, ready, input, "narrow Grove navigator")
     }
 
     pub fn agent_log(&self) -> String {
@@ -374,7 +407,8 @@ impl TestRepo {
             .args([
                 "-c",
                 &format!(
-                    "if [ -n \"$GROVE_TEST_COLUMNS\" ]; then stty cols \"$GROVE_TEST_COLUMNS\"; fi\n\"$GROVE_TEST_BINARY\" {action}\nstatus=$?\nstty -a\nexit \"$status\""
+                    "if [ -n \"$GROVE_TEST_COLUMNS\" ]; then stty cols \"$GROVE_TEST_COLUMNS\"; fi\n\"$GROVE_TEST_BINARY\"{separator}{action}\nstatus=$?\nstty -a\nexit \"$status\"",
+                    separator = if action.is_empty() { "" } else { " " }
                 ),
             ])
             .env("GROVE_TEST_BINARY", self.compiled_binary());
@@ -617,10 +651,6 @@ impl TestRepo {
 
     fn test_path(&self) -> std::ffi::OsString {
         self.test_path_from(Vec::new())
-    }
-
-    fn test_path_with(&self, directory: &Path) -> std::ffi::OsString {
-        self.test_path_from(vec![directory.to_owned()])
     }
 
     fn test_path_from(&self, mut paths: Vec<PathBuf>) -> std::ffi::OsString {

@@ -8,7 +8,7 @@ leaving, finding, resuming, and safely archiving Pi work stays simple.
 grove new
 # work in Pi, then exit Pi normally
 
-grove switch   # pick the Change by title and resume Pi
+grove          # find a Change, resume Pi, or navigate workspaces
 grove list
 grove archive  # archive the current Change, or pick one from the primary checkout
 ```
@@ -19,8 +19,8 @@ for the domain vocabulary.
 ## Commands
 
 ```text
-grove new [--from REF] [--shell]
-grove switch [--shell]
+grove
+grove new [--from REF]
 grove list
 grove sync
 grove archive [--force]
@@ -32,14 +32,22 @@ argument. `--from` accepts any revision that resolves to a commit; `--from @`
 uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
-`switch` always opens a terminal picker containing active Grove Changes. From a
-Change it also offers Main first; selecting Main returns the calling shell
-there without opening Pi. `list` always includes Main without
-counting it as a Change. The picker and `list` lead with each Change's stable
-inferred title. Until naming succeeds, Grove shows `Untitled`; duplicate and
-untitled rows include a short opaque ID only to disambiguate them. Use the arrow
-keys and press Enter to select. Ordinary, detached, and otherwise unmanaged Git
-worktrees are not included.
+Bare `grove` opens the terminal navigator containing active Grove Changes.
+Typing filters titles by case-insensitive substring; Backspace edits the filter,
+and the arrow keys move the selection. Enter opens or resumes the selected
+Change's Pi session. Tab navigates the calling shell to the selected workspace,
+Home navigates to Main, Ctrl-N creates a Change and opens Pi, and Ctrl-T creates
+a Change and opens its workspace in the calling shell. Escape or Ctrl-C
+cancels. Main is a separate
+action rather than a selectable row, and global actions remain available when
+there are no Changes or no titles match.
+
+`list` includes Main without counting it as a Change. The navigator and `list`
+lead with each Change's stable inferred title. Until naming succeeds, Grove
+shows `Untitled`; duplicate and untitled rows include a short opaque ID only to
+disambiguate them. Ordinary, detached, and otherwise unmanaged Git worktrees
+are not included. On narrow terminals secondary columns disappear from the
+right before Change identity is truncated.
 
 `sync` is an explicit network operation that must run from the primary worktree
 and requires its current branch to have a configured upstream. It quietly
@@ -66,12 +74,12 @@ unmerged work, including unique content hidden in a merge resolution. `--force`
 explicitly and irreversibly discards that work. Both paths delete an attached local
 branch without a configured upstream; tracking branches are preserved.
 
-`--shell` skips Pi and writes a navigation directive instead. It is useful for
-creating or entering a Change with a normal shell. `new --shell`, `switch
---shell`, and archival from the current Change are the only operations that
-request parent-shell navigation. Selecting Main in ordinary `switch` also
-navigates without opening Pi. After managed Pi exits, the caller
-stays in the directory where it invoked Grove.
+Navigator actions that enter a workspace write a navigation directive for the
+calling shell. They preserve the current relative subdirectory when that
+directory exists in the destination, otherwise they enter the destination root.
+Archiving the current Change also navigates to Main. Ctrl-T validates that shell
+integration is available before creating anything. After managed Pi exits, the
+caller stays in the directory where it invoked Grove.
 
 ## Native Pi sessions
 
@@ -163,10 +171,10 @@ Pi sessions remain untouched.
 
 The wrapper lets Grove change the calling shell's directory and supplies
 command/flag completion. It does not edit shell configuration and does not
-complete Change titles as positional arguments because `switch` and primary
-`archive` use the picker. Add the appropriate line to your shell configuration
-so it loads in every terminal; `--shell` fails before mutation when the wrapper
-is not loaded.
+complete Change titles as positional arguments because the navigator and
+primary `archive` are interactive. Add the appropriate line to your shell
+configuration so it loads in every terminal; shell navigation fails when the
+wrapper is not loaded, and Ctrl-T fails before mutation.
 
 For Fish, add this to `~/.config/fish/config.fish`:
 

@@ -77,27 +77,33 @@ conflicts, divergence, and path. Narrow terminals remove secondary information
 before compromising Change identity.
 
 The navigator supports incremental title filtering and a small visible action
-vocabulary. From one screen a user can:
+vocabulary. Enter is reserved for activating the selected Change by launching
+or natively resuming Pi. Shell navigation, returning to Main, and shell-only
+creation use separate, visibly labeled shortcuts. From one screen a user can:
 
 - launch or natively resume Pi for the selected Change;
-- enter its workspace in the calling shell;
+- navigate the calling shell to its workspace;
 - return to Main; or
-- create a new Change with the same dependable semantics as `grove new`.
+- create a new Change with the same dependable semantics as `grove new`, either
+  launching Pi or navigating into the new workspace for shell work.
 
 It is a selector and launcher, not a dashboard or replacement for Pi. It has no
 preview panes, tab system, transcript view, agent activity model, background
 refresh, or implicit network queries. `grove list` remains the non-interactive
 snapshot of the same inventory for terminals and scripts.
 
-This interface completely replaces `grove switch`. The `switch` command is
-removed without an alias, migration path, or compatibility surface. Grove is
-pre-1.0 and should prefer the smaller final workflow over preserving an
-obsolete command.
+This interface completely replaces `grove switch` and both uses of `--shell`.
+The `switch` command and the `new --shell` option are removed without aliases,
+migration paths, or compatibility surfaces. The navigator expresses shell
+navigation through its visible actions while the calling-shell wrapper remains
+the thin mechanism that performs it. Grove is pre-1.0 and should prefer the
+smaller final workflow over preserving obsolete commands or options.
 
 Shell navigation should preserve an equivalent relative subdirectory when it
-exists in the destination and otherwise use the workspace root. Calling-shell
-support should remain a thin explicit wrapper and grow to common shells without
-turning shell configuration into Grove state.
+exists in the destination and otherwise use the workspace root. Actions that
+create or mutate before navigating must validate calling-shell support first.
+Calling-shell support should remain a thin explicit wrapper and grow to common
+shells without turning shell configuration into Grove state.
 
 ## Phase 2: AI-native shipping
 

@@ -13,9 +13,12 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 use crossterm::{
     QueueableCommand,
-    cursor::{Hide, MoveToColumn, MoveUp, Show},
+    cursor::{Hide, MoveTo, MoveToColumn, MoveUp, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -25,34 +28,24 @@ use crate::{
 };
 
 #[derive(Parser)]
-#[command(arg_required_else_help = true)]
 struct Cli {
     #[arg(long, hide = true)]
     usage_spec: bool,
 
     #[command(subcommand)]
-    command: Cmd,
+    command: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create a Change workspace
+    /// Create a Change workspace and open Pi
     ///
     /// Managed Pi makes an additional, asynchronous provider request from the
-    /// first prompt to infer a title. `--shell` skips Pi and title inference.
+    /// first prompt to infer a title.
     New {
         /// Start the change from this revision (`@` means the invoking worktree)
         #[arg(long, value_name = "REF")]
         from: Option<String>,
-        /// Enter the workspace without opening its agent
-        #[arg(long)]
-        shell: bool,
-    },
-    /// Open a Change or Main
-    Switch {
-        /// Enter the workspace without opening its agent
-        #[arg(long)]
-        shell: bool,
     },
     /// List Main and active Changes
     List,
@@ -92,13 +85,13 @@ fn main() -> Result<()> {
     }
 
     match Cli::parse().command {
-        Cmd::New { from, shell } => new(&Git::discover()?, from.as_deref(), shell),
-        Cmd::Switch { shell } => switch(&Git::discover()?, shell),
-        Cmd::List => list(&Git::discover()?),
-        Cmd::Sync => sync(&Git::discover()?),
-        Cmd::Archive { force } => archive(&Git::discover()?, force),
-        Cmd::Init { shell } => init(shell),
-        Cmd::Title { change, session } => title(&change, &session),
+        None => navigator(&Git::discover()?),
+        Some(Cmd::New { from }) => new(&Git::discover()?, from.as_deref()),
+        Some(Cmd::List) => list(&Git::discover()?),
+        Some(Cmd::Sync) => sync(&Git::discover()?),
+        Some(Cmd::Archive { force }) => archive(&Git::discover()?, force),
+        Some(Cmd::Init { shell }) => init(shell),
+        Some(Cmd::Title { change, session }) => title(&change, &session),
     }
 }
 
@@ -117,48 +110,241 @@ fn title(change_id: &str, session_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn new(git: &Git, from: Option<&str>, shell: bool) -> Result<()> {
-    if shell {
-        require_shell_navigation()?;
-    } else {
-        Session::prepare()?;
-    }
+fn new(git: &Git, from: Option<&str>) -> Result<()> {
+    Session::prepare()?;
     let change = git.create_change(from)?;
     let path = change.workspace();
     eprintln!("✓ Created {} at {}", change.id, path.display());
-    if shell {
-        navigate(&path)
-    } else {
-        Session::for_workspace(&path)?.attach()
+    Session::for_workspace(&path)?.attach()
+}
+
+#[derive(Clone)]
+enum NavigatorAction {
+    Pi(Row),
+    Workspace(Row),
+    Main,
+    NewPi,
+    NewWorkspace,
+}
+
+fn navigator(git: &Git) -> Result<()> {
+    let (rows, _) = change_rows(git)?;
+    let Some(action) = navigate_interactively(rows)? else {
+        return Ok(());
+    };
+    match action {
+        NavigatorAction::Pi(row) => {
+            eprintln!(
+                "✓ Using {} at {}",
+                row.title_label,
+                row.worktree_path.display()
+            );
+            Session::for_workspace(&row.worktree_path)?.attach()
+        }
+        NavigatorAction::Workspace(row) => {
+            let destination = navigation_destination(git, &row.worktree_path)?;
+            navigate(&destination)
+        }
+        NavigatorAction::Main => {
+            let destination = navigation_destination(git, &git.primary_path()?)?;
+            navigate(&destination)
+        }
+        NavigatorAction::NewPi => new(git, None),
+        NavigatorAction::NewWorkspace => {
+            require_shell_navigation()?;
+            let change = git.create_change(None)?;
+            let path = change.workspace();
+            eprintln!("✓ Created {} at {}", change.id, path.display());
+            let destination = navigation_destination(git, &path)?;
+            navigate(&destination)
+        }
     }
 }
 
-fn switch(git: &Git, shell: bool) -> Result<()> {
-    if shell {
-        require_shell_navigation()?;
+fn navigate_interactively(rows: Vec<Row>) -> Result<Option<NavigatorAction>> {
+    let stderr = std::io::stderr();
+    if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
+        bail!("interactive Change navigation requires a terminal");
     }
-    let (mut choices, _) = change_rows(git)?;
-    if choices.iter().any(|row| row.current) {
-        choices.insert(0, main_row(git)?);
+    let mut output = stderr.lock();
+    let mut mode = TerminalMode::enter(&mut output, true)?;
+    let action = navigate_raw(mode.output(), &rows);
+    mode.restore()?;
+    action
+}
+
+fn navigate_raw(output: &mut impl Write, rows: &[Row]) -> Result<Option<NavigatorAction>> {
+    let mut filter = String::new();
+    let mut selected = 0_usize;
+    render_navigator(output, rows, &filter, selected)?;
+    output.flush()?;
+    loop {
+        let key = match event::read().context("read navigator input")? {
+            Event::Key(key) => key,
+            Event::Resize(_, _) => {
+                redraw_navigator(output, rows, &filter, selected)?;
+                continue;
+            }
+            _ => continue,
+        };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        let matching = matching_rows(rows, &filter);
+        let action = match key.code {
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Ok(Some(NavigatorAction::NewPi));
+            }
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Ok(Some(NavigatorAction::NewWorkspace));
+            }
+            KeyCode::Esc => return Ok(None),
+            KeyCode::Home => return Ok(Some(NavigatorAction::Main)),
+            KeyCode::Enter => matching
+                .get(selected)
+                .map(|row| NavigatorAction::Pi((*row).clone())),
+            KeyCode::Tab => matching
+                .get(selected)
+                .map(|row| NavigatorAction::Workspace((*row).clone())),
+            KeyCode::Up => {
+                selected = selected.saturating_sub(1);
+                None
+            }
+            KeyCode::Down => {
+                selected = (selected + 1).min(matching.len().saturating_sub(1));
+                None
+            }
+            KeyCode::Backspace => {
+                filter.pop();
+                selected = 0;
+                None
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                filter.push(character);
+                selected = 0;
+                None
+            }
+            _ => continue,
+        };
+        if let Some(action) = action {
+            return Ok(Some(action));
+        }
+        redraw_navigator(output, rows, &filter, selected)?;
     }
-    let Some(selected) = pick(choices)? else {
-        return Ok(());
-    };
-    eprintln!(
-        "✓ Using {} at {}",
-        selected.title_label,
-        selected.worktree_path.display()
-    );
-    if shell || selected.change_id.is_none() {
-        navigate(&selected.worktree_path)
+}
+
+fn matching_rows<'a>(rows: &'a [Row], filter: &str) -> Vec<&'a Row> {
+    let filter = filter.to_lowercase();
+    rows.iter()
+        .filter(|row| row.filter_title.to_lowercase().contains(&filter))
+        .collect()
+}
+
+const NAVIGATOR_FOOTER: [&str; 6] = [
+    "Enter Pi",
+    "Tab Shell",
+    "Home Main",
+    "Ctrl-N New + Pi",
+    "Ctrl-T New + Shell",
+    "Esc/Ctrl-C Cancel",
+];
+
+fn navigator_footer(max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for label in NAVIGATOR_FOOTER {
+        let added_width = if line.is_empty() { 0 } else { 2 } + UnicodeWidthStr::width(label);
+        if !line.is_empty() && UnicodeWidthStr::width(line.as_str()) + added_width > max_width {
+            lines.push(line);
+            line = String::new();
+        }
+        if !line.is_empty() {
+            line.push_str("  ");
+        }
+        line.push_str(label);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+fn navigator_dimensions() -> (usize, usize) {
+    terminal::size()
+        .map(|(columns, rows)| {
+            (
+                usize::from(columns.saturating_sub(1)).max(1),
+                usize::from(rows),
+            )
+        })
+        .unwrap_or((79, 24))
+}
+
+fn render_navigator(
+    output: &mut impl Write,
+    rows: &[Row],
+    filter: &str,
+    selected: usize,
+) -> Result<()> {
+    let (max_width, height) = navigator_dimensions();
+    let matching = matching_rows(rows, filter);
+    let mut footer = navigator_footer(max_width);
+    let reserved = if matching.is_empty() { 3 } else { 4 };
+    footer.truncate(height.saturating_sub(reserved));
+    let capacity = if matching.is_empty() {
+        0
     } else {
-        Session::for_workspace(&selected.worktree_path)?.attach()
+        height.saturating_sub(footer.len() + 3).max(1)
+    };
+    let start = selected.saturating_sub(capacity.saturating_sub(1));
+    let shown = matching
+        .iter()
+        .skip(start)
+        .take(capacity)
+        .map(|row| (*row).clone())
+        .collect::<Vec<_>>();
+    let local_selected = selected
+        .saturating_sub(start)
+        .min(shown.len().saturating_sub(1));
+    print_rows(
+        &shown,
+        output,
+        true,
+        "\r\n",
+        (!shown.is_empty()).then_some(local_selected),
+    )?;
+    writeln!(
+        output,
+        "{}\r",
+        fit_width(format!("Filter: {filter}"), Some(max_width))
+    )?;
+    for line in &footer {
+        writeln!(output, "{}\r", fit_width(line.clone(), Some(max_width)))?;
     }
+    Ok(())
+}
+
+fn redraw_navigator(
+    output: &mut impl Write,
+    rows: &[Row],
+    filter: &str,
+    selected: usize,
+) -> Result<()> {
+    output.queue(MoveTo(0, 0))?.queue(Clear(ClearType::All))?;
+    render_navigator(output, rows, filter, selected)?;
+    output.flush()?;
+    Ok(())
 }
 
 fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
     if choices.is_empty() {
-        bail!("no active changes to switch to");
+        bail!("no active changes to archive");
     }
     let stderr = std::io::stderr();
     if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
@@ -169,7 +355,7 @@ fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
 }
 
 fn select(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
-    let mut mode = PickerMode::enter(output)?;
+    let mut mode = TerminalMode::enter(output, false)?;
     let selection = select_raw(mode.output(), choices);
     mode.restore()?;
     selection
@@ -217,23 +403,32 @@ fn redraw_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> std:
     output.flush()
 }
 
-struct PickerMode<'a, W: Write> {
+struct TerminalMode<'a, W: Write> {
     output: &'a mut W,
+    alternate_screen: bool,
     active: bool,
 }
 
-impl<'a, W: Write> PickerMode<'a, W> {
-    fn enter(output: &'a mut W) -> Result<Self> {
-        enable_raw_mode().context("enable raw mode for worktree picker")?;
-        if let Err(error) = output.queue(Hide).and_then(|output| output.flush()) {
-            let _ = output.queue(Show).and_then(|output| output.flush());
-            let _ = disable_raw_mode();
-            return Err(error).context("hide cursor for worktree picker");
-        }
-        Ok(Self {
+impl<'a, W: Write> TerminalMode<'a, W> {
+    fn enter(output: &'a mut W, alternate_screen: bool) -> Result<Self> {
+        enable_raw_mode().context("enable raw mode for terminal selection")?;
+        let mode = Self {
             output,
+            alternate_screen,
             active: true,
-        })
+        };
+        let opened = if alternate_screen {
+            mode.output
+                .queue(EnterAlternateScreen)
+                .and_then(|output| output.queue(Hide))
+                .and_then(|output| output.queue(Clear(ClearType::All)))
+                .and_then(|output| output.queue(MoveTo(0, 0)))
+                .and_then(|output| output.flush())
+        } else {
+            mode.output.queue(Hide).and_then(|output| output.flush())
+        };
+        opened.context("open terminal selection")?;
+        Ok(mode)
     }
 
     fn output(&mut self) -> &mut W {
@@ -241,20 +436,29 @@ impl<'a, W: Write> PickerMode<'a, W> {
     }
 
     fn restore(&mut self) -> Result<()> {
+        let screen = self.restore_screen();
+        let terminal = disable_raw_mode().context("restore terminal mode after selection");
+        if screen.is_ok() && terminal.is_ok() {
+            self.active = false;
+        }
+        screen.and(terminal)
+    }
+
+    fn restore_screen(&mut self) -> Result<()> {
+        self.output.queue(Show)?;
+        if self.alternate_screen {
+            self.output.queue(LeaveAlternateScreen)?;
+        }
         self.output
-            .queue(Show)
-            .and_then(|output| output.flush())
-            .context("restore cursor after worktree picker")?;
-        disable_raw_mode().context("restore terminal mode after worktree picker")?;
-        self.active = false;
-        Ok(())
+            .flush()
+            .context("restore screen after terminal selection")
     }
 }
 
-impl<W: Write> Drop for PickerMode<'_, W> {
+impl<W: Write> Drop for TerminalMode<'_, W> {
     fn drop(&mut self) {
         if self.active {
-            let _ = self.output.queue(Show).and_then(|output| output.flush());
+            let _ = self.restore_screen();
             let _ = disable_raw_mode();
         }
     }
@@ -377,6 +581,10 @@ fn change_rows(git: &Git) -> Result<(Vec<Row>, usize)> {
             current: worktree.current,
             change_id: Some(worktree.id.clone()),
             worktree_path: worktree.path.clone(),
+            filter_title: worktree
+                .title
+                .clone()
+                .unwrap_or_else(|| "Untitled".to_owned()),
             title_label,
             base: worktree.base.clone(),
             changes,
@@ -398,6 +606,7 @@ fn main_row(git: &Git) -> Result<Row> {
         current: current == primary,
         change_id: None,
         worktree_path: primary.clone(),
+        filter_title: "Main".to_owned(),
         title_label: "Main".to_owned(),
         base: String::new(),
         changes: String::new(),
@@ -411,6 +620,7 @@ struct Row {
     current: bool,
     change_id: Option<String>,
     worktree_path: PathBuf,
+    filter_title: String,
     title_label: String,
     base: String,
     changes: String,
@@ -457,15 +667,43 @@ fn print_rows(
         .then(|| terminal::size().ok())
         .flatten()
         .map(|(columns, _)| usize::from(columns.saturating_sub(1)));
-    let marker_width = 1;
     let title_width = width(rows, "Title", |row| &row.title_label);
-    let base_width = width(rows, "Base", |row| &row.base);
-    let changes_width = width(rows, "Changes", |row| &row.changes);
-    let divergence_width = width(rows, "Base↕", |row| &row.divergence);
-    let header = format!(
-        "{:<marker_width$} {:<title_width$}  {:<base_width$}  {:<changes_width$}  {:<divergence_width$}  Path",
-        "", "Title", "Base", "Changes", "Base↕"
-    );
+    let column_widths = [
+        width(rows, "Base", |row| &row.base),
+        width(rows, "Changes", |row| &row.changes),
+        width(rows, "Base↕", |row| &row.divergence),
+        width(rows, "Path", |row| &row.path),
+    ];
+    let mut columns = column_widths.len();
+    if let Some(max_width) = max_width {
+        while columns > 0
+            && 2 + title_width
+                + column_widths[..columns]
+                    .iter()
+                    .map(|width| width + 2)
+                    .sum::<usize>()
+                > max_width
+        {
+            columns -= 1;
+        }
+    }
+    let secondary_width = column_widths[..columns]
+        .iter()
+        .map(|width| width + 2)
+        .sum::<usize>();
+    let title_width = max_width
+        .map(|max_width| title_width.min(max_width.saturating_sub(2 + secondary_width)))
+        .unwrap_or(title_width);
+
+    let mut header = format!("  {}", padded("Title", title_width));
+    for (index, label) in ["Base", "Changes", "Base↕", "Path"]
+        .into_iter()
+        .take(columns)
+        .enumerate()
+    {
+        header.push_str("  ");
+        header.push_str(&padded(label, column_widths[index]));
+    }
     let header = fit_width(header, max_width);
     write!(output, "{}{newline}", bold(&header, is_terminal))?;
     for (index, row) in rows.iter().enumerate() {
@@ -476,16 +714,48 @@ fn print_rows(
         } else {
             '+'
         };
-        let base = format!("{:<base_width$}", row.base);
-        let changes = format!("{:<changes_width$}", row.changes);
-        let divergence = format!("{:<divergence_width$}", row.divergence);
-        let line = format!(
-            "{:<marker_width$} {:<title_width$}  {base}  {changes}  {divergence}  {}",
-            marker, row.title_label, row.path,
-        );
+        let values = [
+            row.base.as_str(),
+            row.changes.as_str(),
+            row.divergence.as_str(),
+            row.path.as_str(),
+        ];
+        let mut line = format!("{marker} {}", fitted_title(row, title_width));
+        for (index, value) in values.into_iter().take(columns).enumerate() {
+            line.push_str("  ");
+            line.push_str(&padded(value, column_widths[index]));
+        }
         write!(output, "{}{newline}", fit_width(line, max_width))?;
     }
     Ok(())
+}
+
+fn fitted_title(row: &Row, width: usize) -> String {
+    let fitted = row
+        .change_id
+        .as_deref()
+        .map(|id| format!(" · {id}"))
+        .filter(|suffix| row.title_label.ends_with(suffix))
+        .and_then(|suffix| {
+            let suffix_width = UnicodeWidthStr::width(suffix.as_str());
+            (suffix_width <= width).then(|| {
+                let title = row.title_label.strip_suffix(&suffix).unwrap_or_default();
+                format!(
+                    "{}{}",
+                    fit_width(title.to_owned(), Some(width - suffix_width)),
+                    suffix
+                )
+            })
+        })
+        .unwrap_or_else(|| fit_width(row.title_label.clone(), Some(width)));
+    padded(&fitted, width)
+}
+
+fn padded(value: &str, width: usize) -> String {
+    format!(
+        "{value}{}",
+        " ".repeat(width.saturating_sub(UnicodeWidthStr::width(value)))
+    )
 }
 
 fn fit_width(mut value: String, max_width: Option<usize>) -> String {
@@ -525,10 +795,10 @@ fn bold(value: &str, enabled: bool) -> String {
 fn width<'a>(rows: &'a [Row], header: &str, value: impl Fn(&'a Row) -> &'a str) -> usize {
     rows.iter()
         .map(value)
-        .map(|value| value.chars().count())
+        .map(UnicodeWidthStr::width)
         .max()
         .unwrap_or(0)
-        .max(header.chars().count())
+        .max(UnicodeWidthStr::width(header))
 }
 
 fn init(shell: Shell) -> Result<()> {
@@ -597,9 +867,12 @@ fn archive(git: &Git, force: bool) -> Result<()> {
     let Some(selected) = selected else {
         return Ok(());
     };
-    if selected.worktree_path == current {
+    let archive_destination = if selected.worktree_path == current {
         require_shell_navigation()?;
-    }
+        Some(navigation_destination(git, &git.primary_path()?)?)
+    } else {
+        None
+    };
     let session = Session::for_workspace(&selected.worktree_path)?;
     let _lock = session.lock()?;
     let change_id = selected
@@ -607,12 +880,29 @@ fn archive(git: &Git, force: bool) -> Result<()> {
         .as_deref()
         .context("selected destination is not a Change")?;
     let prepared = git.prepare_archive(change_id, force)?;
-    let archive = git.finish_archive(prepared)?;
+    git.finish_archive(prepared)?;
     eprintln!("✓ Archived {}", selected.title_label);
-    if let Some(path) = archive.navigate_to {
+    if let Some(path) = archive_destination {
         navigate(&path)?;
     }
     Ok(())
+}
+
+fn navigation_destination(git: &Git, destination_root: &Path) -> Result<PathBuf> {
+    if !destination_root.is_dir() {
+        bail!("workspace is missing: {}", destination_root.display());
+    }
+    let current_root = git.current_path()?;
+    let invocation = std::env::current_dir().context("failed to resolve current directory")?;
+    let relative = invocation
+        .strip_prefix(&current_root)
+        .unwrap_or(Path::new(""));
+    let candidate = destination_root.join(relative);
+    Ok(if candidate.is_dir() {
+        candidate
+    } else {
+        destination_root.to_owned()
+    })
 }
 
 fn navigate(path: &Path) -> Result<()> {
