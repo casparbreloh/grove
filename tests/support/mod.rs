@@ -194,38 +194,6 @@ impl TestRepo {
         )
     }
 
-    pub fn navigator_without_directive_in_pty(
-        &self,
-        directory: &Path,
-        ready: &str,
-        input: &[u8],
-    ) -> Output {
-        let mut command = self.sh_picker(directory, "");
-        command.env_remove("GROVE_DIRECTIVE_CD_FILE");
-        self.run_pty(
-            command,
-            ready,
-            input,
-            "Grove navigator without shell integration",
-        )
-    }
-
-    pub fn navigator_with_invalid_directive_in_pty(
-        &self,
-        directory: &Path,
-        ready: &str,
-        input: &[u8],
-    ) -> Output {
-        let mut command = self.sh_picker(directory, "");
-        command.env("GROVE_DIRECTIVE_CD_FILE", &self.repo);
-        self.run_pty(
-            command,
-            ready,
-            input,
-            "Grove navigator with invalid directive",
-        )
-    }
-
     pub fn navigator_from_shell_in_pty(
         &self,
         directory: &Path,
@@ -294,7 +262,7 @@ impl TestRepo {
     pub fn navigator_in_short_pty(&self) -> Output {
         let mut command = self.sh_picker(&self.repo, "");
         command.env("GROVE_TEST_ROWS", "8");
-        self.run_pty(command, "New Change", b"\x1b", "short Grove navigator")
+        self.run_pty(command, "Main", b"\x1b", "short Grove navigator")
     }
 
     pub fn agent_log(&self) -> String {

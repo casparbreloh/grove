@@ -116,8 +116,6 @@ enum NavigatorAction {
     Pi(Row),
     Workspace(Row),
     Main,
-    NewPi,
-    NewWorkspace,
 }
 
 fn navigator(git: &Git) -> Result<()> {
@@ -141,15 +139,6 @@ fn navigator(git: &Git) -> Result<()> {
         }
         NavigatorAction::Main => {
             let destination = navigation_destination(git, &git.primary_path()?)?;
-            navigate(&destination)
-        }
-        NavigatorAction::NewPi => new(git, None),
-        NavigatorAction::NewWorkspace => {
-            require_shell_navigation()?;
-            let change = git.create_change(None)?;
-            let path = change.workspace();
-            eprintln!("✓ Created {} at {}", change.id, path.display());
-            let destination = navigation_destination(git, &path)?;
             navigate(&destination)
         }
     }
@@ -177,7 +166,7 @@ fn navigate_raw(
     rows: &[Row],
     rendered_lines: &mut usize,
 ) -> Result<Option<NavigatorAction>> {
-    let mut selected = 1;
+    let mut selected = usize::from(!rows.is_empty());
     redraw_navigator(output, main, rows, selected, rendered_lines)?;
     loop {
         let key = match event::read().context("read navigator input")? {
@@ -201,7 +190,7 @@ fn navigate_raw(
                 None
             }
             KeyCode::Down => {
-                selected = (selected + 1).min(rows.len() + 1);
+                selected = (selected + 1).min(rows.len());
                 None
             }
             _ => continue,
@@ -217,17 +206,12 @@ fn navigator_action(rows: &[Row], selected: usize, shell: bool) -> Option<Naviga
     if selected == 0 {
         return Some(NavigatorAction::Main);
     }
-    if let Some(row) = rows.get(selected - 1) {
-        return Some(if shell {
+    rows.get(selected - 1).map(|row| {
+        if shell {
             NavigatorAction::Workspace(row.clone())
         } else {
             NavigatorAction::Pi(row.clone())
-        });
-    }
-    Some(if shell {
-        NavigatorAction::NewWorkspace
-    } else {
-        NavigatorAction::NewPi
+        }
     })
 }
 
@@ -288,8 +272,7 @@ fn render_navigator(
     let shown = rows.iter().skip(start).take(capacity).collect::<Vec<_>>();
     let styled = navigator_styling();
 
-    let new_row = Row::new_change();
-    let mut visible = Vec::with_capacity(shown.len() + 2);
+    let mut visible = Vec::with_capacity(shown.len() + 1);
     visible.push((0, main));
     visible.extend(
         shown
@@ -297,13 +280,13 @@ fn render_navigator(
             .enumerate()
             .map(|(index, row)| (start + index + 1, *row)),
     );
-    visible.push((rows.len() + 1, &new_row));
     let layout_rows = visible.iter().map(|(_, row)| *row).collect::<Vec<_>>();
     let layout = TableLayout::new(&layout_rows, max_width, 2);
     writeln!(output, "{}\r", bold(&layout.header(), styled))?;
     for (logical_index, row) in visible {
         writeln!(output, "{}\r", layout.row(row, logical_index == selected))?;
     }
+    writeln!(output, "\r")?;
     let legend = if selected == 0 {
         "  ↑↓ move  enter shell  esc close"
     } else {
@@ -314,7 +297,7 @@ fn render_navigator(
         "{}\r",
         dim(&fit_width(legend.to_owned(), Some(max_width)), styled)
     )?;
-    Ok(layout_rows.len() + 2)
+    Ok(layout_rows.len() + 3)
 }
 
 struct TableLayout {
@@ -631,7 +614,7 @@ fn sync(git: &Git) -> Result<()> {
 fn change_rows(git: &Git) -> Result<Vec<Row>> {
     let worktrees = git.inventory()?;
     let current = git.current_path()?;
-    let mut title_counts = HashMap::from([("Main", 1_usize), ("New Change", 1)]);
+    let mut title_counts = HashMap::from([("Main", 1_usize)]);
     for worktree in &worktrees {
         if let Some(title) = &worktree.title {
             *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
@@ -692,21 +675,6 @@ struct Row {
     changes: String,
     divergence: String,
     path: String,
-}
-
-impl Row {
-    fn new_change() -> Self {
-        Self {
-            current: false,
-            change_id: None,
-            worktree_path: PathBuf::new(),
-            title_label: "New Change".to_owned(),
-            base: String::new(),
-            changes: String::new(),
-            divergence: String::new(),
-            path: String::new(),
-        }
-    }
 }
 
 fn format_changes(status: &git::Status) -> String {
