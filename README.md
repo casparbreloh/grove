@@ -30,17 +30,16 @@ argument. `--from` accepts any revision that resolves to a commit; `--from @`
 uses the invoking worktree's current commit. Without `--from`, Grove starts at
 the repository's detected default branch.
 
-Bare `grove` opens a transient inline navigator. Main is pinned first, active
-Changes appear in the middle, and New Change is pinned last. The arrow keys move
-the selection. Enter launches or natively resumes Pi for a Change, while Tab
-navigates the calling shell to it. Main navigates to the primary worktree with
-either key. On New Change, Enter creates and launches Pi while Tab creates for
-shell work. Escape or Ctrl-C closes the navigator.
+Bare `grove` opens a transient inline navigator. Main is pinned first and active
+Changes follow it. The arrow keys move the selection. Enter launches or natively
+resumes Pi for a Change, while Tab navigates the calling shell to it. Main
+navigates to the primary worktree with either key. Escape or Ctrl-C closes the
+navigator. Change creation remains explicit through `grove new`.
 
 The navigator uses the terminal's default foreground throughout, with a plain
-`›` selection marker and no selected-row emphasis. Only the concise key legend
-below the rows is muted and it aligns with the Title column. The header remains
-bold. Styling honors `NO_COLOR` and `TERM=dumb`. Until naming succeeds, Grove
+`›` selection marker and no selected-row emphasis. One blank line separates the
+rows from the concise muted key legend, which aligns with the Title column. The
+header remains bold. Styling honors `NO_COLOR` and `TERM=dumb`. Until naming succeeds, Grove
 shows `Untitled`; duplicate and untitled rows include a short opaque ID only to
 disambiguate them. Ordinary,
 detached, and otherwise unmanaged Git worktrees are excluded. On narrow
@@ -74,9 +73,8 @@ branch without a configured upstream; tracking branches are preserved.
 
 Navigator shell actions write a navigation directive for the calling shell.
 They preserve the current relative subdirectory when that directory exists in
-the destination, otherwise they enter the destination root. Creating through
-New Change with Tab validates shell integration before creating anything.
-Archiving the current Change also navigates to Main. After managed Pi exits, the
+the destination, otherwise they enter the destination root. Archiving the
+current Change also navigates to Main. After managed Pi exits, the
 caller stays in the directory where it invoked Grove.
 
 ## Native Pi sessions
@@ -172,7 +170,7 @@ command/flag completion. It does not edit shell configuration and does not
 complete Change titles as positional arguments because the navigator and
 primary `archive` are interactive. Add the appropriate line to your shell
 configuration so it loads in every terminal; shell navigation fails when the
-wrapper is not loaded, and shell-based creation fails before mutation.
+wrapper is not loaded.
 
 For Fish, add this to `~/.config/fish/config.fish`:
 

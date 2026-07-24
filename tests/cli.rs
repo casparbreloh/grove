@@ -123,35 +123,6 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             )),
             "{shell}: {terminal}"
         );
-
-        let before = shell_repo.change_capsules();
-        let before_pi = shell_repo.agent_log().matches("mode=interactive").count();
-        let output = shell_repo.navigator_from_shell_in_pty(
-            shell_repo.path(),
-            shell,
-            "New Change",
-            b"\x1b[B\t",
-        );
-        assert!(output.status.success(), "{shell}: {output:?}");
-        let created = shell_repo
-            .change_capsules()
-            .into_iter()
-            .find(|capsule| !before.contains(capsule))
-            .expect("New Change Tab creates a Change");
-        let terminal = stdout(&output);
-        assert!(
-            terminal.contains(&format!(
-                "__PWD__{}",
-                created.join("workspace").canonicalize().unwrap().display()
-            )),
-            "{shell}: {terminal}"
-        );
-        assert_eq!(
-            shell_repo.agent_log().matches("mode=interactive").count(),
-            before_pi,
-            "New Change Tab must not open Pi"
-        );
-        assert_inline_terminal_restored(&terminal);
     }
 
     let change = repo.create_change(None);
@@ -606,7 +577,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
 }
 
 #[test]
-fn bare_navigator_restores_the_plain_picker_and_dispatches_pinned_rows() {
+fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     let repo = TestRepo::new();
     let mut changes = [
         repo.create_change(None),
@@ -645,18 +616,12 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_pinned_rows() {
         .expect("first Change row");
     let deploy = terminal.find("Deploy API").expect("Change row");
     let untitled = terminal.find("Untitled").expect("untitled Change row");
-    let titled_new = terminal
-        .find("New Change ·")
-        .expect("Change title colliding with pinned New Change");
-    let new = terminal.rfind("New Change").expect("pinned New Change row");
+    let titled_new = terminal.find("New Change").expect("New Change title");
     assert!(
-        main < first
-            && first < deploy
-            && deploy < untitled
-            && untitled < titled_new
-            && titled_new < new,
+        main < first && first < deploy && deploy < untitled && untitled < titled_new,
         "{terminal}"
     );
+    assert_eq!(terminal.matches("New Change").count(), 1, "{terminal}");
     for change in &changes {
         assert!(terminal.contains(&change.id), "{terminal}");
     }
@@ -674,8 +639,8 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_pinned_rows() {
     );
     let legend = terminal.find("  ↑↓ move").expect("indented legend");
     assert_eq!(
-        terminal[new..legend].matches("\r\n").count(),
-        1,
+        terminal[titled_new..legend].matches("\r\n").count(),
+        2,
         "{terminal}"
     );
     assert!(terminal.contains("enter agent"), "{terminal}");
@@ -776,36 +741,6 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_pinned_rows() {
 }
 
 #[test]
-fn pinned_new_change_actions_create_only_after_their_required_validation() {
-    let new_pi = TestRepo::new();
-    let created = new_pi.navigator_in_pty(new_pi.path(), "New Change", b"\r");
-    assert!(created.status.success(), "{created:?}");
-    assert_eq!(new_pi.change_capsules().len(), 1);
-    assert_eq!(new_pi.agent_log().matches("mode=interactive").count(), 1);
-    assert!(!new_pi.navigation_exists());
-    assert_inline_terminal_restored(&stdout(&created));
-
-    let blocked = TestRepo::new();
-    let worktrees = blocked.git(["worktree", "list", "--porcelain"]);
-    let output = blocked.navigator_without_directive_in_pty(blocked.path(), "New Change", b"\t");
-    assert!(!output.status.success(), "{output:?}");
-    assert!(stdout(&output).contains("shell integration is not loaded"));
-    assert!(blocked.change_capsules().is_empty());
-    assert_eq!(blocked.git(["worktree", "list", "--porcelain"]), worktrees);
-    assert_inline_terminal_restored(&stdout(&output));
-
-    let invalid = TestRepo::new();
-    let worktrees = invalid.git(["worktree", "list", "--porcelain"]);
-    let output =
-        invalid.navigator_with_invalid_directive_in_pty(invalid.path(), "New Change", b"\t");
-    assert!(!output.status.success(), "{output:?}");
-    assert!(stdout(&output).contains("shell navigation directive"));
-    assert!(invalid.change_capsules().is_empty());
-    assert_eq!(invalid.git(["worktree", "list", "--porcelain"]), worktrees);
-    assert_inline_terminal_restored(&stdout(&output));
-}
-
-#[test]
 fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
     let repo = TestRepo::new();
     let first = repo.create_change(None);
@@ -817,19 +752,19 @@ fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
         first.path.strip_prefix(repo.home()).unwrap().display()
     );
 
-    let navigated = repo.navigator_in_narrow_pty("New Change", b"\x1b[B\x1b");
+    let navigated = repo.navigator_in_narrow_pty("A Very Long", b"\x1b[B\x1b");
     assert!(navigated.status.success(), "{navigated:?}");
     let terminal = stdout(&navigated);
     assert!(!terminal.contains(&full_path), "{terminal}");
     assert!(terminal.contains(&first.id), "{terminal}");
     assert!(terminal.contains(&second.id), "{terminal}");
-    assert!(terminal.contains("New Change"), "{terminal}");
+    assert!(terminal.contains("↑↓ move"), "{terminal}");
     assert!(first.path.exists() && second.path.exists());
     assert_inline_terminal_restored(&terminal);
 
     let short = repo.navigator_in_short_pty();
     assert!(short.status.success(), "{short:?}");
-    assert!(stdout(&short).contains("New Change"), "{}", stdout(&short));
+    assert!(stdout(&short).contains("Main"), "{}", stdout(&short));
     assert_inline_terminal_restored(&stdout(&short));
 }
 
@@ -1528,7 +1463,7 @@ fn archive_preserves_native_sessions_and_excludes_change() {
     assert!(record["archived_at"].is_number());
     assert_eq!(record["closing"], serde_json::Value::Null);
     assert!(!capsule.join("artifacts").exists());
-    let navigator = repo.navigator_without_color_in_pty(repo.path(), "New Change", b"\x1b");
+    let navigator = repo.navigator_without_color_in_pty(repo.path(), "Main", b"\x1b");
     assert!(navigator.status.success(), "{navigator:?}");
     assert!(!stdout(&navigator).contains("Archive Finished Change"));
     assert_inline_terminal_restored(&stdout(&navigator));
