@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 
-const LINK_TYPE = "grove";
-const LINK_SCHEMA = 1;
+const LINK_TYPE = "grove.change";
 const NAMING_LIFECYCLES = new Set(["startup", "new", "fork"]);
 
-export default function grove(pi, spawnProcess = spawn) {
+export default function changeSession(pi, spawnProcess = spawn) {
   let currentSessionId;
   let armedSessionId;
 
@@ -20,11 +19,10 @@ export default function grove(pi, spawnProcess = spawn) {
       (entry) =>
         entry.type === "custom" &&
         entry.customType === LINK_TYPE &&
-        entry.data?.schema === LINK_SCHEMA &&
         entry.data?.changeId === changeId,
     );
     if (!linked) {
-      pi.appendEntry(LINK_TYPE, { schema: LINK_SCHEMA, changeId });
+      pi.appendEntry(LINK_TYPE, { changeId });
     }
     if (NAMING_LIFECYCLES.has(event.reason) && !pi.getSessionName()) {
       armedSessionId = sessionId;

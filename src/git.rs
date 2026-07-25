@@ -43,6 +43,11 @@ pub(crate) enum WorktreeState {
     Missing,
 }
 
+pub(crate) struct CurrentChange {
+    pub(crate) path: PathBuf,
+    pub(crate) title: Option<String>,
+}
+
 pub(crate) struct WorktreeView {
     pub(crate) id: String,
     pub(crate) title: Option<String>,
@@ -65,6 +70,19 @@ pub(crate) struct SyncResult {
     pub(crate) archived: usize,
     pub(crate) rebased: usize,
     pub(crate) skipped: usize,
+}
+
+pub(crate) struct PushRemote {
+    pub(crate) name: String,
+    pub(crate) url: String,
+}
+
+pub(crate) struct ShipSnapshot {
+    pub(crate) staged: bool,
+    pub(crate) summary: String,
+    head_oid: String,
+    index_tree: String,
+    worktree_state: Vec<u8>,
 }
 
 pub(crate) struct PreparedArchive {
@@ -251,6 +269,267 @@ impl Git {
         self.current_root()
     }
 
+    pub(crate) fn current_change(&self) -> Result<Option<CurrentChange>> {
+        let current = self.current_root()?;
+        let repository = self.repository()?;
+        for (capsule, record) in repository.records()? {
+            if record.state.is_active() && capsule.join("workspace") == current {
+                let worktrees = self.worktrees()?;
+                let worktree = managed_worktree(&worktrees, &current)
+                    .context("current Change has no expected worktree")?;
+                if worktree.prunable {
+                    bail!("current Change worktree is missing");
+                }
+                return Ok(Some(CurrentChange {
+                    path: current,
+                    title: record.title,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn push_remote(&self, path: &Path) -> Result<PushRemote> {
+        self.validate_resolved_state(path)?;
+        let remotes = self.text_at(path, &["remote"])?;
+        let remotes = remotes.lines().collect::<Vec<_>>();
+        let branch = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let branch_push_remote = branch
+            .as_deref()
+            .map(|branch| self.config_optional_at(path, &format!("branch.{branch}.pushRemote")))
+            .transpose()?
+            .flatten();
+        let default_push_remote = self.config_optional_at(path, "remote.pushDefault")?;
+        let branch_remote = branch
+            .as_deref()
+            .map(|branch| self.config_optional_at(path, &format!("branch.{branch}.remote")))
+            .transpose()?
+            .flatten();
+        let configured = branch_push_remote.or(default_push_remote).or(branch_remote);
+        if configured.as_deref() == Some(".") {
+            bail!("cannot ship without a network push remote");
+        }
+        let remote = configured
+            .or_else(|| remotes.contains(&"origin").then(|| "origin".to_owned()))
+            .or_else(|| (remotes.len() == 1).then(|| remotes[0].to_owned()))
+            .context("cannot ship without a usable push remote")?;
+        if !remotes.contains(&remote.as_str()) {
+            bail!("configured push remote '{remote}' does not exist");
+        }
+        if !remote.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        }) {
+            bail!("push remote has an unsupported name");
+        }
+        let url = self
+            .text_at(path, &["remote", "get-url", "--push", &remote])
+            .with_context(|| format!("push remote '{remote}' has no usable URL"))?;
+        Ok(PushRemote { name: remote, url })
+    }
+
+    pub(crate) fn fetch_ship_base(
+        &self,
+        path: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<String> {
+        let tracking = format!("refs/remotes/{remote}/{branch}");
+        let refspec = format!("+refs/heads/{branch}:{tracking}");
+        self.checked_at(
+            path,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--no-prune",
+                "--no-recurse-submodules",
+                remote,
+                &refspec,
+            ],
+        )?;
+        Ok(tracking)
+    }
+
+    pub(crate) fn remote_branch_exists(
+        &self,
+        path: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let args = ["ls-remote", "--exit-code", "--heads", remote, branch];
+        let output = self.raw_at(path, &args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(2) => Ok(false),
+            _ => {
+                check(output, &args)?;
+                unreachable!()
+            }
+        }
+    }
+
+    pub(crate) fn has_publishable_work(&self, path: &Path, base: &str) -> Result<bool> {
+        if self.is_dirty(path)? {
+            return Ok(true);
+        }
+        let count = self.text_at(path, &["rev-list", "--count", &format!("{base}..HEAD")])?;
+        Ok(count != "0")
+    }
+
+    pub(crate) fn prepare_ship(&self, path: &Path, branch: &str) -> Result<()> {
+        self.validate_resolved_state(path)?;
+        match self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned))
+        {
+            Some(current) if current != branch => {
+                bail!("Change is already on publication branch '{current}', expected '{branch}'")
+            }
+            Some(_) => {}
+            None if self.branch_exists_at(path, branch)? => {
+                bail!("publication branch '{branch}' already belongs to another Change")
+            }
+            None => {
+                self.checked_at(path, &["switch", "--create", branch])?;
+            }
+        }
+        self.checked_at(path, &["add", "--all"])?;
+        Ok(())
+    }
+
+    pub(crate) fn capture_ship_snapshot(&self, path: &Path, base: &str) -> Result<ShipSnapshot> {
+        let staged = self.differs_at(path, &["diff", "--cached", "--quiet", "--exit-code"])?;
+        let head_oid = self.text_at(path, &["rev-parse", "HEAD"])?;
+        let index_tree = self.text_at(path, &["write-tree"])?;
+        let worktree_state = self.output_bytes_at(
+            path,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?;
+        let files = self.text_at(path, &["diff", "--name-status", base])?;
+        let statistics = self.text_at(path, &["diff", "--stat", base])?;
+        let incremental_files = self.text_at(path, &["diff", "--cached", "--name-status"])?;
+        let incremental_statistics = self.text_at(path, &["diff", "--cached", "--stat"])?;
+        let subjects = self.text_at(path, &["log", "--format=%s", &format!("{base}..HEAD")])?;
+        let patch = self.checked_at(path, &["diff", "--cached", "--unified=0"])?;
+        let truncated = patch.len() > 32 * 1024;
+        let patch = String::from_utf8_lossy(&patch[..patch.len().min(32 * 1024)]);
+        let truncation = if truncated {
+            "\nThe detailed patch is truncated. Use read selectively if the intent remains unclear."
+        } else {
+            ""
+        };
+        Ok(ShipSnapshot {
+            staged,
+            head_oid,
+            index_tree,
+            worktree_state,
+            summary: format!(
+                "Complete changed files:\n{files}\n\nComplete diff statistics:\n{statistics}\n\nExisting commit subjects:\n{subjects}\n\nNewly staged files:\n{incremental_files}\n\nNewly staged statistics:\n{incremental_statistics}\n\nNewly staged zero-context patch:\n{patch}{truncation}"
+            ),
+        })
+    }
+
+    pub(crate) fn validate_ship_snapshot(
+        &self,
+        path: &Path,
+        branch: &str,
+        context: &ShipSnapshot,
+    ) -> Result<()> {
+        let current = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if current.as_deref() != Some(branch)
+            || self.text_at(path, &["rev-parse", "HEAD"])? != context.head_oid
+            || self.text_at(path, &["write-tree"])? != context.index_tree
+            || self.output_bytes_at(
+                path,
+                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            )? != context.worktree_state
+        {
+            bail!("Change Git state changed while shipping; rerun grove ship");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn commit_ship(
+        &self,
+        path: &Path,
+        subject: &str,
+        context: &ShipSnapshot,
+    ) -> Result<()> {
+        self.checked_at(path, &["commit", "--quiet", "--message", subject])?;
+        if self.text_at(path, &["rev-parse", "HEAD^"])? != context.head_oid
+            || self.text_at(path, &["rev-parse", "HEAD^{tree}"])? != context.index_tree
+        {
+            bail!("Change Git state changed while committing; refusing to push");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_clean_ship(&self, path: &Path) -> Result<()> {
+        if self.is_dirty(path)? {
+            bail!("Change Git state changed while shipping; rerun grove ship");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn push_ship(&self, path: &Path, remote: &str, branch: &str) -> Result<()> {
+        let head_oid = self.text_at(path, &["rev-parse", "HEAD"])?;
+        let destination = format!("{head_oid}:refs/heads/{branch}");
+        self.checked_at(path, &["push", remote, &destination])?;
+        self.checked_at(
+            path,
+            &["config", &format!("branch.{branch}.remote"), remote],
+        )?;
+        self.checked_at(
+            path,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn differs_at(&self, path: &Path, args: &[&str]) -> Result<bool> {
+        let output = self.raw_at(path, args)?;
+        match output.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => {
+                check(output, args)?;
+                unreachable!()
+            }
+        }
+    }
+
+    fn validate_resolved_state(&self, path: &Path) -> Result<()> {
+        if self.status(path)?.conflicts > 0 {
+            bail!("cannot ship a Change with unresolved conflicts");
+        }
+        for marker in [
+            "MERGE_HEAD",
+            "CHERRY_PICK_HEAD",
+            "REVERT_HEAD",
+            "rebase-merge",
+            "rebase-apply",
+        ] {
+            let marker = PathBuf::from(self.text_at(path, &["rev-parse", "--git-path", marker])?);
+            let marker = if marker.is_absolute() {
+                marker
+            } else {
+                path.join(marker)
+            };
+            if marker.exists() {
+                bail!("cannot ship while a Git operation is in progress");
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn sync(&self) -> Result<SyncResult> {
         let worktrees = self.worktrees()?;
         let primary = worktrees.first().context("repository has no worktrees")?;
@@ -290,6 +569,19 @@ impl Git {
         if self.is_dirty(&primary.path)? {
             bail!("primary worktree has uncommitted changes");
         }
+
+        let repository = self.repository()?;
+        let mut records = repository
+            .records()?
+            .into_iter()
+            .filter(|(_, record)| record.state.is_active())
+            .map(|(capsule, record)| (record.created_at, capsule, record))
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.2.id.cmp(&right.2.id))
+        });
 
         let upstream_refspec = format!("+{merge_ref}:{upstream}");
         self.checked_at(
@@ -341,18 +633,6 @@ impl Git {
             bail!("primary branch changed while fast-forwarding to '{upstream}'");
         }
 
-        let repository = self.repository()?;
-        let mut records = repository
-            .records()?
-            .into_iter()
-            .filter(|(_, record)| record.state.is_active())
-            .map(|(capsule, record)| (record.created_at, capsule, record))
-            .collect::<Vec<_>>();
-        records.sort_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.2.id.cmp(&right.2.id))
-        });
         let identities = records
             .iter()
             .map(|(_, _, record)| (record.id.clone(), record.title.clone()))
@@ -595,7 +875,8 @@ impl Git {
                 .closing
                 .context("closing Change has no closing facts")?;
             let expected_path = capsule.join("workspace");
-            if managed_worktree(&worktrees, &expected_path)
+            let current_worktrees = self.worktrees()?;
+            if managed_worktree(&current_worktrees, &expected_path)
                 .is_some_and(|worktree| !worktree.prunable && worktree.path.exists())
             {
                 restore_active(&capsule, &record.id)?;
@@ -640,7 +921,7 @@ impl Git {
         if target.prunable || !target.path.exists() {
             bail!("worktree is missing: {}", target.path.display());
         }
-        if target.locked && !force {
+        if target.locked {
             bail!("worktree is locked: {}", target.path.display());
         }
         if !force && self.is_dirty(&target.path)? {
@@ -1161,6 +1442,21 @@ impl Git {
     fn text_at(&self, cwd: &Path, args: &[&str]) -> Result<String> {
         self.checked_at(cwd, args)
             .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
+    }
+
+    fn config_optional_at(&self, cwd: &Path, key: &str) -> Result<Option<String>> {
+        let args = ["config", "--get", key];
+        let output = self.raw_at(cwd, &args)?;
+        match output.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            )),
+            Some(1) => Ok(None),
+            _ => {
+                check(output, &args)?;
+                unreachable!()
+            }
+        }
     }
 
     fn symbolic_head_at(&self, cwd: &Path) -> Result<Option<String>> {

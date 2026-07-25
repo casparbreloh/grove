@@ -1,8 +1,12 @@
 #!/bin/sh
 
 mode=interactive
+schema=
+previous=
 for argument do
-  if test "$argument" = --print; then mode=print; fi
+  if test "$previous" = --mode; then mode=$argument; fi
+  if test "$previous" = --structured-output-schema; then schema=$argument; fi
+  previous=$argument
 done
 
 printf 'mode=%s\ncwd=%s\ndirective=%s\n' "$mode" "$PWD" "${GROVE_DIRECTIVE_CD_FILE-absent}" >> "$GROVE_TEST_AGENT_LOG"
@@ -10,14 +14,31 @@ for argument do
   printf 'arg=<%s>\n' "$argument" >> "$GROVE_TEST_AGENT_LOG"
 done
 
-if test "$mode" = print; then
-  if test -n "${GROVE_TEST_TITLE_BLOCK-}"; then
-    while test -e "$GROVE_TEST_TITLE_BLOCK"; do sleep 0.05; done
-  fi
-  if test -n "${GROVE_TEST_TITLE-}"; then
-    printf '%s\n' "$GROVE_TEST_TITLE"
-  fi
-  exit "${GROVE_TEST_TITLE_EXIT-0}"
+if test "$mode" = rpc; then
+  while IFS= read -r request; do
+    printf 'rpc=%s\n' "$request" >> "$GROVE_TEST_AGENT_LOG"
+    if test -n "${GROVE_TEST_RPC_BLOCK-}"; then
+      while test -e "$GROVE_TEST_RPC_BLOCK"; do sleep 0.05; done
+    fi
+    if test "${GROVE_TEST_TITLE_EXIT-0}" -ne 0; then
+      exit "$GROVE_TEST_TITLE_EXIT"
+    fi
+    printf '{"type":"response","command":"prompt","success":true}\n'
+    case "$schema" in
+      *'"change"'*)
+        if test -n "${GROVE_TEST_TITLE-}"; then
+          printf '{"type":"tool_execution_end","toolName":"structured_output","result":{"content":[],"details":{"change":"%s"}},"isError":false}\n' "$GROVE_TEST_TITLE"
+        fi
+        ;;
+      *)
+        if test -n "${GROVE_TEST_SHIP_OUTPUT-}"; then
+          printf '{"type":"tool_execution_end","toolName":"structured_output","result":{"content":[],"details":%s},"isError":false}\n' "$GROVE_TEST_SHIP_OUTPUT"
+        fi
+        ;;
+    esac
+    printf '{"type":"agent_settled"}\n'
+  done
+  exit 0
 fi
 
 session_dir=
@@ -38,8 +59,8 @@ if test -n "$session_dir"; then
   fi
 
   if test -n "${GROVE_TEST_AGENT_PROMPT-}"; then
-    if ! grep -q '"customType":"grove"' "$session_file"; then
-      printf '{"type":"custom","id":"grove-link","parentId":null,"timestamp":"2026-01-01T00:00:00.001Z","customType":"grove","data":{"schema":1,"changeId":"%s"}}\n' "$GROVE_CHANGE_ID" >> "$session_file"
+    if ! grep -q '"customType":"grove.change"' "$session_file"; then
+      printf '{"type":"custom","id":"grove-link","parentId":null,"timestamp":"2026-01-01T00:00:00.001Z","customType":"grove.change","data":{"changeId":"%s"}}\n' "$GROVE_CHANGE_ID" >> "$session_file"
     fi
     title_file="$session_dir/.title-$session_id"
     (

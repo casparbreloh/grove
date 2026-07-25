@@ -11,13 +11,16 @@ edge cases.
 
 ## Layout
 
-- `src/main.rs` owns Clap definitions, rendering, picker/shell integration, and navigation.
+- `src/main.rs` owns Clap types and command dispatch only.
+- `src/new.rs`, `src/sync.rs`, `src/ship.rs`, and `src/archive.rs` own their command flows; ship also owns publication branch, state validation, and the private `gh`/`glab` boundary.
+- `src/navigator.rs` owns Change rows, the navigator, picker, terminal rendering, and calling-shell navigation shared with the archive flow.
+- `src/init.rs` owns shell initialization.
 - `src/change.rs` owns repository directories, immutable Change identity, minimal capsule records, titles, and lifecycle transitions.
 - `src/git.rs` is the deep Git module. It owns creation lineage, path-based workspace inventory, integration detection, rollback, branch cleanup, and destructive validation; keep raw Git operations private there.
-- `src/session.rs` is the narrow Pi adapter: validation, capsule lock, direct blocking launch/resume, extension materialization, and isolated title inference.
-- `src/pi-extension.ts` links native Pi sessions and starts fire-and-forget naming without delaying Pi.
+- `src/session.rs` is the narrow Pi adapter: validation, capsule lock, direct blocking launch/resume, extension materialization, and isolated structured workers.
+- `src/extensions/` contains the flat Pi extension sources materialized by the session adapter.
 - `src/shell.fish` and `src/shell.zsh` are thin calling-shell wrappers.
-- `tests/cli.rs` contains coherent compiled-CLI workflows; `tests/support/` owns real disposable repositories and the fake external Pi seam.
+- `tests/new.rs`, `tests/sync.rs`, `tests/ship.rs`, `tests/archive.rs`, and `tests/navigator.rs` contain command-first compiled-CLI workflows matching `src/`; `tests/support/` owns real disposable repositories and minimal fake external seams.
 
 ## Commands
 
@@ -37,7 +40,7 @@ requires Node.js, matching Pi's runtime.
 
 - For behavior changes, invoke the `tdd` skill when available. In every environment, observe RED at the compiled CLI seam, implement the smallest GREEN change, then refactor with the suite green.
 - Exercise the real binary against real disposable Git repositories. Do not mock Git.
-- Fake only the external `pi` executable; keep its native session shape and launch contract visible.
+- Fake only external process boundaries (`pi`, `gh`, `glab`, and SSH transport); keep their native contracts visible and never mock Git.
 - Keep a minimal, potent suite that describes only the current pre-1.0 product. Fold changed behavior and enduring safety boundaries into the smallest coherent replacement workflows, replace obsolete tests and assertions, and do not retain regression or compatibility tests for removed behavior.
 - Assert user-visible output plus Git and filesystem state, not private call structure.
 

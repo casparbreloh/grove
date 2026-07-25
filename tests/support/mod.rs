@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{
     env,
     ffi::OsStr,
@@ -19,6 +21,7 @@ pub struct TestRepo {
     git_config: PathBuf,
     navigation: PathBuf,
     agent_log: PathBuf,
+    shipping_log: PathBuf,
     agent: PathBuf,
 }
 
@@ -42,6 +45,7 @@ impl TestRepo {
         let git_config = root.path().join("gitconfig");
         let navigation = root.path().join("navigation");
         let agent_log = root.path().join("agent.log");
+        let shipping_log = root.path().join("shipping.log");
         let agent = root.path().join("agent");
 
         let fixture = Self {
@@ -51,6 +55,7 @@ impl TestRepo {
             git_config,
             navigation,
             agent_log,
+            shipping_log,
             agent,
         };
         fixture.git_from(
@@ -63,6 +68,8 @@ impl TestRepo {
         );
         fixture.initialize(&fixture.repo);
         fixture.configure_agent();
+        fixture.configure_shipping();
+        fixture.configure_pty();
         fixture
     }
 
@@ -185,6 +192,10 @@ impl TestRepo {
         assert_cmd::Command::from_std(self.compiled_grove(directory))
     }
 
+    pub fn grove_process_from(&self, directory: &Path) -> Command {
+        self.compiled_grove(directory)
+    }
+
     pub fn navigator_in_pty(&self, directory: &Path, ready: &str, input: &[u8]) -> Output {
         self.run_pty(
             self.sh_picker(directory, ""),
@@ -269,14 +280,14 @@ impl TestRepo {
         fs::read_to_string(&self.agent_log).unwrap_or_default()
     }
 
-    pub fn block_title_generator(&self) -> PathBuf {
-        let gate = self._root.path().join("title.block");
-        fs::write(&gate, "blocked").expect("create title generator gate");
+    pub fn block_rpc_worker(&self) -> PathBuf {
+        let gate = self._root.path().join("rpc.block");
+        fs::write(&gate, "blocked").expect("create RPC worker gate");
         gate
     }
 
-    pub fn release_title_generator(&self, gate: &Path) {
-        fs::remove_file(gate).expect("release title generator");
+    pub fn release_rpc_worker(&self, gate: &Path) {
+        fs::remove_file(gate).expect("release RPC worker");
     }
 
     pub fn change_record(&self, capsule: &Path) -> serde_json::Value {
@@ -407,19 +418,8 @@ impl TestRepo {
     }
 
     fn pty(&self, directory: &Path, program: &OsStr) -> Command {
-        let mut command = Command::new("script");
-        command
-            .args([
-                OsStr::new("-q"),
-                OsStr::new("/dev/null"),
-                OsStr::new("/bin/sh"),
-                OsStr::new("-c"),
-                OsStr::new(
-                    "stty rows \"${GROVE_TEST_ROWS:-40}\" cols \"${GROVE_TEST_COLUMNS:-120}\"; exec \"$@\"",
-                ),
-                OsStr::new("grove-test-pty"),
-            ])
-            .arg(program);
+        let mut command = Command::new(self.home.join("bin/grove-test-pty"));
+        command.arg(program);
         self.configure_grove(&mut command, directory);
         command
     }
@@ -439,6 +439,7 @@ impl TestRepo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation)
             .env("GROVE_TEST_AGENT_LOG", &self.agent_log)
+            .env("GROVE_TEST_SHIPPING_LOG", &self.shipping_log)
             .env("PATH", self.test_path());
     }
 }
@@ -575,6 +576,10 @@ impl TestRepo {
             .is_some()
     }
 
+    pub fn shipping_log(&self) -> String {
+        fs::read_to_string(&self.shipping_log).unwrap_or_default()
+    }
+
     pub fn navigation(&self) -> PathBuf {
         let value = fs::read_to_string(&self.navigation).expect("read Grove navigation directive");
         PathBuf::from(value)
@@ -634,6 +639,24 @@ impl TestRepo {
         fs::copy(&self.agent, bin.join("pi")).expect("install fake Pi executable");
     }
 
+    fn configure_shipping(&self) {
+        let bin = self.home.join("bin");
+        let shipping = include_str!("shipping.sh");
+        for program in ["gh", "glab", "ssh"] {
+            let executable = bin.join(program);
+            fs::write(&executable, shipping).expect("write fake shipping executable");
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+                .expect("make fake shipping executable");
+        }
+    }
+
+    fn configure_pty(&self) {
+        let executable = self.home.join("bin/grove-test-pty");
+        fs::write(&executable, include_str!("pty.sh")).expect("write PTY wrapper");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("make PTY wrapper executable");
+    }
+
     fn test_path(&self) -> std::ffi::OsString {
         self.test_path_from(Vec::new())
     }
@@ -646,6 +669,45 @@ impl TestRepo {
         ]);
         std::env::join_paths(paths).expect("build test PATH")
     }
+}
+
+pub fn stdout(output: &Output) -> String {
+    String::from_utf8(output.stdout.clone()).expect("stdout is UTF-8")
+}
+
+pub fn stderr(output: &Output) -> String {
+    String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8")
+}
+
+pub fn assert_terminal_restored(terminal: &str) {
+    let flags = terminal.split_whitespace().collect::<Vec<_>>();
+    assert!(flags.contains(&"icanon"), "{terminal:?}");
+    assert!(flags.contains(&"echo"), "{terminal:?}");
+    let hidden = terminal.rfind("\x1b[?25l").expect("navigator hides cursor");
+    let shown = terminal
+        .rfind("\x1b[?25h")
+        .expect("navigator restores cursor");
+    assert!(hidden < shown, "{terminal:?}");
+}
+
+pub fn assert_inline_terminal_restored(terminal: &str) {
+    assert_terminal_restored(terminal);
+    let hidden = terminal.rfind("\x1b[?25l").unwrap();
+    let shown = terminal.rfind("\x1b[?25h").unwrap();
+    assert!(
+        !terminal.contains("\x1b[?1049h"),
+        "entered alternate screen"
+    );
+    assert!(!terminal.contains("\x1b[?1049l"), "left alternate screen");
+    let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
+        .into_iter()
+        .filter_map(|sequence| terminal.rfind(sequence))
+        .max()
+        .expect("navigator clears its transient UI before exit");
+    assert!(
+        hidden < cleared && cleared < shown,
+        "navigator UI was not cleared before exit: {terminal:?}"
+    );
 }
 
 fn find_executable(name: &str) -> PathBuf {

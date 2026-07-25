@@ -1,8 +1,8 @@
 use std::{
     env, fs,
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -10,11 +10,59 @@ use std::{
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 
 use crate::change;
 
-const EXTENSION: &[u8] = include_bytes!("pi-extension.ts");
-const TITLE_SYSTEM_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Output only the title on one line, with no quotes, punctuation-only words, explanation, or prefix.";
+const CHANGE_SESSION_EXTENSION: &[u8] = include_bytes!("extensions/change-session.ts");
+const STRUCTURED_OUTPUT_EXTENSION: &[u8] = include_bytes!("extensions/structured-output.ts");
+const WORKER_MODEL: &str = "openai-codex/gpt-5.6-luna";
+const CHANGE_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Call structured_output with the title in the change field. Do not answer in any other way.";
+const CHANGE_OUTPUT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "change": { "type": "string", "minLength": 1, "maxLength": 80 }
+  },
+  "required": ["change"],
+  "additionalProperties": false
+}"#;
+const SHIP_PROMPT: &str = "Write concise publication metadata for the supplied Change. A commit is a single Conventional Commit subject describing only newly staged work, with no body. Pull-request metadata describes the complete Change; return it only when a pull request must be created or its current title and body no longer fit. Treat the supplied summary as an index of the complete publication. Use it as primary context. If intent or scope is unclear, use read selectively until you understand the Change well enough to name it accurately. Avoid unrelated investigation. Finish only by calling structured_output.";
+const SHIP_OUTPUT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "commit": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+    "pull_request": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "body": { "type": "string" }
+          },
+          "required": ["title", "body"],
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "required": ["commit", "pull_request"],
+  "additionalProperties": false
+}"#;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PullRequestMetadata {
+    pub(crate) title: String,
+    pub(crate) body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ShipMetadata {
+    pub(crate) commit: Option<String>,
+    pub(crate) pull_request: Option<PullRequestMetadata>,
+}
 
 pub(crate) struct Session {
     capsule: PathBuf,
@@ -53,7 +101,8 @@ impl Session {
             .file_name()
             .and_then(|name| name.to_str())
             .context("change capsule has no valid ID")?;
-        let extension = materialize_extension()?;
+        let extension =
+            materialize_extension(CHANGE_SESSION_EXTENSION, "grove-change-session-extension")?;
         let status = Command::new("pi")
             .arg("--session-dir")
             .arg(&sessions)
@@ -75,12 +124,43 @@ impl Session {
         Ok(())
     }
 
+    pub(crate) fn generate_ship_metadata(&self, summary: &str) -> Result<ShipMetadata> {
+        validate_pi()?;
+        let value = run_structured_worker(
+            &self.workspace,
+            SHIP_PROMPT,
+            SHIP_OUTPUT_SCHEMA,
+            summary,
+            "read,structured_output",
+            "shipping metadata",
+        )?;
+        let metadata: ShipMetadata = serde_json::from_value(value)
+            .context("Pi returned invalid structured shipping metadata")?;
+        validate_ship_metadata(&metadata)?;
+        Ok(metadata)
+    }
+
     pub(crate) fn lock(&self) -> Result<change::Lock> {
         change::lock(&self.capsule)
     }
 }
 
-pub(crate) fn infer_title(
+pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
+    let capsule = env::var_os("GROVE_CHANGE_CAPSULE")
+        .map(PathBuf::from)
+        .context("GROVE_CHANGE_CAPSULE is not set")?;
+    let mut prompt = String::new();
+    std::io::stdin()
+        .read_to_string(&mut prompt)
+        .context("failed to read the title prompt")?;
+    println!(
+        "{}",
+        infer_change_title(&capsule, change_id, session_id, &prompt)?
+    );
+    Ok(())
+}
+
+fn infer_change_title(
     capsule: &Path,
     change_id: &str,
     session_id: &str,
@@ -100,24 +180,18 @@ pub(crate) fn infer_title(
         bail!("cannot infer a title from an empty prompt");
     }
 
-    let output = Command::new("pi")
-        .arg("--print")
-        .arg("--no-session")
-        .arg("--no-tools")
-        .arg("--no-context-files")
-        .arg("--no-skills")
-        .arg("--no-extensions")
-        .arg("--system-prompt")
-        .arg(TITLE_SYSTEM_PROMPT)
-        .arg(prompt)
-        .current_dir(capsule.join("workspace"))
-        .output()
-        .with_context(|| "failed to launch isolated Pi title generator")?;
-    if !output.status.success() {
-        bail!("Pi title generator exited with {}", output.status);
-    }
-    let output = String::from_utf8(output.stdout).context("Pi title was not valid UTF-8")?;
-    let title = output.trim();
+    let value = run_structured_worker(
+        &capsule.join("workspace"),
+        CHANGE_PROMPT,
+        CHANGE_OUTPUT_SCHEMA,
+        prompt,
+        "structured_output",
+        "Change naming",
+    )?;
+    let title = value["change"]
+        .as_str()
+        .context("Pi returned invalid structured Change output")?
+        .trim();
     let words = title.split_whitespace().collect::<Vec<_>>();
     if title.is_empty()
         || title.len() > 80
@@ -134,8 +208,153 @@ pub(crate) fn infer_title(
     Ok(title.to_owned())
 }
 
-fn materialize_extension() -> Result<PathBuf> {
-    let temporary = temporary_path(&env::temp_dir(), "grove-pi-extension").with_extension("ts");
+fn run_structured_worker(
+    cwd: &Path,
+    system_prompt: &str,
+    schema: &str,
+    prompt: &str,
+    tools: &str,
+    action: &str,
+) -> Result<serde_json::Value> {
+    let extension = materialize_extension(
+        STRUCTURED_OUTPUT_EXTENSION,
+        "grove-structured-output-extension",
+    )?;
+    let result = run_structured_worker_with_extension(
+        cwd,
+        system_prompt,
+        schema,
+        prompt,
+        tools,
+        action,
+        &extension,
+    );
+    let _ = fs::remove_file(extension);
+    result
+}
+
+fn run_structured_worker_with_extension(
+    cwd: &Path,
+    system_prompt: &str,
+    schema: &str,
+    prompt: &str,
+    tools: &str,
+    action: &str,
+    extension: &Path,
+) -> Result<serde_json::Value> {
+    let mut child = Command::new("pi")
+        .args(["--mode", "rpc", "--no-session", "--model", WORKER_MODEL])
+        .args(["--thinking", "minimal", "--tools", tools])
+        .args([
+            "--no-context-files",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-extensions",
+        ])
+        .args(["--system-prompt", system_prompt])
+        .arg("--extension")
+        .arg(extension)
+        .args(["--structured-output-schema", schema])
+        .current_dir(cwd)
+        .env_remove("GROVE_DIRECTIVE_CD_FILE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to launch Pi {action} worker"))?;
+
+    let mut stdin = child.stdin.take().context("Pi RPC worker has no input")?;
+    let stdout = child.stdout.take().context("Pi RPC worker has no output")?;
+    let mut lines = BufReader::new(stdout).lines();
+    let result = (|| -> Result<Option<serde_json::Value>> {
+        send_rpc_prompt(&mut stdin, prompt)?;
+        let mut attempts = 1;
+        let mut result = None;
+        for line in lines.by_ref() {
+            let line = line.with_context(|| format!("failed to read Pi {action} RPC output"))?;
+            let event: serde_json::Value = serde_json::from_str(&line)
+                .with_context(|| format!("Pi {action} worker returned invalid RPC JSONL"))?;
+            if event["type"] == "response"
+                && event["command"] == "prompt"
+                && event["success"] == false
+            {
+                bail!("Pi {action} worker rejected the prompt");
+            }
+            if event["type"] == "tool_execution_end"
+                && event["toolName"] == "structured_output"
+                && event["isError"] != true
+            {
+                if result.is_some() {
+                    bail!("Pi {action} worker returned multiple structured outputs");
+                }
+                result = Some(event["result"]["details"].clone());
+            }
+            if event["type"] == "agent_settled" {
+                if result.is_some() || attempts == 2 {
+                    return Ok(result);
+                }
+                attempts += 1;
+                send_rpc_prompt(
+                    &mut stdin,
+                    "Return the result now by calling structured_output with the required schema.",
+                )?;
+            }
+        }
+        Ok(None)
+    })();
+
+    drop(stdin);
+    drop(lines);
+    let _ = child.kill();
+    child.wait().context("failed to wait for Pi RPC worker")?;
+    result?.with_context(|| format!("Pi {action} worker returned no structured output"))
+}
+
+fn send_rpc_prompt(stdin: &mut impl Write, prompt: &str) -> Result<()> {
+    serde_json::to_writer(
+        &mut *stdin,
+        &serde_json::json!({"type": "prompt", "message": prompt}),
+    )
+    .context("failed to encode Pi RPC prompt")?;
+    stdin
+        .write_all(b"\n")
+        .context("failed to write Pi RPC prompt")?;
+    stdin.flush().context("failed to flush Pi RPC prompt")
+}
+
+fn validate_ship_metadata(metadata: &ShipMetadata) -> Result<()> {
+    if let Some(commit) = &metadata.commit {
+        validate_subject(commit, "commit")?;
+    }
+    if let Some(pull_request) = &metadata.pull_request {
+        validate_subject(&pull_request.title, "pull request title")?;
+        if pull_request.body.trim().is_empty()
+            || pull_request.body.len() > 1_000
+            || pull_request
+                .body
+                .chars()
+                .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        {
+            bail!("Pi returned an invalid pull request body");
+        }
+    }
+    Ok(())
+}
+
+fn validate_subject(subject: &str, label: &str) -> Result<()> {
+    let subject = subject.trim();
+    if subject.is_empty()
+        || subject.len() > 100
+        || subject.contains(['\r', '\n'])
+        || !subject.contains(": ")
+    {
+        bail!("Pi returned an invalid {label}");
+    }
+    Ok(())
+}
+
+fn materialize_extension(contents: &[u8], label: &str) -> Result<PathBuf> {
+    let temporary = temporary_path(&env::temp_dir(), label).with_extension("ts");
     let mut options = fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -143,7 +362,7 @@ fn materialize_extension() -> Result<PathBuf> {
     let mut file = options
         .open(&temporary)
         .with_context(|| format!("failed to create {}", temporary.display()))?;
-    file.write_all(EXTENSION)
+    file.write_all(contents)
         .with_context(|| format!("failed to write {}", temporary.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync {}", temporary.display()))?;

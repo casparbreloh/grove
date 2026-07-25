@@ -9,6 +9,7 @@ grove new
 # work in Pi, then exit Pi normally
 
 grove          # find a Change, resume Pi, or navigate workspaces
+grove ship     # have Pi commit, push, and open or update a pull request
 grove archive  # archive the current Change, or pick one from the primary checkout
 ```
 
@@ -21,6 +22,7 @@ for the domain vocabulary.
 grove
 grove new [--from REF]
 grove sync
+grove ship
 grove archive [--force]
 grove init fish|zsh
 ```
@@ -64,12 +66,33 @@ rolled back if a later operation fails. It reports one ordered outcome and
 reason for every active Change, followed by archived, rebased, and skipped
 totals.
 
+`ship` runs only from the current managed Change. Grove refuses unresolved Git
+operations, busy or untitled Changes, missing push remotes, local-only remotes,
+unsupported hosts, and unavailable code-host access before publication. GitHub uses
+`gh`; GitLab uses `glab`.
+
+Grove creates or reuses the Title's kebab-case publication branch, stages the
+complete Change, and starts one isolated GPT-5.6 Luna RPC worker for structured
+commit and pull-request metadata. The worker receives a compact file index,
+statistics, commit subjects, current pull-request metadata, and a bounded zero-context
+patch. It may selectively read files when that context is insufficient, but it
+cannot mutate the workspace. Grove deterministically commits without a body,
+pushes without rewriting published history, and creates or conditionally
+updates the pull request. New publication uses the pull-request title as the
+initial commit subject; later work receives an incremental subject. Grove
+rechecks existing pull-request metadata immediately before replacing it and
+aborts when it observes a concurrent edit. Failures may leave staged work, a
+commit, branch, or push in place; rerunning converges from that Git and code-host
+state. The Change
+remains active through review.
+
 `archive` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe archival accepts work integrated by merge, cherry-pick or
 rebase-shaped history, or an equivalent squash. It refuses dirty or genuinely
 unmerged work, including unique content hidden in a merge resolution. `--force`
-explicitly and irreversibly discards that work. Both paths delete an attached local
-branch without a configured upstream; tracking branches are preserved.
+explicitly and irreversibly discards that work, but never overrides a Git
+worktree lock. Both paths delete an attached local branch without a configured
+upstream; tracking branches are preserved.
 
 Navigator shell actions write a navigation directive for the calling shell.
 They preserve the current relative subdirectory when that directory exists in
@@ -96,18 +119,21 @@ archival, including forced archival, refuses to proceed until the first process
 exits. Starting `pi` manually is unmanaged: Grove does not install its extension
 globally or discover arbitrary sessions.
 
-Pi owns its native session files and session names. Grove's extension appends a
-small versioned link from each managed Pi session to its Change. The first
-substantial prompt in each unnamed native session also starts a fire-and-forget,
-isolated `pi --print` request to infer a three- or four-word session name. The
+Pi owns its native session files and session names. Grove's Change-session
+extension appends a small `grove.change` link from each managed Pi session to its
+Change. The first substantial prompt in each unnamed native session also starts
+a fire-and-forget, isolated Pi RPC request with structured output to infer a
+three- or four-word session name. The
 first successful result initializes the Change's one stable title; later Pi
 sessions may receive different native names but never retitle the Change or
 rename Git.
 
-The naming request uses `--no-session --no-tools --no-context-files --no-skills
---no-extensions`. It does not delay the real turn, and malformed output or any
+The naming request uses GPT-5.6 Luna with only Grove's structured-output tool
+and no session, context files, skills, prompt templates, or other extensions. It
+does not delay the real
+turn, and malformed output or any
 failure leaves an honest `Untitled` fallback. It is still an additional request
-to Pi's configured provider: the first prompt is sent a second time and may
+to the OpenAI Codex provider: the first prompt is sent a second time and may
 incur provider cost. Treat that prompt according to the provider's privacy
 terms.
 
@@ -187,6 +213,9 @@ eval "$(grove init zsh)"
 ## Install
 
 Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
+Shipping and managed title inference require access to GPT-5.6 Luna. Shipping
+also requires a network push remote and suitable authenticated hosting tools
+such as `gh` for GitHub or `glab` for GitLab.
 
 ```sh
 cargo install --path .
