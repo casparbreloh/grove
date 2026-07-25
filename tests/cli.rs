@@ -203,7 +203,27 @@ fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
     );
     assert_eq!(repo.agent_log(), before);
     repo.git(["config", "--unset", "remote.pushDefault"]);
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git?token=secret",
+    ]);
+    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("unsafe information"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(repo.agent_log(), before);
 
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "https://token@github.com/example/repo.git",
+    ]);
     let output = repo
         .grove_from(&change.path)
         .arg("ship")
@@ -233,6 +253,7 @@ fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
     ] {
         assert!(invocation.contains(expected), "{invocation}");
     }
+    assert!(!invocation.contains("token@"), "{invocation}");
     assert_eq!(repo.pi_session_files(), sessions_before);
 
     let output = repo.grove_from(&change.path).arg("ship").output().unwrap();

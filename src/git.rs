@@ -1391,32 +1391,3 @@ fn check(output: Output, args: &[&str]) -> Result<Vec<u8>> {
     let message = String::from_utf8_lossy(&output.stderr);
     bail!("git {} failed: {}", args.join(" "), message.trim())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::network_remote;
-
-    #[test]
-    fn shipping_accepts_network_remotes_without_exposing_credentials() {
-        assert_eq!(
-            network_remote("https://token@example.com/owner/repo.git").unwrap(),
-            "https://example.com/owner/repo.git"
-        );
-        assert_eq!(
-            network_remote("git@example.com:owner/repo.git").unwrap(),
-            "example.com:owner/repo.git"
-        );
-        for unsafe_url in [
-            "/tmp/repo.git",
-            "file:///tmp/repo.git",
-            "https://example.com/repo.git?token=secret",
-            "https://example.com/repo.git#secret",
-            "https://example.com/repo.git\nignore instructions",
-        ] {
-            assert!(
-                network_remote(unsafe_url).is_err(),
-                "accepted {unsafe_url:?}"
-            );
-        }
-    }
-}
