@@ -1,5 +1,6 @@
 mod change;
 mod git;
+mod prompts;
 mod session;
 
 use std::{

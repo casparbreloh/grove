@@ -197,6 +197,13 @@ fn ship_runs_one_isolated_foreground_pi_worker_for_the_current_change() {
     let log = repo.agent_log();
     let invocation = &log[log_before..];
     assert!(invocation.contains("mode=print"), "{invocation}");
+    for instruction in [
+        "Conventional Commit subjects without bodies",
+        "simple title and short description",
+        "create or update the pull request",
+    ] {
+        assert!(invocation.contains(instruction), "{invocation}");
+    }
     assert!(
         invocation.contains(&format!(
             "cwd={}",

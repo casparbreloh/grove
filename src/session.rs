@@ -11,13 +11,9 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, bail};
 
-use crate::change;
+use crate::{change, prompts};
 
 const EXTENSION: &[u8] = include_bytes!("pi-extension.ts");
-const TITLE_SYSTEM_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Output only the title on one line, with no quotes, punctuation-only words, explanation, or prefix.";
-const SHIP_PROMPT: &str = r#"Ship this Change as a pull request. Validate access, commit all work with Conventional Commits, create or reuse a branch, push it, and create or update the pull request.
-
-On success, summarize the result and end with `GROVE_PULL_REQUEST=<url>`. On failure, explain what completed and do not output that line."#;
 
 pub(crate) struct Session {
     capsule: PathBuf,
@@ -83,7 +79,7 @@ impl Session {
         let output = Command::new("pi")
             .arg("--print")
             .arg("--no-session")
-            .arg(SHIP_PROMPT)
+            .arg(prompts::SHIP)
             .current_dir(&self.workspace)
             .env_remove("GROVE_DIRECTIVE_CD_FILE")
             .output()
@@ -153,7 +149,7 @@ pub(crate) fn infer_title(
         .arg("--no-skills")
         .arg("--no-extensions")
         .arg("--system-prompt")
-        .arg(TITLE_SYSTEM_PROMPT)
+        .arg(prompts::TITLE)
         .arg(prompt)
         .current_dir(capsule.join("workspace"))
         .output()
