@@ -181,22 +181,8 @@ fn duplicate_title_publication_branch_is_rejected_before_pi() {
         "git@github.com:example/repo.git",
     ]);
     let first = repo.create_change(None);
-    repo.set_change_title(&first, "Shared Publication Title");
-    fs::write(first.path.join("first.txt"), "first\n").unwrap();
-    let initial = repo
-        .grove_from(&first.path)
-        .arg("ship")
-        .env("GROVE_TEST_REMOTE_PATH", &remote)
-        .env(
-            "GROVE_TEST_SHIP_OUTPUT",
-            r#"{"commit":null,"pull_request":{"title":"feat: first change","body":"Publishes the first Change."}}"#,
-        )
-        .env("GROVE_TEST_RESULT_TITLE", "feat: first change")
-        .env("GROVE_TEST_RESULT_BODY", "Publishes the first Change.")
-        .output()
-        .unwrap();
-    assert!(initial.status.success(), "{}", stderr(&initial));
-    let published_head = repo.change_head(&first);
+    repo.git_from(&first.path, ["switch", "-c", "shared-publication-title"]);
+    let branch_head = repo.change_head(&first);
 
     let second = repo.create_change(None);
     repo.set_change_title(&second, "Shared Publication Title");
@@ -224,11 +210,8 @@ fn duplicate_title_publication_branch_is_rejected_before_pi() {
         ""
     );
     assert_eq!(
-        repo.git_from(
-            &remote,
-            ["rev-parse", "refs/heads/shared-publication-title"]
-        ),
-        published_head
+        repo.git_from(&first.path, ["rev-parse", "shared-publication-title"]),
+        branch_head
     );
 }
 

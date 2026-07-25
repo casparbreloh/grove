@@ -1,7 +1,4 @@
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -76,28 +73,19 @@ pub(crate) fn run(git: &Git) -> Result<()> {
     git.push_ship(&change.path, &push_remote.name, &branch)?;
 
     let pull_request = match existing_pull_request {
-        Some(existing) => {
-            if let Some(replacement) = metadata.pull_request {
-                let current = code_host
-                    .find_pull_request(&branch)?
-                    .context("pull request disappeared while shipping")?;
-                if current != existing {
-                    bail!("pull request changed while shipping; rerun grove ship");
-                }
-                if current.title == replacement.title && current.body == replacement.body {
-                    current
-                } else {
-                    code_host.update_pull_request(
-                        &branch,
-                        &current,
-                        &replacement.title,
-                        &replacement.body,
-                    )?
-                }
-            } else {
-                existing
+        Some(existing) => match metadata.pull_request {
+            Some(replacement)
+                if existing.title != replacement.title || existing.body != replacement.body =>
+            {
+                code_host.update_pull_request(
+                    &branch,
+                    &existing,
+                    &replacement.title,
+                    &replacement.body,
+                )?
             }
-        }
+            _ => existing,
+        },
         None => {
             let metadata = metadata
                 .pull_request
@@ -110,7 +98,6 @@ pub(crate) fn run(git: &Git) -> Result<()> {
             )?
         }
     };
-    git.validate_clean_ship(&change.path)?;
     println!("✓ Shipped {}", pull_request.url);
     Ok(())
 }
@@ -248,7 +235,6 @@ impl CodeHost {
     fn preflight(&self) -> Result<String> {
         match self {
             Self::GitHub { repository, .. } => {
-                run_command(command("gh", &["--version"]), "check for gh")?;
                 run_command(
                     command("gh", &["auth", "status", "--hostname", "github.com"]),
                     "check GitHub authentication",
@@ -262,7 +248,6 @@ impl CodeHost {
                 Ok(repository.default_branch)
             }
             Self::GitLab { project } => {
-                run_command(command("glab", &["--version"]), "check for glab")?;
                 run_command(
                     command("glab", &["auth", "status", "--hostname", "gitlab.com"]),
                     "check GitLab authentication",
@@ -501,16 +486,19 @@ impl CodeHost {
 }
 
 fn remote_parts(remote: &str) -> Result<(String, String)> {
-    if remote.is_empty() || remote.contains(char::is_whitespace) || remote.contains(['?', '#']) {
-        bail!("invalid remote URL");
+    if remote.contains(char::is_whitespace) || remote.contains(['?', '#']) {
+        bail!("push remote URL contains unsafe information");
+    }
+    if remote.is_empty() {
+        bail!("cannot ship without a network push remote");
     }
     let (host, path) = if let Some((scheme, rest)) = remote.split_once("://") {
         if !matches!(scheme, "http" | "https" | "ssh" | "git") {
-            bail!("unsupported remote URL scheme '{scheme}'");
+            bail!("cannot ship without a network push remote");
         }
         let (authority, path) = rest
             .split_once('/')
-            .context("remote URL has no repository path")?;
+            .context("cannot ship without a network push remote")?;
         let host_with_port = authority
             .rsplit_once('@')
             .map_or(authority, |(_, host)| host);
@@ -521,7 +509,7 @@ fn remote_parts(remote: &str) -> Result<(String, String)> {
     } else {
         let (authority, path) = remote
             .split_once(':')
-            .context("remote URL is not a supported URL or SCP form")?;
+            .context("cannot ship without a network push remote")?;
         let host = authority
             .rsplit_once('@')
             .map_or(authority, |(_, host)| host);
@@ -590,12 +578,12 @@ fn run_json_command(
         payload,
     )
     .with_context(|| format!("failed to send request while attempting to {action}"))?;
-    child
-        .stdin
-        .take()
-        .context("failed to close code host command input")?
-        .flush()
-        .with_context(|| format!("failed to send request while attempting to {action}"))?;
+    drop(
+        child
+            .stdin
+            .take()
+            .context("failed to close code host command input")?,
+    );
     let output = child
         .wait_with_output()
         .with_context(|| format!("failed to wait while attempting to {action}"))?;

@@ -143,7 +143,7 @@ partial local shipping work. The command promises a pull request rather than
 silently redefining `ship` to mean commit-only work.
 
 Shipping explicitly sends summarized source and repository context, plus files
-selectively read by Luna, to Pi's configured provider and consumes tokens. Git,
+selectively read by Luna, to the OpenAI Codex provider and consumes tokens. Git,
 remote, and hosting effects are deterministic Grove operations authorized by
 the explicit command, not implicit activity elsewhere.
 

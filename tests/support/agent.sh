@@ -6,7 +6,6 @@ previous=
 for argument do
   if test "$previous" = --mode; then mode=$argument; fi
   if test "$previous" = --structured-output-schema; then schema=$argument; fi
-  if test "$argument" = --print; then mode=print; fi
   previous=$argument
 done
 
@@ -40,13 +39,6 @@ if test "$mode" = rpc; then
     printf '{"type":"agent_settled"}\n'
   done
   exit 0
-fi
-
-if test "$mode" = print; then
-  if test -n "${GROVE_TEST_TITLE-}"; then
-    printf '%s\n' "$GROVE_TEST_TITLE"
-  fi
-  exit "${GROVE_TEST_TITLE_EXIT-0}"
 fi
 
 session_dir=

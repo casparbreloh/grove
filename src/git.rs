@@ -326,10 +326,7 @@ impl Git {
         let url = self
             .text_at(path, &["remote", "get-url", "--push", &remote])
             .with_context(|| format!("push remote '{remote}' has no usable URL"))?;
-        Ok(PushRemote {
-            name: remote,
-            url: network_remote(&url)?,
-        })
+        Ok(PushRemote { name: remote, url })
     }
 
     pub(crate) fn fetch_ship_base(
@@ -1558,42 +1555,6 @@ fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf> {
     Ok(PathBuf::from(
         String::from_utf8(bytes.to_vec()).context("Git returned a non-UTF-8 worktree path")?,
     ))
-}
-
-fn network_remote(url: &str) -> Result<String> {
-    if url.contains(['?', '#']) || url.chars().any(char::is_whitespace) {
-        bail!("push remote URL contains unsafe information");
-    }
-    if let Some((scheme, location)) = url.split_once("://") {
-        if !matches!(scheme, "http" | "https" | "ssh" | "git") {
-            bail!("cannot ship without a network push remote");
-        }
-        let (authority, path) = location
-            .split_once('/')
-            .context("cannot ship without a network push remote")?;
-        let host = authority.rsplit('@').next().unwrap_or_default();
-        if !safe_remote_part(host, false) || !safe_remote_part(path, true) {
-            bail!("cannot ship without a network push remote");
-        }
-        return Ok(format!("{scheme}://{host}/{path}"));
-    }
-    if let Some((identity, path)) = url.split_once(':')
-        && let Some((_, host)) = identity.rsplit_once('@')
-        && safe_remote_part(host, false)
-        && safe_remote_part(path, true)
-    {
-        return Ok(format!("{host}:{path}"));
-    }
-    bail!("cannot ship without a network push remote")
-}
-
-fn safe_remote_part(value: &str, path: bool) -> bool {
-    !value.is_empty()
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric()
-                || matches!(character, '.' | '-' | '_' | '~' | '%' | ':' | '[' | ']')
-                || path && character == '/'
-        })
 }
 
 fn check(output: Output, args: &[&str]) -> Result<Vec<u8>> {
