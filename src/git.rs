@@ -72,6 +72,14 @@ pub(crate) struct ShipTarget {
     pub(crate) url: String,
 }
 
+pub(crate) struct ShipContext {
+    pub(crate) staged: bool,
+    pub(crate) text: String,
+    head_oid: String,
+    index_tree: String,
+    worktree_state: Vec<u8>,
+}
+
 pub(crate) struct PreparedArchive {
     path: PathBuf,
     id: String,
@@ -297,6 +305,173 @@ impl Git {
             remote,
             url: network_remote(&url)?,
         })
+    }
+
+    pub(crate) fn fetch_ship_base(
+        &self,
+        path: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<String> {
+        let tracking = format!("refs/remotes/{remote}/{branch}");
+        let refspec = format!("+refs/heads/{branch}:{tracking}");
+        self.checked_at(
+            path,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--no-prune",
+                "--no-recurse-submodules",
+                remote,
+                &refspec,
+            ],
+        )?;
+        Ok(tracking)
+    }
+
+    pub(crate) fn remote_branch_exists(
+        &self,
+        path: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let args = ["ls-remote", "--exit-code", "--heads", remote, branch];
+        let output = self.raw_at(path, &args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(2) => Ok(false),
+            _ => {
+                check(output, &args)?;
+                unreachable!()
+            }
+        }
+    }
+
+    pub(crate) fn has_ship_work(&self, path: &Path, base: &str) -> Result<bool> {
+        Ok(self.is_dirty(path)?
+            || self.text_at(path, &["rev-parse", "HEAD"])?
+                != self.text_at(path, &["rev-parse", base])?)
+    }
+
+    pub(crate) fn prepare_ship(&self, path: &Path, branch: &str) -> Result<()> {
+        self.validate_resolved_state(path)?;
+        match self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned))
+        {
+            Some(current) if current != branch => {
+                bail!("Change is already on publication branch '{current}', expected '{branch}'")
+            }
+            Some(_) => {}
+            None if self.branch_exists_at(path, branch)? => {
+                let branch_head = self.text_at(path, &["rev-parse", branch])?;
+                let current_head = self.text_at(path, &["rev-parse", "HEAD"])?;
+                if branch_head != current_head {
+                    bail!("publication branch '{branch}' points at different history");
+                }
+                self.checked_at(path, &["switch", branch])?;
+            }
+            None => {
+                self.checked_at(path, &["switch", "--create", branch])?;
+            }
+        }
+        self.checked_at(path, &["add", "--all"])?;
+        Ok(())
+    }
+
+    pub(crate) fn ship_context(&self, path: &Path, base: &str) -> Result<ShipContext> {
+        let staged = self.differs_at(path, &["diff", "--cached", "--quiet", "--exit-code"])?;
+        let head_oid = self.text_at(path, &["rev-parse", "HEAD"])?;
+        let index_tree = self.text_at(path, &["write-tree"])?;
+        let worktree_state = self.output_bytes_at(
+            path,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?;
+        let files = self.text_at(path, &["diff", "--name-status", base])?;
+        let statistics = self.text_at(path, &["diff", "--stat", base])?;
+        let incremental_files = self.text_at(path, &["diff", "--cached", "--name-status"])?;
+        let incremental_statistics = self.text_at(path, &["diff", "--cached", "--stat"])?;
+        let subjects = self.text_at(path, &["log", "--format=%s", &format!("{base}..HEAD")])?;
+        let patch = self.checked_at(path, &["diff", "--cached", "--unified=0"])?;
+        let truncated = patch.len() > 32 * 1024;
+        let patch = String::from_utf8_lossy(&patch[..patch.len().min(32 * 1024)]);
+        let truncation = if truncated {
+            "\nThe detailed patch is truncated. Use read selectively if the intent remains unclear."
+        } else {
+            ""
+        };
+        Ok(ShipContext {
+            staged,
+            head_oid,
+            index_tree,
+            worktree_state,
+            text: format!(
+                "Complete changed files:\n{files}\n\nComplete diff statistics:\n{statistics}\n\nExisting commit subjects:\n{subjects}\n\nNewly staged files:\n{incremental_files}\n\nNewly staged statistics:\n{incremental_statistics}\n\nNewly staged zero-context patch:\n{patch}{truncation}"
+            ),
+        })
+    }
+
+    pub(crate) fn validate_ship_snapshot(
+        &self,
+        path: &Path,
+        branch: &str,
+        context: &ShipContext,
+    ) -> Result<()> {
+        let current = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if current.as_deref() != Some(branch)
+            || self.text_at(path, &["rev-parse", "HEAD"])? != context.head_oid
+            || self.text_at(path, &["write-tree"])? != context.index_tree
+            || self.output_bytes_at(
+                path,
+                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            )? != context.worktree_state
+        {
+            bail!("Change Git state changed while shipping; rerun grove ship");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn commit_ship(
+        &self,
+        path: &Path,
+        subject: &str,
+        context: &ShipContext,
+    ) -> Result<()> {
+        self.checked_at(path, &["commit", "--quiet", "--message", subject])?;
+        if self.text_at(path, &["rev-parse", "HEAD^"])? != context.head_oid
+            || self.text_at(path, &["rev-parse", "HEAD^{tree}"])? != context.index_tree
+        {
+            bail!("Change Git state changed while committing; refusing to push");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_clean_ship(&self, path: &Path) -> Result<()> {
+        if self.is_dirty(path)? {
+            bail!("Change Git state changed while shipping; rerun grove ship");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn push_ship(&self, path: &Path, remote: &str, branch: &str) -> Result<()> {
+        let destination = format!("HEAD:refs/heads/{branch}");
+        self.checked_at(path, &["push", "--set-upstream", remote, &destination])?;
+        Ok(())
+    }
+
+    fn differs_at(&self, path: &Path, args: &[&str]) -> Result<bool> {
+        let output = self.raw_at(path, args)?;
+        match output.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => {
+                check(output, args)?;
+                unreachable!()
+            }
+        }
     }
 
     fn validate_resolved_state(&self, path: &Path) -> Result<()> {

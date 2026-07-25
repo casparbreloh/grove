@@ -67,19 +67,22 @@ reason for every active Change, followed by archived, rebased, and skipped
 totals.
 
 `ship` runs only from the current managed Change. Grove refuses unresolved Git
-operations, busy Changes, missing push remotes, and local-only remotes before
-starting one isolated `pi --print --no-session` worker with full tools and
-project context. Grove passes the selected remote name and a credential-free URL
-to the worker so it can detect the hosting provider and use an available CLI
-such as `gh` or `glab`.
+operations, busy or untitled Changes, missing push remotes, local-only remotes,
+unsupported hosts, and unavailable forge access before publication. GitHub uses
+`gh`; GitLab uses `glab`.
 
-The GPT-5.6 Luna worker validates access, inspects existing branch and
-pull-request state, commits all work with Conventional Commit subjects, creates
-or reuses a branch, pushes it, and creates or updates the pull request with a
-simple title and description. Success requires the worker to return a
-pull-request URL. Failures
-may leave commits, a branch, or a push in place; rerunning is intended to reuse
-that state. The Change remains active through review.
+Grove creates or reuses the Title's kebab-case publication branch, stages the
+complete Change, and makes one isolated GPT-5.6 Luna RPC request for structured
+commit and pull-request metadata. The request receives a compact file index,
+statistics, commit subjects, current review metadata, and a bounded zero-context
+patch. It may selectively read files when that context is insufficient, but it
+cannot mutate the workspace. Grove deterministically commits without a body,
+pushes without rewriting published history, and creates or conditionally
+updates the pull request. New publication uses the pull-request title as the
+initial commit subject; later work receives an incremental subject. Concurrent
+review edits are preserved. Failures may leave staged work, a commit, branch, or
+push in place; rerunning converges from that Git and forge state. The Change
+remains active through review.
 
 `archive` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe archival accepts work integrated by merge, cherry-pick or
@@ -113,16 +116,18 @@ archival, including forced archival, refuses to proceed until the first process
 exits. Starting `pi` manually is unmanaged: Grove does not install its extension
 globally or discover arbitrary sessions.
 
-Pi owns its native session files and session names. Grove's extension appends a
-small versioned link from each managed Pi session to its Change. The first
-substantial prompt in each unnamed native session also starts a fire-and-forget,
-isolated `pi --print` request to infer a three- or four-word session name. The
+Pi owns its native session files and session names. Grove's Change-session
+extension appends a small `grove.change` link from each managed Pi session to its
+Change. The first substantial prompt in each unnamed native session also starts
+a fire-and-forget, isolated Pi RPC request with structured output to infer a
+three- or four-word session name. The
 first successful result initializes the Change's one stable title; later Pi
 sessions may receive different native names but never retitle the Change or
 rename Git.
 
-The naming request uses GPT-5.6 Luna with `--no-session --no-tools
---no-context-files --no-skills --no-extensions`. It does not delay the real
+The naming request uses GPT-5.6 Luna with only Grove's structured-output tool
+and no session, context files, skills, prompt templates, or other extensions. It
+does not delay the real
 turn, and malformed output or any
 failure leaves an honest `Untitled` fallback. It is still an additional request
 to the OpenAI Codex provider: the first prompt is sent a second time and may

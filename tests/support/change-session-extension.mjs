@@ -6,10 +6,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const extensionPath = process.argv[2];
-assert(extensionPath, "usage: node pi-extension.mjs <extension.ts>");
+assert(extensionPath, "usage: node change-session-extension.mjs <extension.ts>");
 const source = await readFile(extensionPath, "utf8");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-const { default: grove } = await import(moduleUrl);
+const { default: changeSession } = await import(moduleUrl);
 
 const temporary = await mkdtemp(join(tmpdir(), "grove-extension-test-"));
 const invocation = join(temporary, "invocation");
@@ -52,7 +52,7 @@ function runtime(reason, initialEntries = [], initialName) {
       getEntries: () => entries,
     },
   };
-  grove(pi, (...args) => {
+  changeSession(pi, (...args) => {
     spawnCount += 1;
     return spawn(...args);
   });
@@ -78,8 +78,8 @@ try {
   assert.deepEqual(startup.entries, [
     {
       type: "custom",
-      customType: "grove",
-      data: { schema: 1, changeId: "change-123" },
+      customType: "grove.change",
+      data: { changeId: "change-123" },
     },
   ]);
   assert.deepEqual(startup.input("  Implement extension coverage  "), {
@@ -93,7 +93,7 @@ try {
 
   assert.equal(spawnCount, 1);
   const resume = runtime("resume");
-  assert.equal(resume.entries.length, 1, "resume repairs a missing Grove link");
+  assert.equal(resume.entries.length, 1, "resume repairs a missing Change link");
   assert.deepEqual(resume.input("Do not rename resumed session"), {
     action: "continue",
   });
@@ -101,7 +101,7 @@ try {
   assert.equal(resume.name(), undefined);
 
   const linked = runtime("startup", startup.entries, "Existing Session Name");
-  assert.equal(linked.entries.length, 1, "an existing Grove link is not duplicated");
+  assert.equal(linked.entries.length, 1, "an existing Change link is not duplicated");
   linked.input("Do not replace existing name");
   assert.equal(spawnCount, 1, "an existing name is not replaced");
   assert.equal(linked.name(), "Existing Session Name");

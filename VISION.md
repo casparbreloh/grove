@@ -13,8 +13,8 @@ workflow engine, or terminal multiplexer.
 - Give every Change an immutable opaque identity and one stable human title.
 - Keep titles, Git identity, publication identity, and Pi-native session
   identity separate.
-- Use Pi through its native TUI, native JSONL, and isolated `--print` workers
-  instead of adding a second agent or provider abstraction.
+- Use Pi through its native TUI, native JSONL, and isolated structured RPC
+  workers instead of adding a second agent or provider abstraction.
 - Keep interactive Pi lifecycle native, including `/new`, `/fork`, `/clone`,
   `/resume`, and native session navigation.
 - Prefer native resume over owning a background process or terminal
@@ -41,7 +41,7 @@ one private `~/.grove` path.
 Creating a Change remains a dependable local operation. Grove completes the
 capsule and worktree before starting interactive Pi. A small managed extension
 links every native Pi session to the Change and starts isolated, best-effort
-`pi --print` title inference from the first substantial prompt. Naming runs
+structured RPC title inference from the first substantial prompt. Naming runs
 without delaying the real turn, never moves a path or renames Git, and leaves
 an honest `Untitled` state when it fails.
 
@@ -114,22 +114,25 @@ not expose a dry-run or staged publication workflow. Invoking it authorizes the
 documented commit, branch, provider, push, and hosting effects needed to ship
 the Change.
 
-After inexpensive local validation, Grove starts a purpose-built, noninteractive
-Pi `--print` worker in the Change workspace with full agent tools and project
-context. The worker inspects the complete non-ignored Change, prepares a clear
-commit series following Conventional Commits, creates an appropriate
-publication branch, pushes it, and creates or updates the pull request with a
-useful title and body. Existing commits are source history rather than a
-required presentation: the shipping agent may organize the final publication
-history when necessary. Grove captures the starting Git state for that process
-and validates the resulting repository and pull request without persisting a
-source snapshot or remote-state record.
+After inexpensive local and forge validation, Grove owns the deterministic Git
+and hosting operations. It creates or reuses the stable Title-derived
+publication branch, stages the complete Change, commits without a body, pushes
+without force, and creates or conditionally updates the pull request through
+`gh` or `glab`. Existing published history is never rewritten.
+
+One purpose-built, noninteractive Pi RPC worker produces only schema-validated
+commit and pull-request metadata. Grove supplies a compact index of the complete
+Change and a bounded incremental patch; the worker may use read when that index
+is insufficient, but it cannot mutate Git or contact the forge. New publication
+uses the pull-request title as its initial commit subject, while later work gets
+an incremental Conventional Commit subject. Grove rechecks review metadata
+before editing so concurrent human changes are not overwritten.
 
 The command remains in the foreground and returns success only with the created
-or updated pull-request identity and concise current CI or review information
-when the host provides it. There is no daemon, queue, hidden continuation,
-background polling, or Grove-owned copy of remote state. Pi, Git, the remote,
-and the hosting provider remain authoritative for their respective data.
+or updated pull-request identity. There is no daemon, queue, hidden
+continuation, background polling, or Grove-owned copy of remote state. Pi, Git,
+the remote, and the hosting provider remain authoritative for their respective
+data.
 
 Before starting the worker, Grove rejects a busy Change, unresolved Git state,
 missing publication prerequisites, unsupported hosting provider, unavailable
@@ -138,11 +141,10 @@ repository therefore receives one short explanation and no provider request or
 partial local shipping work. The command promises a pull request rather than
 silently redefining `ship` to mean commit-only work.
 
-Shipping is explicitly agentic and may send source and repository context to
-Pi's configured provider, consume tokens, run tools, create or revise commits,
-create branches, contact remotes, and invoke hosting credentials. These are the
-expected effects of the explicit command, not implicit activity elsewhere in
-Grove.
+Shipping explicitly sends summarized source and repository context, plus files
+selectively read by Luna, to Pi's configured provider and consumes tokens. Git,
+remote, and hosting effects are deterministic Grove operations authorized by
+the explicit command, not implicit activity elsewhere.
 
 Local Git and remote hosting operations cannot form one transaction. A failure
 may leave prepared commits, a publication branch, a successful push, or a
@@ -187,7 +189,7 @@ without committing the core product to them now.
 
 These are small directions to reconsider only after the navigator and shipping
 workflow prove what users actually need. Each would be an explicit command
-backed by a bounded Pi `--print` worker, never implicit background activity.
+backed by a bounded isolated Pi worker, never implicit background activity.
 
 - **Create from an issue or task.** Start a Change from an issue URL or concise
   goal, let Pi inspect the repository and available issue context, and hand a

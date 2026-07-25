@@ -171,124 +171,155 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
 }
 
 #[test]
-fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
+fn ship_publishes_and_updates_a_change_deterministically() {
     let repo = TestRepo::new();
-    repo.create_local_origin();
+    let remote = repo.create_local_origin();
     let change = repo.create_change(None);
+    repo.set_change_title(&change, "Add AI Native Shipping");
+
     let before = repo.agent_log();
-    let sessions_before = repo.pi_session_files();
-
     let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
     assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("network push remote"),
-        "{}",
-        stderr(&output)
-    );
+    assert!(stderr(&output).contains("network push remote"));
     assert_eq!(repo.agent_log(), before);
 
     repo.git([
         "remote",
         "set-url",
         "origin",
-        "https://github.com/example/repo.git",
+        "git@github.com:example/repo.git",
     ]);
-    repo.git(["config", "remote.pushDefault", "."]);
-    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("network push remote"),
-        "{}",
-        stderr(&output)
-    );
-    assert_eq!(repo.agent_log(), before);
-    repo.git(["config", "--unset", "remote.pushDefault"]);
-    repo.git([
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/example/repo.git?token=secret",
-    ]);
-    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("unsafe information"),
-        "{}",
-        stderr(&output)
-    );
-    assert_eq!(repo.agent_log(), before);
-
-    repo.git([
-        "remote",
-        "set-url",
-        "origin",
-        "https://token@github.com/example/repo.git",
-    ]);
-    let output = repo
+    let no_work = repo
         .grove_from(&change.path)
         .arg("ship")
-        .env(
-            "GROVE_TEST_TITLE",
-            "GROVE_PULL_REQUEST=https://github.com/example/repo/pull/1",
-        )
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!no_work.status.success());
+    assert!(stderr(&no_work).contains("no work to ship"));
     assert_eq!(
-        stdout(&output),
+        repo.git_from(&change.path, ["branch", "--show-current"]),
+        ""
+    );
+    assert_eq!(repo.agent_log(), before);
+
+    fs::write(change.path.join("feature.txt"), "first\n").unwrap();
+    let initial = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"feat: add AI-native shipping","body":"Adds deterministic Change shipping."}}"#,
+        )
+        .env("GROVE_TEST_RESULT_TITLE", "feat: add AI-native shipping")
+        .env("GROVE_TEST_RESULT_BODY", "Adds deterministic Change shipping.")
+        .output()
+        .unwrap();
+    assert!(initial.status.success(), "{}", stderr(&initial));
+    assert_eq!(
+        stdout(&initial),
         "✓ Shipped https://github.com/example/repo/pull/1\n"
     );
-    let log = repo.agent_log();
-    let invocation = &log[before.len()..];
+    assert_eq!(
+        repo.git_from(&change.path, ["branch", "--show-current"]),
+        "add-ai-native-shipping"
+    );
+    assert_eq!(
+        repo.git_from(&change.path, ["log", "-1", "--format=%s"]),
+        "feat: add AI-native shipping"
+    );
+    assert_eq!(
+        repo.git_from(&change.path, ["rev-parse", "origin/add-ai-native-shipping"]),
+        repo.git_from(&change.path, ["rev-parse", "HEAD"])
+    );
+    let invocation = &repo.agent_log()[before.len()..];
     for expected in [
-        "mode=print",
-        "arg=<--print>",
-        "arg=<--no-session>",
-        "arg=<--model>",
-        "arg=<--append-system-prompt>",
-        "arg=<openai-codex/gpt-5.6-luna>",
-        "remote origin",
-        "https://github.com/example/repo.git",
-        "gh or glab",
-        "Conventional Commit subjects without bodies",
-        "simple title and short description",
+        "mode=rpc",
+        "arg=<--structured-output-schema>",
+        "arg=<read,structured_output>",
+        "Change title: Add AI Native Shipping",
+        "feature.txt",
     ] {
         assert!(invocation.contains(expected), "{invocation}");
     }
-    assert!(!invocation.contains("token@"), "{invocation}");
-    assert_eq!(repo.pi_session_files(), sessions_before);
+    let forge = repo.forge_log();
+    assert!(forge.contains("auth status"), "{forge}");
+    assert!(forge.contains("repos/example/repo/pulls"), "{forge}");
 
-    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("without creating or updating a pull request"),
-        "{}",
-        stderr(&output)
-    );
-
-    let output = repo.grove().arg("ship").output().unwrap();
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("current workspace is not a managed Grove Change"),
-        "{}",
-        stderr(&output)
-    );
-
-    let local_only = TestRepo::new();
-    let change = local_only.create_change(None);
-    let before = local_only.agent_log();
-    let output = local_only
+    fs::write(change.path.join("feature.txt"), "first\nsecond\n").unwrap();
+    let update = repo
         .grove_from(&change.path)
         .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_REVIEW_URL",
+            "https://github.com/example/repo/pull/1",
+        )
+        .env("GROVE_TEST_REVIEW_TITLE", "feat: add AI-native shipping")
+        .env(
+            "GROVE_TEST_REVIEW_BODY",
+            "Adds deterministic Change shipping.",
+        )
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":"fix: include incremental work","pull_request":null}"#,
+        )
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("usable push remote"),
-        "{}",
-        stderr(&output)
+    assert!(update.status.success(), "{}", stderr(&update));
+    assert_eq!(
+        repo.git_from(&change.path, ["log", "-1", "--format=%s"]),
+        "fix: include incremental work"
     );
-    assert_eq!(local_only.agent_log(), before);
+
+    let outside = repo.grove().arg("ship").output().unwrap();
+    assert!(!outside.status.success());
+    assert!(stderr(&outside).contains("current workspace is not a managed Grove Change"));
+}
+
+#[test]
+fn ship_supports_gitlab_with_the_same_structured_worker() {
+    let repo = TestRepo::new();
+    let remote = repo.create_local_origin();
+    let change = repo.create_change(None);
+    repo.set_change_title(&change, "Support GitLab Shipping");
+    fs::write(change.path.join("gitlab.txt"), "supported\n").unwrap();
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "git@gitlab.com:example/repo.git",
+    ]);
+
+    let output = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"feat: support GitLab shipping","body":"Adds deterministic GitLab shipping."}}"#,
+        )
+        .env(
+            "GROVE_TEST_RESULT_URL",
+            "https://gitlab.com/example/repo/-/merge_requests/1",
+        )
+        .env("GROVE_TEST_RESULT_TITLE", "feat: support GitLab shipping")
+        .env("GROVE_TEST_RESULT_BODY", "Adds deterministic GitLab shipping.")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "✓ Shipped https://gitlab.com/example/repo/-/merge_requests/1\n"
+    );
+    let forge = repo.forge_log();
+    assert!(forge.contains("program=glab"), "{forge}");
+    assert!(
+        forge.contains("projects/example%2Frepo/merge_requests"),
+        "{forge}"
+    );
 }
 
 #[test]
@@ -477,18 +508,29 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
 }
 
 #[test]
-fn pi_extension_links_and_names_native_sessions() {
+fn pi_extensions_link_sessions_and_validate_structured_output() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = Command::new("node")
-        .arg(root.join("tests/support/pi-extension.mjs"))
-        .arg(root.join("src/pi-extension.ts"))
-        .output()
-        .expect("Node.js is required to test the Pi extension");
-    assert!(
-        output.status.success(),
-        "Pi extension contract failed:\n{}",
-        stderr(&output)
-    );
+    for (harness, extension) in [
+        (
+            "tests/support/change-session-extension.mjs",
+            "src/extensions/change-session.ts",
+        ),
+        (
+            "tests/support/structured-output-extension.mjs",
+            "src/extensions/structured-output.ts",
+        ),
+    ] {
+        let output = Command::new("node")
+            .arg(root.join(harness))
+            .arg(root.join(extension))
+            .output()
+            .expect("Node.js is required to test Pi extensions");
+        assert!(
+            output.status.success(),
+            "Pi extension contract failed:\n{}",
+            stderr(&output)
+        );
+    }
 }
 
 #[test]
@@ -530,7 +572,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         .expect("managed Pi must receive the Grove extension");
     let extension_name = Path::new(extension).file_name().unwrap().to_string_lossy();
     let extension_hash = extension_name
-        .strip_prefix(".grove-pi-extension-")
+        .strip_prefix(".grove-change-session-extension-")
         .and_then(|name| name.strip_suffix(".ts"))
         .expect("Pi extension path must retain its name and TypeScript suffix");
     assert_eq!(extension_hash.len(), 8, "{extension_name}");
@@ -553,10 +595,11 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         "--session-dir",
         "--continue",
         "--extension",
-        "--print",
+        "--mode",
         "--no-session",
         "--model",
-        "--no-tools",
+        "--tools",
+        "--structured-output-schema",
         "--no-context-files",
         "--no-skills",
         "--no-extensions",
@@ -578,8 +621,13 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let session_path = repo.pi_session_files().pop().unwrap();
     let session_before = fs::read_to_string(&session_path).unwrap();
     let id = capsule.file_name().unwrap().to_string_lossy();
-    assert_eq!(session_before.matches(r#""customType":"grove""#).count(), 1);
-    assert!(session_before.contains(r#""schema":1"#));
+    assert_eq!(
+        session_before
+            .matches(r#""customType":"grove.change""#)
+            .count(),
+        1
+    );
+    assert!(!session_before.contains(r#""schema":1"#));
     assert!(session_before.contains(&format!(r#""changeId":"{id}""#)));
 
     let resumed = repo.resume_pi_in_pty("Implement Native Session Titles", b"\x1b[B\r");
