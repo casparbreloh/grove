@@ -69,6 +69,7 @@ impl TestRepo {
         fixture.initialize(&fixture.repo);
         fixture.configure_agent();
         fixture.configure_shipping();
+        fixture.configure_pty();
         fixture
     }
 
@@ -417,19 +418,8 @@ impl TestRepo {
     }
 
     fn pty(&self, directory: &Path, program: &OsStr) -> Command {
-        let mut command = Command::new("script");
-        command
-            .args([
-                OsStr::new("-q"),
-                OsStr::new("/dev/null"),
-                OsStr::new("/bin/sh"),
-                OsStr::new("-c"),
-                OsStr::new(
-                    "stty rows \"${GROVE_TEST_ROWS:-40}\" cols \"${GROVE_TEST_COLUMNS:-120}\"; exec \"$@\"",
-                ),
-                OsStr::new("grove-test-pty"),
-            ])
-            .arg(program);
+        let mut command = Command::new(self.home.join("bin/grove-test-pty"));
+        command.arg(program);
         self.configure_grove(&mut command, directory);
         command
     }
@@ -658,6 +648,13 @@ impl TestRepo {
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
                 .expect("make fake shipping executable");
         }
+    }
+
+    fn configure_pty(&self) {
+        let executable = self.home.join("bin/grove-test-pty");
+        fs::write(&executable, include_str!("pty.sh")).expect("write PTY wrapper");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("make PTY wrapper executable");
     }
 
     fn test_path(&self) -> std::ffi::OsString {
