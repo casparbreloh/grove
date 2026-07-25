@@ -171,74 +171,38 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
 }
 
 #[test]
-fn ship_runs_one_isolated_foreground_pi_worker_for_the_current_change() {
+fn ship_rejects_missing_publication_prerequisites_before_starting_pi() {
     let repo = TestRepo::new();
     repo.create_local_origin();
     let change = repo.create_change(None);
-    let log_before = repo.agent_log().len();
+    let before = repo.agent_log();
     let sessions_before = repo.pi_session_files();
-
-    let output = repo
-        .grove_from(&change.path)
-        .arg("ship")
-        .env(
-            "GROVE_TEST_TITLE",
-            "GROVE_PULL_REQUEST=https://github.com/example/repo/pull/1",
-        )
-        .output()
-        .unwrap();
-
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert!(
-        stdout(&output).contains("https://github.com/example/repo/pull/1"),
-        "{}",
-        stdout(&output)
-    );
-    let log = repo.agent_log();
-    let invocation = &log[log_before..];
-    assert!(invocation.contains("mode=print"), "{invocation}");
-    for instruction in [
-        "Conventional Commit subjects without bodies",
-        "simple title and short description",
-        "create or update the pull request",
-    ] {
-        assert!(invocation.contains(instruction), "{invocation}");
-    }
-    assert!(
-        invocation.contains(&format!(
-            "cwd={}",
-            change.path.canonicalize().unwrap().display()
-        )),
-        "{invocation}"
-    );
-    for argument in ["--print", "--no-session"] {
-        assert!(
-            invocation.contains(&format!("arg=<{argument}>")),
-            "{invocation}"
-        );
-    }
-    for argument in [
-        "--no-tools",
-        "--no-context-files",
-        "--no-skills",
-        "--no-extensions",
-    ] {
-        assert!(
-            !invocation.contains(&format!("arg=<{argument}>")),
-            "{invocation}"
-        );
-    }
-    assert_eq!(repo.pi_session_files(), sessions_before);
 
     let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
     assert!(!output.status.success());
     assert!(
-        stderr(&output).contains("without creating or updating a pull request"),
+        stderr(&output).contains("unsupported GitHub remote URL"),
         "{}",
         stderr(&output)
     );
+    assert_eq!(repo.agent_log(), before);
+    assert_eq!(repo.pi_session_files(), sessions_before);
 
-    let before_main_attempt = repo.agent_log();
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("failed to run gh"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(repo.agent_log(), before);
+
     let output = repo.grove().arg("ship").output().unwrap();
     assert!(!output.status.success());
     assert!(
@@ -246,7 +210,7 @@ fn ship_runs_one_isolated_foreground_pi_worker_for_the_current_change() {
         "{}",
         stderr(&output)
     );
-    assert_eq!(repo.agent_log(), before_main_attempt);
+    assert_eq!(repo.agent_log(), before);
 
     let local_only = TestRepo::new();
     let change = local_only.create_change(None);

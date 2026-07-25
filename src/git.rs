@@ -67,6 +67,18 @@ pub(crate) struct SyncResult {
     pub(crate) skipped: usize,
 }
 
+pub(crate) struct ShipPreparation {
+    pub(crate) push_url: String,
+    pub(crate) remote: String,
+    starting_head: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct Shipped {
+    pub(crate) branch: String,
+    pub(crate) head: String,
+}
+
 pub(crate) struct PreparedArchive {
     path: PathBuf,
     id: String,
@@ -251,7 +263,98 @@ impl Git {
         self.current_root()
     }
 
-    pub(crate) fn validate_ship(&self, path: &Path) -> Result<()> {
+    pub(crate) fn prepare_ship(&self, path: &Path) -> Result<ShipPreparation> {
+        self.validate_resolved_state(path)?;
+        let remotes = self.text_at(path, &["remote"])?;
+        let remotes = remotes.lines().collect::<Vec<_>>();
+        let branch = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let branch_push_remote = branch
+            .as_deref()
+            .map(|branch| self.config_optional_at(path, &format!("branch.{branch}.pushRemote")))
+            .transpose()?
+            .flatten();
+        let default_push_remote = self.config_optional_at(path, "remote.pushDefault")?;
+        let branch_remote = branch
+            .as_deref()
+            .map(|branch| self.config_optional_at(path, &format!("branch.{branch}.remote")))
+            .transpose()?
+            .flatten();
+        let remote = [branch_push_remote, default_push_remote, branch_remote]
+            .into_iter()
+            .flatten()
+            .find(|remote| remote != ".")
+            .or_else(|| remotes.contains(&"origin").then(|| "origin".to_owned()))
+            .or_else(|| (remotes.len() == 1).then(|| remotes[0].to_owned()))
+            .context("cannot ship without a usable push remote")?;
+        if !remotes.contains(&remote.as_str()) {
+            bail!("configured push remote '{remote}' does not exist");
+        }
+        if !remote.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        }) {
+            bail!("push remote has an unsupported name");
+        }
+        let push_url = self
+            .text_at(path, &["remote", "get-url", "--push", &remote])
+            .with_context(|| format!("push remote '{remote}' has no usable URL"))?;
+        Ok(ShipPreparation {
+            push_url,
+            remote,
+            starting_head: self.text_at(path, &["rev-parse", "HEAD"])?,
+        })
+    }
+
+    pub(crate) fn finish_ship(&self, path: &Path, prepared: &ShipPreparation) -> Result<Shipped> {
+        self.validate_resolved_state(path)?;
+        let head = self.text_at(path, &["rev-parse", "HEAD"])?;
+        let changed_head = head != prepared.starting_head;
+        if self.is_dirty(path)? {
+            let effect = if changed_head {
+                "prepared commits but "
+            } else {
+                ""
+            };
+            bail!("shipping {effect}left uncommitted work");
+        }
+        let branch = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned))
+            .context("shipping did not leave an attached publication branch")?;
+        let remote = self
+            .config_optional_at(path, &format!("branch.{branch}.remote"))?
+            .context("publication branch has no configured upstream")?;
+        let merge = self
+            .config_optional_at(path, &format!("branch.{branch}.merge"))?
+            .context("publication branch has no configured upstream")?;
+        let upstream_branch = merge
+            .strip_prefix("refs/heads/")
+            .context("publication branch has an invalid configured upstream")?;
+        if remote != prepared.remote {
+            bail!(
+                "publication branch tracks remote '{remote}', expected '{}'",
+                prepared.remote
+            );
+        }
+        let push_url = self.text_at(path, &["remote", "get-url", "--push", &remote])?;
+        if push_url != prepared.push_url {
+            bail!("push remote URL changed while shipping");
+        }
+        let reference = format!("refs/heads/{upstream_branch}");
+        let remote_tip = self
+            .text_at(path, &["ls-remote", &remote, &reference])?
+            .split_whitespace()
+            .next()
+            .map(str::to_owned)
+            .context("publication branch was not pushed")?;
+        if remote_tip != head {
+            bail!("publication branch was not pushed at current HEAD {head}");
+        }
+        Ok(Shipped { branch, head })
+    }
+
+    fn validate_resolved_state(&self, path: &Path) -> Result<()> {
         if self.status(path)?.conflicts > 0 {
             bail!("cannot ship a Change with unresolved conflicts");
         }
@@ -271,15 +374,6 @@ impl Git {
             if marker.exists() {
                 bail!("cannot ship while a Git operation is in progress");
             }
-        }
-
-        let remotes = self.text_at(path, &["remote"])?;
-        let has_push_remote = remotes.lines().any(|remote| {
-            self.text_at(path, &["remote", "get-url", "--push", remote])
-                .is_ok_and(|url| !url.is_empty())
-        });
-        if !has_push_remote {
-            bail!("cannot ship without a usable push remote");
         }
         Ok(())
     }
@@ -1196,6 +1290,21 @@ impl Git {
             .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
     }
 
+    fn config_optional_at(&self, cwd: &Path, key: &str) -> Result<Option<String>> {
+        let args = ["config", "--get", key];
+        let output = self.raw_at(cwd, &args)?;
+        match output.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            )),
+            Some(1) => Ok(None),
+            _ => {
+                check(output, &args)?;
+                unreachable!()
+            }
+        }
+    }
+
     fn symbolic_head_at(&self, cwd: &Path) -> Result<Option<String>> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
         let output = self.raw_at(cwd, &args)?;
@@ -1300,4 +1409,74 @@ fn check(output: Output, args: &[&str]) -> Result<Vec<u8>> {
     }
     let message = String::from_utf8_lossy(&output.stderr);
     bail!("git {} failed: {}", args.join(" "), message.trim())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn shipping_requires_a_clean_attached_branch_pushed_at_head() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = root.path().join("repository");
+        let origin = root.path().join("origin.git");
+        run(root.path(), &["init", "--bare", origin.to_str().unwrap()]);
+        run(
+            root.path(),
+            &[
+                "init",
+                "--initial-branch=main",
+                repository.to_str().unwrap(),
+            ],
+        );
+        run(&repository, &["config", "user.name", "Grove Test"]);
+        run(&repository, &["config", "user.email", "grove@example.test"]);
+        fs::write(repository.join("README.md"), "initial\n").unwrap();
+        run(&repository, &["add", "README.md"]);
+        run(&repository, &["commit", "-m", "Initial"]);
+        run(
+            &repository,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        run(&repository, &["push", "-u", "origin", "main"]);
+
+        let git = Git::at(&repository).unwrap();
+        let prepared = git.prepare_ship(&repository).unwrap();
+        run(&repository, &["switch", "-c", "feature"]);
+        fs::write(repository.join("change.txt"), "change\n").unwrap();
+        run(&repository, &["add", "change.txt"]);
+        run(&repository, &["commit", "-m", "feat: change"]);
+        run(&repository, &["push", "-u", "origin", "feature"]);
+
+        let shipped = git.finish_ship(&repository, &prepared).unwrap();
+        assert_eq!(shipped.branch, "feature");
+        assert_eq!(
+            shipped.head,
+            git.text_at(&repository, &["rev-parse", "HEAD"]).unwrap()
+        );
+
+        fs::write(repository.join("unfinished.txt"), "unfinished\n").unwrap();
+        assert!(
+            git.finish_ship(&repository, &prepared)
+                .unwrap_err()
+                .to_string()
+                .contains("uncommitted work")
+        );
+    }
+
+    fn run(cwd: &Path, arguments: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
