@@ -36,6 +36,9 @@ jobs:
         with:
           node-version: 26
 
+      - name: Setup test shells
+        run: sudo apt-get update && sudo apt-get install --yes fish zsh
+
       - name: Format
         run: cargo fmt --check
 
