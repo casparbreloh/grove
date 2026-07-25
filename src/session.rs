@@ -17,7 +17,6 @@ use crate::change;
 const CHANGE_SESSION_EXTENSION: &[u8] = include_bytes!("extensions/change-session.ts");
 const STRUCTURED_OUTPUT_EXTENSION: &[u8] = include_bytes!("extensions/structured-output.ts");
 const WORKER_MODEL: &str = "openai-codex/gpt-5.6-sol";
-const ACTIVITY_CAPABILITY: &str = "GROVE_ACTIVITY_CAPABILITY";
 const CHANGE_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Call structured_output with the title in the change field. Do not answer in any other way.";
 const CHANGE_OUTPUT_SCHEMA: &str = r#"{
   "type": "object",
@@ -88,7 +87,7 @@ impl Session {
 
     pub(crate) fn attach(&self) -> Result<()> {
         validate_pi()?;
-        let activity = change::managed_lock(&self.capsule)?;
+        let _lock = self.lock()?;
         let sessions = self.capsule.join("pi");
         create_private_directory_all(&sessions).with_context(|| {
             format!(
@@ -113,10 +112,8 @@ impl Session {
             .env("GROVE_EXECUTABLE", executable)
             .env("GROVE_CHANGE_ID", change_id)
             .env("GROVE_CHANGE_CAPSULE", &self.capsule)
-            .env(ACTIVITY_CAPABILITY, &activity.capability)
             .env_remove("GROVE_DIRECTIVE_CD_FILE")
             .status();
-        drop(activity);
         let _ = fs::remove_file(&extension);
         let status = status
             .with_context(|| format!("failed to launch Pi in {}", self.workspace.display()))?;
@@ -145,15 +142,6 @@ impl Session {
     pub(crate) fn lock(&self) -> Result<change::Lock> {
         change::lock(&self.capsule)
     }
-
-    pub(crate) fn lock_for_ship(&self) -> Result<change::ShipLock> {
-        let capability = env::var(ACTIVITY_CAPABILITY).ok();
-        if capability.is_some() {
-            // Grove is single-threaded here and removes the bearer value before spawning workers.
-            unsafe { env::remove_var(ACTIVITY_CAPABILITY) };
-        }
-        change::lock_for_ship(&self.capsule, capability.as_deref())
-    }
 }
 
 pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
@@ -164,16 +152,25 @@ pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
     std::io::stdin()
         .read_to_string(&mut prompt)
         .context("failed to read the title prompt")?;
-    println!("{}", infer_change_title(&capsule, &prompt)?);
-    Ok(())
+    let mut last_error = None;
+    for delay in [0, 250, 1_000] {
+        if delay > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        match infer_change_title(&capsule, &prompt) {
+            Ok(title) => {
+                println!("{title}");
+                return Ok(());
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.expect("title inference attempted at least once"))
 }
 
 pub(crate) fn apply_change_title(change_id: &str, session_id: &str) -> Result<()> {
     let capsule = change_capsule()?;
     validate_session_id(session_id)?;
-    let capability = env::var(ACTIVITY_CAPABILITY)
-        .context("Change title application is not owned by managed Pi")?;
-    let _ownership = change::lock_for_managed_child(&capsule, &capability)?;
     let mut title = String::new();
     std::io::stdin()
         .read_to_string(&mut title)
@@ -288,7 +285,6 @@ fn run_structured_worker_with_extension(
         .args(["--structured-output-schema", schema])
         .current_dir(cwd)
         .env_remove("GROVE_DIRECTIVE_CD_FILE")
-        .env_remove(ACTIVITY_CAPABILITY)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

@@ -114,13 +114,12 @@ JSONL session remains in the Change capsule, and a later picker selection runs
 Pi with the same `--session-dir --continue` arguments so it resumes
 automatically. You never need to copy or remember a Pi session ID.
 
-Grove holds a per-Change advisory lock while Pi is open. A second managed Pi or
-archival, including forced archival, refuses to proceed until the first process
-exits. The owning managed Pi receives a private, per-open capability so an
-explicit `grove ship` launched inside that Pi can share its lock; unrelated and
-spoofed callers remain blocked, and Grove removes the capability before
-starting shipping workers. Starting `pi` manually is unmanaged: Grove does not
-install its extension globally or discover arbitrary sessions.
+Grove holds one per-Change advisory activity lock while Pi is open. It prevents
+a second managed Pi, synchronization, or archival from mutating the Change at
+the same time. It does not block an explicit `grove ship`; shipping validates
+and pushes an exact Git snapshot, so it can run from inside Pi. Starting `pi`
+manually is unmanaged: Grove does not install its extension globally or
+discover arbitrary sessions.
 
 Pi owns its native session files and session names. Grove's Change-session
 extension appends a small `grove.change` link from each managed Pi session to its

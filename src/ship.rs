@@ -19,7 +19,6 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         .context("cannot ship an Untitled Change")?;
     let branch = publication_branch(title)?;
     let session = Session::for_workspace(&change.path)?;
-    let _lock = session.lock_for_ship()?;
     let push_remote = git.push_remote(&change.path)?;
     let code_host = CodeHost::from_remote(&push_remote.url)?;
     let target_branch = code_host.preflight()?;

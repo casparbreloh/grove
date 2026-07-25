@@ -15,10 +15,19 @@ for argument do
 done
 
 if test "$mode" = rpc; then
+  rpc_counted=
   while IFS= read -r request; do
     printf 'rpc=%s\n' "$request" >> "$GROVE_TEST_AGENT_LOG"
     if test -n "${GROVE_TEST_RPC_BLOCK-}"; then
       while test -e "$GROVE_TEST_RPC_BLOCK"; do sleep 0.05; done
+    fi
+    if test -n "${GROVE_TEST_RPC_FAILURES-}" && test -z "$rpc_counted"; then
+      rpc_counted=1
+      failures=0
+      test ! -f "$GROVE_TEST_RPC_FAILURES" || failures=$(cat "$GROVE_TEST_RPC_FAILURES")
+      failures=$((failures + 1))
+      printf '%s' "$failures" > "$GROVE_TEST_RPC_FAILURES"
+      test "$failures" -ge 3 || exit 17
     fi
     if test "${GROVE_TEST_TITLE_EXIT-0}" -ne 0; then
       exit "$GROVE_TEST_TITLE_EXIT"
@@ -81,11 +90,6 @@ if test -n "$session_dir"; then
 fi
 
 printf 'grove-test-agent-ready\n'
-if test -n "${GROVE_TEST_AGENT_COMMAND-}"; then
-  command_status=0
-  sh -c "$GROVE_TEST_AGENT_COMMAND" > "$GROVE_TEST_AGENT_COMMAND_RESULT" 2>&1 || command_status=$?
-  printf '%s' "$command_status" > "$GROVE_TEST_AGENT_COMMAND_RESULT.status"
-fi
 if test -n "${GROVE_TEST_AGENT_BLOCK-}"; then
   while test -e "$GROVE_TEST_AGENT_BLOCK"; do sleep 0.05; done
 fi

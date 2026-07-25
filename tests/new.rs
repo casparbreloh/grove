@@ -378,27 +378,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         best_effort.change_record(&unnamed)["title"],
         serde_json::Value::Null
     );
-    let raw_json = best_effort
-        .grove_from(&unnamed.join("workspace"))
-        .args([
-            "__title",
-            "--change",
-            &unnamed.file_name().unwrap().to_string_lossy(),
-            "--session",
-            "raw-json",
-        ])
-        .env("GROVE_CHANGE_CAPSULE", &unnamed)
-        .env("GROVE_TEST_RAW_CHANGE", "Accept Raw JSON")
-        .write_stdin("Accept schema-valid JSON fallback")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    assert_eq!(stdout(&raw_json).trim(), "Accept Raw JSON");
-    assert_eq!(
-        best_effort.change_record(&unnamed)["title"],
-        serde_json::Value::Null
-    );
+    let retry_count = unnamed.join("retry-count");
     let recovered = best_effort
         .grove_from(&unnamed.join("workspace"))
         .args([
@@ -409,13 +389,15 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
             "recovered",
         ])
         .env("GROVE_CHANGE_CAPSULE", &unnamed)
-        .env("GROVE_TEST_TITLE", "Recover Session Naming")
-        .write_stdin("Recover this unnamed session")
+        .env("GROVE_TEST_RPC_FAILURES", &retry_count)
+        .env("GROVE_TEST_RAW_CHANGE", "Recover Session Naming")
+        .write_stdin("Retry transient naming failures")
         .assert()
         .success()
         .get_output()
         .clone();
     assert_eq!(stdout(&recovered).trim(), "Recover Session Naming");
+    assert_eq!(fs::read_to_string(&retry_count).unwrap(), "3");
     assert_eq!(
         best_effort.change_record(&unnamed)["title"],
         serde_json::Value::Null,
@@ -434,11 +416,10 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         .env("GROVE_CHANGE_CAPSULE", &unnamed)
         .write_stdin("Recover Session Naming")
         .assert()
-        .failure();
+        .success();
     assert_eq!(
         best_effort.change_record(&unnamed)["title"],
-        serde_json::Value::Null,
-        "title application requires the owning managed Pi"
+        "Recover Session Naming"
     );
 
     let missing = TestRepo::new();

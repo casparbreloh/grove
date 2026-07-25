@@ -2,10 +2,10 @@ mod support;
 
 use std::{fs, process::Stdio};
 
-use support::{TestRepo, stderr, stdout};
+use support::{TestChange, TestRepo, stderr, stdout};
 
 #[test]
-fn owning_managed_pi_can_ship_while_unrelated_processes_remain_locked_out() {
+fn ship_runs_while_managed_pi_is_open() {
     let repo = TestRepo::new();
     let remote = repo.create_local_origin();
     repo.git([
@@ -14,56 +14,30 @@ fn owning_managed_pi_can_ship_while_unrelated_processes_remain_locked_out() {
         "origin",
         "git@github.com:example/repo.git",
     ]);
-    let metadata = r#"{"commit":null,"pull_request":{"title":"fix: allow managed Pi to ship","body":"Fixes Change naming reliability and permits shipping from the owning Pi session."}}"#;
-    let command = r#"
-printf '%s' 'Fix Grove Session Errors' | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session in-pi --apply || exit
-printf 'fixed\n' > session-fixes.txt
-"$GROVE_EXECUTABLE" ship || exit
-export GROVE_TEST_REVIEW_URL='https://github.com/example/repo/pull/1'
-export GROVE_TEST_REVIEW_TITLE='fix: allow managed Pi to ship'
-export GROVE_TEST_REVIEW_BODY='Fixes Change naming reliability and permits shipping from the owning Pi session.'
-gate="${TMPDIR:-/tmp}/grove-concurrent-ship-$$"
-touch "$gate"
-GROVE_TEST_RPC_BLOCK="$gate" GROVE_TEST_SHIP_OUTPUT='{"commit":null,"pull_request":null}' "$GROVE_EXECUTABLE" ship >/dev/null &
-first=$!
-while test "$(grep -c '^mode=rpc' "$GROVE_TEST_AGENT_LOG")" -lt 2; do sleep 0.02; done
-if GROVE_TEST_SHIP_OUTPUT='{"commit":null,"pull_request":null}' "$GROVE_EXECUTABLE" ship >"$gate.error" 2>&1; then
-  rm -f "$gate" "$gate.error"
-  exit 1
-fi
-grep -q 'already shipping this Change' "$gate.error" || exit 1
-rm -f "$gate" "$gate.error"
-wait "$first"
-"#;
-    let (child, gate, result) = repo.start_blocking_new_with_command(
-        command,
-        &[
-            ("GROVE_TEST_REMOTE_PATH", remote.display().to_string()),
-            ("GROVE_TEST_SHIP_OUTPUT", metadata.to_owned()),
-        ],
-    );
-    assert_eq!(
-        fs::read_to_string(&result).unwrap(),
-        "✓ Shipped https://github.com/example/repo/pull/1\n"
-    );
-
+    let (child, gate) = repo.start_blocking_new();
     let capsule = repo.change_capsules().pop().unwrap();
-    let workspace = capsule.join("workspace");
-    let external = repo.grove_from(&workspace).arg("ship").output().unwrap();
-    assert!(!external.status.success());
-    assert!(
-        stderr(&external).contains("change is already open"),
-        "{}",
-        stderr(&external)
-    );
-    let spoofed = repo
-        .grove_from(&workspace)
+    let change = TestChange {
+        id: capsule.file_name().unwrap().to_string_lossy().into_owned(),
+        path: capsule.join("workspace"),
+    };
+    repo.set_change_title(&change, "Fix Grove Session Errors");
+    fs::write(change.path.join("session-fixes.txt"), "fixed\n").unwrap();
+
+    let shipped = repo
+        .grove_from(&change.path)
         .arg("ship")
-        .env("GROVE_ACTIVITY_CAPABILITY", "not-the-owner")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"fix: allow shipping while Pi is open","body":"Allows explicit shipping without weakening activity protection for sync and archive."}}"#,
+        )
         .output()
         .unwrap();
-    assert!(!spoofed.status.success());
-    assert!(stderr(&spoofed).contains("change is already open"));
+    assert!(shipped.status.success(), "{}", stderr(&shipped));
+    assert_eq!(
+        stdout(&shipped),
+        "✓ Shipped https://github.com/example/repo/pull/1\n"
+    );
 
     repo.release_blocking_agent(child, &gate);
 }
