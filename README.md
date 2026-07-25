@@ -66,21 +66,19 @@ rolled back if a later operation fails. It reports one ordered outcome and
 reason for every active Change, followed by archived, rebased, and skipped
 totals.
 
-`ship` runs only from the current managed Change and currently supports
-same-repository pull requests on GitHub.com through `gh`. Before starting Pi,
-Grove refuses unresolved Git operations, busy Changes, unsupported or missing
-push remotes, unavailable GitHub authentication, and inaccessible repositories.
-It then starts one foreground `pi --print --no-session` worker with full tools
-and project context. The worker commits all work with Conventional Commit
-subjects, creates or reuses a publication branch, pushes it, and creates or
-updates its pull request with a simple title and description.
+`ship` runs only from the current managed Change. Grove refuses unresolved Git
+operations, busy Changes, missing push remotes, and local-only remotes before
+starting one isolated `pi --print --no-session` worker with full tools and
+project context. Grove passes the selected remote name and a credential-free URL
+to the worker so it can detect the hosting provider and use an available CLI
+such as `gh` or `glab`.
 
-Grove independently requires a clean attached branch whose upstream is pushed
-at the exact local HEAD, then verifies an open same-repository pull request for
-that branch and commit through `gh`. It prints the authoritative URL plus one
-current checks and review summary without polling. Completed pushes are reported
-when later validation fails, and rerunning asks Pi to reuse existing publication
-state. The Change remains active through review.
+The worker validates access, inspects existing branch and pull-request state,
+commits all work with Conventional Commit subjects, creates or reuses a branch,
+pushes it, and creates or updates the pull request with a simple title and
+description. Success requires the worker to return a pull-request URL. Failures
+may leave commits, a branch, or a push in place; rerunning is intended to reuse
+that state. The Change remains active through review.
 
 `archive` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe archival accepts work integrated by merge, cherry-pick or
@@ -205,8 +203,8 @@ eval "$(grove init zsh)"
 ## Install
 
 Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
-Shipping also requires `gh` on `PATH`, authenticated for GitHub.com, and a
-GitHub.com push remote accessible to that account.
+Shipping also requires a network push remote and suitable authenticated hosting
+tools, such as `gh` for GitHub or `glab` for GitLab, available to Pi.
 
 ```sh
 cargo install --path .

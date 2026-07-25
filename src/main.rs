@@ -1,6 +1,5 @@
 mod change;
 mod git;
-mod github;
 mod prompts;
 mod session;
 
@@ -23,7 +22,6 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     git::{Git, WorktreeState},
-    github::Github,
     session::Session,
 };
 
@@ -808,31 +806,8 @@ fn ship(git: &Git) -> Result<()> {
     }
     let session = Session::for_workspace(&selected.worktree_path)?;
     let _lock = session.lock()?;
-    let prepared = git.prepare_ship(&selected.worktree_path)?;
-    Session::prepare()?;
-    let github = Github::preflight(&prepared.push_url, &selected.worktree_path)?;
-    let worker = session.ship(&prepared.remote, &github.repository.name_with_owner())?;
-    let shipped = git
-        .finish_ship(&selected.worktree_path, &prepared)
-        .with_context(|| worker_failure(&worker))?;
-    eprintln!("✓ Pushed {} at {}", shipped.branch, &shipped.head[..8]);
-    let pull_request = github
-        .pull_request(&selected.worktree_path, &shipped.branch, &shipped.head)
-        .with_context(|| worker_failure(&worker))?;
-    if !worker.success() {
-        eprintln!("! Pi exited with {worker} after shipping completed");
-    }
-    println!("✓ Pull request {}", pull_request.url);
-    println!("  {}", pull_request.summary);
-    Ok(())
-}
-
-fn worker_failure(status: &std::process::ExitStatus) -> String {
-    if status.success() {
-        "shipping validation failed".to_owned()
-    } else {
-        format!("Pi exited with {status}; shipping validation failed")
-    }
+    let target = git.ship_target(&selected.worktree_path)?;
+    session.ship(&target.remote, &target.url)
 }
 
 fn archive(git: &Git, force: bool) -> Result<()> {

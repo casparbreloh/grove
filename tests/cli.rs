@@ -171,7 +171,7 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
 }
 
 #[test]
-fn ship_rejects_missing_publication_prerequisites_before_starting_pi() {
+fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
     let repo = TestRepo::new();
     repo.create_local_origin();
     let change = repo.create_change(None);
@@ -181,12 +181,11 @@ fn ship_rejects_missing_publication_prerequisites_before_starting_pi() {
     let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
     assert!(!output.status.success());
     assert!(
-        stderr(&output).contains("unsupported GitHub remote URL"),
+        stderr(&output).contains("network push remote"),
         "{}",
         stderr(&output)
     );
     assert_eq!(repo.agent_log(), before);
-    assert_eq!(repo.pi_session_files(), sessions_before);
 
     repo.git([
         "remote",
@@ -194,14 +193,55 @@ fn ship_rejects_missing_publication_prerequisites_before_starting_pi() {
         "origin",
         "https://github.com/example/repo.git",
     ]);
+    repo.git(["config", "remote.pushDefault", "."]);
     let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
     assert!(!output.status.success());
     assert!(
-        stderr(&output).contains("failed to run gh"),
+        stderr(&output).contains("network push remote"),
         "{}",
         stderr(&output)
     );
     assert_eq!(repo.agent_log(), before);
+    repo.git(["config", "--unset", "remote.pushDefault"]);
+
+    let output = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env(
+            "GROVE_TEST_TITLE",
+            "GROVE_PULL_REQUEST=https://github.com/example/repo/pull/1",
+        )
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("https://github.com/example/repo/pull/1"),
+        "{}",
+        stdout(&output)
+    );
+    let log = repo.agent_log();
+    let invocation = &log[before.len()..];
+    for expected in [
+        "mode=print",
+        "arg=<--print>",
+        "arg=<--no-session>",
+        "remote origin",
+        "https://github.com/example/repo.git",
+        "gh or glab",
+        "Conventional Commit subjects without bodies",
+        "simple title and short description",
+    ] {
+        assert!(invocation.contains(expected), "{invocation}");
+    }
+    assert_eq!(repo.pi_session_files(), sessions_before);
+
+    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("without creating or updating a pull request"),
+        "{}",
+        stderr(&output)
+    );
 
     let output = repo.grove().arg("ship").output().unwrap();
     assert!(!output.status.success());
@@ -210,7 +250,6 @@ fn ship_rejects_missing_publication_prerequisites_before_starting_pi() {
         "{}",
         stderr(&output)
     );
-    assert_eq!(repo.agent_log(), before);
 
     let local_only = TestRepo::new();
     let change = local_only.create_change(None);

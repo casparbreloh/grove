@@ -2,7 +2,7 @@ use std::{
     env, fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -74,21 +74,46 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn ship(&self, remote: &str, repository: &str) -> Result<ExitStatus> {
+    pub(crate) fn ship(&self, remote: &str, url: &str) -> Result<()> {
         validate_pi()?;
-        Command::new("pi")
+        let output = Command::new("pi")
             .arg("--print")
             .arg("--no-session")
-            .arg(prompts::ship(remote, repository))
+            .arg(prompts::ship(remote, url))
             .current_dir(&self.workspace)
             .env_remove("GROVE_DIRECTIVE_CD_FILE")
-            .status()
+            .output()
             .with_context(|| {
                 format!(
                     "failed to launch Pi shipping worker in {}",
                     self.workspace.display()
                 )
+            })?;
+        std::io::stdout()
+            .write_all(&output.stdout)
+            .context("failed to write Pi shipping output")?;
+        std::io::stderr()
+            .write_all(&output.stderr)
+            .context("failed to write Pi shipping errors")?;
+        if !output.status.success() {
+            bail!(
+                "Pi shipping worker exited with {} in {}",
+                output.status,
+                self.workspace.display()
+            );
+        }
+        let stdout =
+            String::from_utf8(output.stdout).context("Pi shipping output was not valid UTF-8")?;
+        let pull_request = stdout.lines().find_map(|line| {
+            line.strip_prefix("GROVE_PULL_REQUEST=").filter(|url| {
+                (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains(char::is_whitespace)
             })
+        });
+        if pull_request.is_none() {
+            bail!("Pi finished without creating or updating a pull request");
+        }
+        Ok(())
     }
 
     pub(crate) fn lock(&self) -> Result<change::Lock> {
