@@ -251,6 +251,39 @@ impl Git {
         self.current_root()
     }
 
+    pub(crate) fn validate_ship(&self, path: &Path) -> Result<()> {
+        if self.status(path)?.conflicts > 0 {
+            bail!("cannot ship a Change with unresolved conflicts");
+        }
+        for marker in [
+            "MERGE_HEAD",
+            "CHERRY_PICK_HEAD",
+            "REVERT_HEAD",
+            "rebase-merge",
+            "rebase-apply",
+        ] {
+            let marker = PathBuf::from(self.text_at(path, &["rev-parse", "--git-path", marker])?);
+            let marker = if marker.is_absolute() {
+                marker
+            } else {
+                path.join(marker)
+            };
+            if marker.exists() {
+                bail!("cannot ship while a Git operation is in progress");
+            }
+        }
+
+        let remotes = self.text_at(path, &["remote"])?;
+        let has_push_remote = remotes.lines().any(|remote| {
+            self.text_at(path, &["remote", "get-url", "--push", remote])
+                .is_ok_and(|url| !url.is_empty())
+        });
+        if !has_push_remote {
+            bail!("cannot ship without a usable push remote");
+        }
+        Ok(())
+    }
+
     pub(crate) fn sync(&self) -> Result<SyncResult> {
         let worktrees = self.worktrees()?;
         let primary = worktrees.first().context("repository has no worktrees")?;

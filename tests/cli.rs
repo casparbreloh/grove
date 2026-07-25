@@ -8,7 +8,7 @@ use support::{TestChange, TestRepo};
 fn command_and_shell_navigation_is_one_coherent_workflow() {
     let repo = TestRepo::new();
     let help = stdout(repo.grove().arg("--help").assert().success().get_output());
-    for command in ["new", "sync", "archive", "init"] {
+    for command in ["new", "sync", "ship", "archive", "init"] {
         assert!(help.contains(command), "{help}");
     }
     for (command, usage, flag) in [
@@ -168,6 +168,94 @@ fn command_and_shell_navigation_is_one_coherent_workflow() {
             .get_output(),
     );
     assert!(flags.contains("--from"), "{flags}");
+}
+
+#[test]
+fn ship_runs_one_isolated_foreground_pi_worker_for_the_current_change() {
+    let repo = TestRepo::new();
+    repo.create_local_origin();
+    let change = repo.create_change(None);
+    let log_before = repo.agent_log().len();
+    let sessions_before = repo.pi_session_files();
+
+    let output = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env(
+            "GROVE_TEST_TITLE",
+            "GROVE_PULL_REQUEST=https://github.com/example/repo/pull/1",
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("https://github.com/example/repo/pull/1"),
+        "{}",
+        stdout(&output)
+    );
+    let log = repo.agent_log();
+    let invocation = &log[log_before..];
+    assert!(invocation.contains("mode=print"), "{invocation}");
+    assert!(
+        invocation.contains(&format!(
+            "cwd={}",
+            change.path.canonicalize().unwrap().display()
+        )),
+        "{invocation}"
+    );
+    for argument in ["--print", "--no-session"] {
+        assert!(
+            invocation.contains(&format!("arg=<{argument}>")),
+            "{invocation}"
+        );
+    }
+    for argument in [
+        "--no-tools",
+        "--no-context-files",
+        "--no-skills",
+        "--no-extensions",
+    ] {
+        assert!(
+            !invocation.contains(&format!("arg=<{argument}>")),
+            "{invocation}"
+        );
+    }
+    assert_eq!(repo.pi_session_files(), sessions_before);
+
+    let output = repo.grove_from(&change.path).arg("ship").output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("without creating or updating a pull request"),
+        "{}",
+        stderr(&output)
+    );
+
+    let before_main_attempt = repo.agent_log();
+    let output = repo.grove().arg("ship").output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("current workspace is not a managed Grove Change"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(repo.agent_log(), before_main_attempt);
+
+    let local_only = TestRepo::new();
+    let change = local_only.create_change(None);
+    let before = local_only.agent_log();
+    let output = local_only
+        .grove_from(&change.path)
+        .arg("ship")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("usable push remote"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(local_only.agent_log(), before);
 }
 
 #[test]

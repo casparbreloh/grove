@@ -15,6 +15,9 @@ use crate::change;
 
 const EXTENSION: &[u8] = include_bytes!("pi-extension.ts");
 const TITLE_SYSTEM_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Output only the title on one line, with no quotes, punctuation-only words, explanation, or prefix.";
+const SHIP_PROMPT: &str = r#"Ship this Change as a pull request. Validate access, commit all work with Conventional Commits, create or reuse a branch, push it, and create or update the pull request.
+
+On success, summarize the result and end with `GROVE_PULL_REQUEST=<url>`. On failure, explain what completed and do not output that line."#;
 
 pub(crate) struct Session {
     capsule: PathBuf,
@@ -71,6 +74,48 @@ impl Session {
             .with_context(|| format!("failed to launch Pi in {}", self.workspace.display()))?;
         if !status.success() {
             bail!("Pi exited with {status} in {}", self.workspace.display());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ship(&self) -> Result<()> {
+        validate_pi()?;
+        let output = Command::new("pi")
+            .arg("--print")
+            .arg("--no-session")
+            .arg(SHIP_PROMPT)
+            .current_dir(&self.workspace)
+            .env_remove("GROVE_DIRECTIVE_CD_FILE")
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to launch Pi shipping worker in {}",
+                    self.workspace.display()
+                )
+            })?;
+        std::io::stdout()
+            .write_all(&output.stdout)
+            .context("failed to write Pi shipping output")?;
+        std::io::stderr()
+            .write_all(&output.stderr)
+            .context("failed to write Pi shipping errors")?;
+        if !output.status.success() {
+            bail!(
+                "Pi shipping worker exited with {} in {}",
+                output.status,
+                self.workspace.display()
+            );
+        }
+        let stdout =
+            String::from_utf8(output.stdout).context("Pi shipping output was not valid UTF-8")?;
+        let pull_request = stdout.lines().find_map(|line| {
+            line.strip_prefix("GROVE_PULL_REQUEST=").filter(|url| {
+                (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains(char::is_whitespace)
+            })
+        });
+        if pull_request.is_none() {
+            bail!("Pi finished without creating or updating a pull request");
         }
         Ok(())
     }

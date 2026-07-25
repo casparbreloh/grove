@@ -46,6 +46,8 @@ enum Cmd {
     },
     /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
     Sync,
+    /// Ship the current Change as a pull request with Pi
+    Ship,
     /// Archive an active Change
     Archive {
         /// Archive and discard unmerged work
@@ -83,6 +85,7 @@ fn main() -> Result<()> {
         None => navigator(&Git::discover()?),
         Some(Cmd::New { from }) => new(&Git::discover()?, from.as_deref()),
         Some(Cmd::Sync) => sync(&Git::discover()?),
+        Some(Cmd::Ship) => ship(&Git::discover()?),
         Some(Cmd::Archive { force }) => archive(&Git::discover()?, force),
         Some(Cmd::Init { shell }) => init(shell),
         Some(Cmd::Title { change, session }) => title(&change, &session),
@@ -789,6 +792,21 @@ fn display_path(path: &Path, current: &Path) -> String {
         return format!("~/{}", relative.display());
     }
     path.display().to_string()
+}
+
+fn ship(git: &Git) -> Result<()> {
+    let current = git.current_path()?;
+    let selected = change_rows(git)?
+        .into_iter()
+        .find(|row| row.current)
+        .context("current workspace is not a managed Grove Change")?;
+    if selected.worktree_path != current {
+        bail!("current workspace is not a managed Grove Change");
+    }
+    let session = Session::for_workspace(&selected.worktree_path)?;
+    let _lock = session.lock()?;
+    git.validate_ship(&selected.worktree_path)?;
+    session.ship()
 }
 
 fn archive(git: &Git, force: bool) -> Result<()> {

@@ -9,6 +9,7 @@ grove new
 # work in Pi, then exit Pi normally
 
 grove          # find a Change, resume Pi, or navigate workspaces
+grove ship     # have Pi commit, push, and open or update a pull request
 grove archive  # archive the current Change, or pick one from the primary checkout
 ```
 
@@ -21,6 +22,7 @@ for the domain vocabulary.
 grove
 grove new [--from REF]
 grove sync
+grove ship
 grove archive [--force]
 grove init fish|zsh
 ```
@@ -63,6 +65,16 @@ skipped Changes remain untouched, while completed archives and rebases are not
 rolled back if a later operation fails. It reports one ordered outcome and
 reason for every active Change, followed by archived, rebased, and skipped
 totals.
+
+`ship` runs only from the current managed Change. It starts one isolated,
+foreground `pi --print --no-session` worker with full tools and project context.
+The worker inspects all non-ignored work, prepares Conventional Commits, creates
+or reuses a publication branch, pushes it, and creates or updates a pull request.
+Grove refuses unresolved Git operations, Changes already open in another Grove
+process, and repositories without a push remote before starting the worker.
+Shipping may use provider tokens and hosting credentials configured for Pi's
+tools. Its output reports the pull request or any partial effects; rerunning is
+intended to converge safely. The Change remains active through review.
 
 `archive` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe archival accepts work integrated by merge, cherry-pick or
@@ -187,6 +199,8 @@ eval "$(grove init zsh)"
 ## Install
 
 Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
+Shipping also requires a push remote and hosting CLI credentials available to
+Pi's tools.
 
 ```sh
 cargo install --path .
