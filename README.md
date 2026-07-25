@@ -73,10 +73,11 @@ project context. Grove passes the selected remote name and a credential-free URL
 to the worker so it can detect the hosting provider and use an available CLI
 such as `gh` or `glab`.
 
-The worker validates access, inspects existing branch and pull-request state,
-commits all work with Conventional Commit subjects, creates or reuses a branch,
-pushes it, and creates or updates the pull request with a simple title and
-description. Success requires the worker to return a pull-request URL. Failures
+The GPT-5.6 Terra worker validates access, inspects existing branch and
+pull-request state, commits all work with Conventional Commit subjects, creates
+or reuses a branch, pushes it, and creates or updates the pull request with a
+simple title and description. Success requires the worker to return a
+pull-request URL. Failures
 may leave commits, a branch, or a push in place; rerunning is intended to reuse
 that state. The Change remains active through review.
 
@@ -120,10 +121,11 @@ first successful result initializes the Change's one stable title; later Pi
 sessions may receive different native names but never retitle the Change or
 rename Git.
 
-The naming request uses `--no-session --no-tools --no-context-files --no-skills
---no-extensions`. It does not delay the real turn, and malformed output or any
+The naming request uses GPT-5.6 Luna with `--no-session --no-tools
+--no-context-files --no-skills --no-extensions`. It does not delay the real
+turn, and malformed output or any
 failure leaves an honest `Untitled` fallback. It is still an additional request
-to Pi's configured provider: the first prompt is sent a second time and may
+to the OpenAI Codex provider: the first prompt is sent a second time and may
 incur provider cost. Treat that prompt according to the provider's privacy
 terms.
 
@@ -203,8 +205,9 @@ eval "$(grove init zsh)"
 ## Install
 
 Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
-Shipping also requires a network push remote and suitable authenticated hosting
-tools, such as `gh` for GitHub or `glab` for GitLab, available to Pi.
+Shipping also requires access to GPT-5.6 Terra, a network push remote, and
+suitable authenticated hosting tools such as `gh` for GitHub or `glab` for
+GitLab. Managed title inference requires access to GPT-5.6 Luna.
 
 ```sh
 cargo install --path .

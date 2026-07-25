@@ -244,7 +244,9 @@ fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
         "mode=print",
         "arg=<--print>",
         "arg=<--no-session>",
+        "arg=<--model>",
         "arg=<--append-system-prompt>",
+        "arg=<openai-codex/gpt-5.6-terra>",
         "remote origin",
         "https://github.com/example/repo.git",
         "gh or glab",
@@ -553,6 +555,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         "--extension",
         "--print",
         "--no-session",
+        "--model",
         "--no-tools",
         "--no-context-files",
         "--no-skills",
@@ -561,6 +564,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     ] {
         assert!(log.contains(&format!("arg=<{flag}>")), "{log}");
     }
+    assert!(log.contains("arg=<openai-codex/gpt-5.6-luna>"), "{log}");
     assert!(!repo.navigation_exists());
 
     repo.release_title_generator(&gate);
