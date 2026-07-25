@@ -323,13 +323,11 @@ fn run_structured_worker_with_extension(
                 bail!("Pi {action} worker failed: {message}");
             }
             if event["type"] == "message_end" && event["message"]["role"] == "assistant" {
-                last_response = event["message"]["content"]
-                    .as_array()
-                    .and_then(|content| {
-                        content
-                            .iter()
-                            .find_map(|part| part["text"].as_str().map(str::to_owned))
-                    });
+                last_response = event["message"]["content"].as_array().and_then(|content| {
+                    content
+                        .iter()
+                        .find_map(|part| part["text"].as_str().map(str::to_owned))
+                });
             }
             if event["type"] == "tool_execution_end"
                 && event["toolName"] == "structured_output"

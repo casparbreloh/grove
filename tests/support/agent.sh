@@ -24,6 +24,11 @@ if test "$mode" = rpc; then
       exit "$GROVE_TEST_TITLE_EXIT"
     fi
     printf '{"type":"response","command":"prompt","success":true}\n'
+    if test -n "${GROVE_TEST_RAW_CHANGE-}"; then
+      printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\\"change\\":\\"%s\\"}"}],"stopReason":"stop"}}\n' "$GROVE_TEST_RAW_CHANGE"
+      printf '{"type":"agent_settled"}\n'
+      continue
+    fi
     case "$schema" in
       *'"change"'*)
         if test -n "${GROVE_TEST_TITLE-}"; then
