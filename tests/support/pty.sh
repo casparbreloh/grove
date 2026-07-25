@@ -6,7 +6,7 @@ if script --version 2>&1 | grep -q util-linux; then
     escaped=$(printf '%s' "$argument" | sed "s/'/'\\\\''/g")
     command="$command '$escaped'"
   done
-  exec script -q -c "$command" /dev/null
+  exec script -q -e -c "$command" /dev/null
 fi
 
 exec script -q /dev/null /bin/sh -c \
