@@ -149,7 +149,7 @@ pub(crate) fn infer_title(
         .arg("--no-skills")
         .arg("--no-extensions")
         .arg("--system-prompt")
-        .arg(prompts::TITLE)
+        .arg(prompts::CHANGE_TITLE)
         .arg(prompt)
         .current_dir(capsule.join("workspace"))
         .output()
