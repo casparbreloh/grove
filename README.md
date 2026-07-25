@@ -72,7 +72,7 @@ unsupported hosts, and unavailable code-host access before publication. GitHub u
 `gh`; GitLab uses `glab`.
 
 Grove creates or reuses the Title's kebab-case publication branch, stages the
-complete Change, and starts one isolated GPT-5.6 Luna RPC worker for structured
+complete Change, and starts one isolated GPT-5.6 Sol RPC worker for structured
 commit and pull-request metadata. The worker receives a compact file index,
 statistics, commit subjects, current pull-request metadata, and a bounded zero-context
 patch. It may selectively read files when that context is insufficient, but it
@@ -116,8 +116,11 @@ automatically. You never need to copy or remember a Pi session ID.
 
 Grove holds a per-Change advisory lock while Pi is open. A second managed Pi or
 archival, including forced archival, refuses to proceed until the first process
-exits. Starting `pi` manually is unmanaged: Grove does not install its extension
-globally or discover arbitrary sessions.
+exits. The owning managed Pi receives a private, per-open capability so an
+explicit `grove ship` launched inside that Pi can share its lock; unrelated and
+spoofed callers remain blocked, and Grove removes the capability before
+starting shipping workers. Starting `pi` manually is unmanaged: Grove does not
+install its extension globally or discover arbitrary sessions.
 
 Pi owns its native session files and session names. Grove's Change-session
 extension appends a small `grove.change` link from each managed Pi session to its
@@ -128,14 +131,14 @@ first successful result initializes the Change's one stable title; later Pi
 sessions may receive different native names but never retitle the Change or
 rename Git.
 
-The naming request uses GPT-5.6 Luna with only Grove's structured-output tool
+The naming request uses GPT-5.6 Sol with only Grove's structured-output tool
 and no session, context files, skills, prompt templates, or other extensions. It
-does not delay the real
-turn, and malformed output or any
-failure leaves an honest `Untitled` fallback. It is still an additional request
-to the OpenAI Codex provider: the first prompt is sent a second time and may
-incur provider cost. Treat that prompt according to the provider's privacy
-terms.
+does not delay the real turn. Grove retries transient or malformed failures
+with brief backoff, stops after three attempts for the native session, and
+warns when naming still fails, leaving an honest `Untitled` fallback. Each attempt starts an additional worker invocation against the OpenAI Codex
+provider and may consume tokens. Grove starts at most three naming workers for
+a native session; Pi and the provider may perform their own request retries
+within each worker. Treat the prompt according to the provider's privacy terms.
 
 ## Change identity and storage
 
@@ -213,7 +216,7 @@ eval "$(grove init zsh)"
 ## Install
 
 Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
-Shipping and managed title inference require access to GPT-5.6 Luna. Shipping
+Shipping and managed title inference require access to GPT-5.6 Sol. Shipping
 also requires a network push remote and suitable authenticated hosting tools
 such as `gh` for GitHub or `glab` for GitLab.
 

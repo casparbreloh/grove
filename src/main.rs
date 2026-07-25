@@ -51,6 +51,8 @@ enum Cmd {
         change: String,
         #[arg(long)]
         session: String,
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -77,6 +79,16 @@ fn main() -> Result<()> {
         Some(Cmd::Ship) => ship::run(&Git::discover()?),
         Some(Cmd::Archive { force }) => archive::run(&Git::discover()?, force),
         Some(Cmd::Init { shell }) => init::run(shell),
-        Some(Cmd::Title { change, session }) => session::name_change(&change, &session),
+        Some(Cmd::Title {
+            change,
+            session,
+            apply,
+        }) => {
+            if apply {
+                session::apply_change_title(&change, &session)
+            } else {
+                session::name_change(&change, &session)
+            }
+        }
     }
 }

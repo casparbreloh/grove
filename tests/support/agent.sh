@@ -64,9 +64,11 @@ if test -n "$session_dir"; then
     fi
     title_file="$session_dir/.title-$session_id"
     (
-      if printf '%s' "$GROVE_TEST_AGENT_PROMPT" | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session "$session_id" > "$title_file" 2>/dev/null; then
+      if printf '%s' "$GROVE_TEST_AGENT_PROMPT" | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session "$session_id" > "$title_file" 2>> "$GROVE_TEST_AGENT_LOG"; then
         title=$(tr -d '\r\n' < "$title_file")
-        printf '{"type":"session_info","id":"grove-title","parentId":"grove-link","timestamp":"2026-01-01T00:00:00.002Z","name":"%s"}\n' "$title" >> "$session_file"
+        if printf '%s' "$title" | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session "$session_id" --apply 2>> "$GROVE_TEST_AGENT_LOG"; then
+          printf '{"type":"session_info","id":"grove-title","parentId":"grove-link","timestamp":"2026-01-01T00:00:00.002Z","name":"%s"}\n' "$title" >> "$session_file"
+        fi
       fi
       rm -f "$title_file"
     ) </dev/null >/dev/null 2>/dev/null &
@@ -74,6 +76,11 @@ if test -n "$session_dir"; then
 fi
 
 printf 'grove-test-agent-ready\n'
+if test -n "${GROVE_TEST_AGENT_COMMAND-}"; then
+  command_status=0
+  sh -c "$GROVE_TEST_AGENT_COMMAND" > "$GROVE_TEST_AGENT_COMMAND_RESULT" 2>&1 || command_status=$?
+  printf '%s' "$command_status" > "$GROVE_TEST_AGENT_COMMAND_RESULT.status"
+fi
 if test -n "${GROVE_TEST_AGENT_BLOCK-}"; then
   while test -e "$GROVE_TEST_AGENT_BLOCK"; do sleep 0.05; done
 fi

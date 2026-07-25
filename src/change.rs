@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -44,26 +44,135 @@ impl RepositoryDirectory {
 
 pub(crate) struct Lock {
     _file: File,
+    _ship_gate: File,
+}
+
+pub(crate) struct ManagedLock {
+    pub(crate) capability: String,
+    _file: File,
+}
+
+pub(crate) struct ShipLock {
+    _activity: Option<File>,
+    _ship_gate: File,
 }
 
 pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
     try_lock(capsule)?.context("change is already open in another Grove process")
 }
 
-pub(crate) fn try_lock(capsule: &Path) -> Result<Option<Lock>> {
+pub(crate) fn managed_lock(capsule: &Path) -> Result<ManagedLock> {
+    let ship_gate = try_file_lock(&capsule.join(".shipping.lock"))?
+        .context("another Grove operation is already shipping this Change")?;
+    let mut file =
+        try_activity_lock(capsule)?.context("change is already open in another Grove process")?;
+    let mut secret = [0_u8; 32];
+    getrandom::fill(&mut secret).context("failed to create Change activity capability")?;
+    let capability = secret
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let digest = blake3::hash(capability.as_bytes()).to_hex();
+    file.write_all(format!("v1 {digest}\n").as_bytes())
+        .context("failed to record Change activity capability")?;
+    file.sync_data()
+        .context("failed to sync Change activity capability")?;
+    drop(ship_gate);
+    Ok(ManagedLock {
+        capability,
+        _file: file,
+    })
+}
+
+pub(crate) fn lock_for_ship(capsule: &Path, capability: Option<&str>) -> Result<ShipLock> {
+    let ship_gate = try_file_lock(&capsule.join(".shipping.lock"))?
+        .context("another Grove operation is already shipping this Change")?;
+    if let Some(file) = try_activity_lock(capsule)? {
+        return Ok(ShipLock {
+            _activity: Some(file),
+            _ship_gate: ship_gate,
+        });
+    }
+    let capability = capability.context("change is already open in another Grove process")?;
+    let expected = format!("v1 {}", blake3::hash(capability.as_bytes()).to_hex());
     let path = capsule.join(".activity.lock");
+    let mut record = String::new();
+    File::open(&path)
+        .and_then(|mut file| file.read_to_string(&mut record))
+        .with_context(|| format!("failed to read change lock {}", path.display()))?;
+    if record.trim() != expected {
+        bail!("change is already open in another Grove process");
+    }
+    let activity = try_activity_lock(capsule)?;
+    Ok(ShipLock {
+        _activity: activity,
+        _ship_gate: ship_gate,
+    })
+}
+
+pub(crate) fn lock_for_managed_child(capsule: &Path, capability: &str) -> Result<ShipLock> {
+    let ship_gate = try_file_lock(&capsule.join(".shipping.lock"))?
+        .context("another Grove operation is already shipping this Change")?;
+    validate_capability(capsule, capability)?;
+    let activity = try_activity_lock(capsule)?;
+    Ok(ShipLock {
+        _activity: activity,
+        _ship_gate: ship_gate,
+    })
+}
+
+fn validate_capability(capsule: &Path, capability: &str) -> Result<()> {
+    let expected = format!("v1 {}", blake3::hash(capability.as_bytes()).to_hex());
+    let path = capsule.join(".activity.lock");
+    let mut record = String::new();
+    File::open(&path)
+        .and_then(|mut file| file.read_to_string(&mut record))
+        .with_context(|| format!("failed to read change lock {}", path.display()))?;
+    if record.trim() != expected {
+        bail!("change activity capability does not match its current owner");
+    }
+    Ok(())
+}
+
+pub(crate) fn try_lock(capsule: &Path) -> Result<Option<Lock>> {
+    let Some(ship_gate) = try_file_lock(&capsule.join(".shipping.lock"))? else {
+        return Ok(None);
+    };
+    let Some(file) = try_activity_lock(capsule)? else {
+        return Ok(None);
+    };
+    Ok(Some(Lock {
+        _file: file,
+        _ship_gate: ship_gate,
+    }))
+}
+
+fn try_activity_lock(capsule: &Path) -> Result<Option<File>> {
+    let path = capsule.join(".activity.lock");
+    let Some(mut file) = try_file_lock(&path)? else {
+        return Ok(None);
+    };
+    file.set_len(0)
+        .with_context(|| format!("failed to clear change lock {}", path.display()))?;
+    file.rewind()
+        .with_context(|| format!("failed to rewind change lock {}", path.display()))?;
+    Ok(Some(file))
+}
+
+fn try_file_lock(path: &Path) -> Result<Option<File>> {
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]
     options.mode(0o600);
     let file = options
-        .open(&path)
-        .with_context(|| format!("failed to open change lock {}", path.display()))?;
+        .open(path)
+        .with_context(|| format!("failed to open lock {}", path.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(Lock { _file: file })),
+        Ok(()) => Ok(Some(file)),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
-        Err(fs::TryLockError::Error(error)) => Err(error)
-            .with_context(|| format!("failed to lock change capsule {}", capsule.display())),
+        Err(fs::TryLockError::Error(error)) => {
+            Err(error).with_context(|| format!("failed to lock {}", path.display()))
+        }
     }
 }
 
@@ -267,6 +376,16 @@ impl Change {
     pub(crate) fn workspace(&self) -> PathBuf {
         self.capsule.join("workspace")
     }
+}
+
+pub(crate) fn validate_identity(capsule: &Path, expected_id: &str) -> Result<()> {
+    let path = capsule.join("change.json");
+    let record = Record::load_optional(&path)?
+        .with_context(|| format!("change record is missing from {}", capsule.display()))?;
+    if record.id != expected_id {
+        bail!("change identity does not match capsule record");
+    }
+    Ok(())
 }
 
 pub(crate) fn initialize_title(capsule: &Path, expected_id: &str, title: &str) -> Result<()> {

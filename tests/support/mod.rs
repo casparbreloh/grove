@@ -312,8 +312,9 @@ impl TestRepo {
         while self.change_record(capsule)["title"] != expected {
             assert!(
                 Instant::now() < deadline,
-                "change title never became {expected:?}: {}",
-                self.change_record(capsule)
+                "change title never became {expected:?}: {}\n{}",
+                self.change_record(capsule),
+                self.agent_log()
             );
             thread::sleep(Duration::from_millis(20));
         }
@@ -356,6 +357,45 @@ impl TestRepo {
             thread::sleep(Duration::from_millis(20));
         }
         (child, gate)
+    }
+
+    pub fn start_blocking_new_with_command(
+        &self,
+        shell_command: &str,
+        environment: &[(&str, String)],
+    ) -> (Child, PathBuf, PathBuf) {
+        let gate = self._root.path().join("agent-command.block");
+        let result = self._root.path().join("agent-command.result");
+        fs::write(&gate, "blocked").expect("create agent block gate");
+        let mut command = self.compiled_grove(&self.repo);
+        command
+            .arg("new")
+            .env("GROVE_TEST_AGENT_BLOCK", &gate)
+            .env("GROVE_TEST_AGENT_COMMAND", shell_command)
+            .env("GROVE_TEST_AGENT_COMMAND_RESULT", &result)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        let child = command.spawn().expect("start managed Grove command");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = result.with_extension("result.status");
+        while !status.is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "managed Pi command did not finish\n{}",
+                self.agent_log()
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            fs::read_to_string(&status).unwrap(),
+            "0",
+            "{}",
+            fs::read_to_string(&result).unwrap_or_default()
+        );
+        (child, gate, result)
     }
 
     pub fn release_blocking_agent(&self, mut child: Child, gate: &Path) {

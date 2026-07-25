@@ -244,7 +244,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         .expect("managed Pi must receive the Grove extension");
     let extension_name = Path::new(extension).file_name().unwrap().to_string_lossy();
     let extension_hash = extension_name
-        .strip_prefix(".grove-change-session-extension-")
+        .strip_prefix(".grove-session-")
         .and_then(|name| name.strip_suffix(".ts"))
         .expect("Pi extension path must retain its name and TypeScript suffix");
     assert_eq!(extension_hash.len(), 8, "{extension_name}");
@@ -279,7 +279,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     ] {
         assert!(log.contains(&format!("arg=<{flag}>")), "{log}");
     }
-    assert!(log.contains("arg=<openai-codex/gpt-5.6-luna>"), "{log}");
+    assert!(log.contains("arg=<openai-codex/gpt-5.6-sol>"), "{log}");
     assert!(!repo.navigation_exists());
 
     repo.release_rpc_worker(&gate);
@@ -341,6 +341,25 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         best_effort.change_record(&unnamed)["title"],
         serde_json::Value::Null
     );
+    let workers_before_mismatch = best_effort
+        .agent_log()
+        .matches("arg=<--system-prompt>")
+        .count();
+    best_effort
+        .grove_from(&unnamed.join("workspace"))
+        .args(["__title", "--change", "deadbeef", "--session", "mismatched"])
+        .env("GROVE_CHANGE_CAPSULE", &unnamed)
+        .write_stdin("Do not send this prompt")
+        .assert()
+        .failure();
+    assert_eq!(
+        best_effort
+            .agent_log()
+            .matches("arg=<--system-prompt>")
+            .count(),
+        workers_before_mismatch,
+        "identity mismatch must fail before starting Pi"
+    );
     best_effort
         .grove_from(&unnamed.join("workspace"))
         .args([
@@ -358,6 +377,47 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     assert_eq!(
         best_effort.change_record(&unnamed)["title"],
         serde_json::Value::Null
+    );
+    let recovered = best_effort
+        .grove_from(&unnamed.join("workspace"))
+        .args([
+            "__title",
+            "--change",
+            &unnamed.file_name().unwrap().to_string_lossy(),
+            "--session",
+            "recovered",
+        ])
+        .env("GROVE_CHANGE_CAPSULE", &unnamed)
+        .env("GROVE_TEST_TITLE", "Recover Session Naming")
+        .write_stdin("Recover this unnamed session")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert_eq!(stdout(&recovered).trim(), "Recover Session Naming");
+    assert_eq!(
+        best_effort.change_record(&unnamed)["title"],
+        serde_json::Value::Null,
+        "inference alone must not let stale work title the Change"
+    );
+    best_effort
+        .grove_from(&unnamed.join("workspace"))
+        .args([
+            "__title",
+            "--change",
+            &unnamed.file_name().unwrap().to_string_lossy(),
+            "--session",
+            "recovered",
+            "--apply",
+        ])
+        .env("GROVE_CHANGE_CAPSULE", &unnamed)
+        .write_stdin("Recover Session Naming")
+        .assert()
+        .failure();
+    assert_eq!(
+        best_effort.change_record(&unnamed)["title"],
+        serde_json::Value::Null,
+        "title application requires the owning managed Pi"
     );
 
     let missing = TestRepo::new();

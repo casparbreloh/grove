@@ -502,6 +502,7 @@ dependencies = [
  "clap_complete",
  "clap_usage",
  "crossterm",
+ "getrandom 0.4.3",
  "serde",
  "serde_json",
  "tempfile",
