@@ -16,7 +16,7 @@ use crate::change;
 
 const CHANGE_SESSION_EXTENSION: &[u8] = include_bytes!("extensions/change-session.ts");
 const STRUCTURED_OUTPUT_EXTENSION: &[u8] = include_bytes!("extensions/structured-output.ts");
-const WORKER_MODEL: &str = "openai-codex/gpt-5.6-luna";
+const WORKER_MODEL: &str = "openai-codex/gpt-5.6-sol";
 const CHANGE_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Call structured_output with the title in the change field. Do not answer in any other way.";
 const CHANGE_OUTPUT_SCHEMA: &str = r#"{
   "type": "object",
@@ -26,7 +26,7 @@ const CHANGE_OUTPUT_SCHEMA: &str = r#"{
   "required": ["change"],
   "additionalProperties": false
 }"#;
-const SHIP_PROMPT: &str = "Write concise publication metadata for the supplied Change. A commit is a single Conventional Commit subject describing only newly staged work, with no body. Pull-request metadata describes the complete Change; return it only when a pull request must be created or its current title and body no longer fit. Treat the supplied summary as an index of the complete publication. Use it as primary context. If intent or scope is unclear, use read selectively until you understand the Change well enough to name it accurately. Avoid unrelated investigation. Finish only by calling structured_output.";
+const SHIP_PROMPT: &str = "Write concise publication metadata for the supplied Change. Set commit to null when Published history is false because Grove uses the new pull-request title for the initial commit. Otherwise, a commit is a single Conventional Commit subject describing only newly staged work, with no body. Pull-request metadata describes the complete Change; return it only when a pull request must be created or its current title and body no longer fit. Treat the supplied summary as an index of the complete publication. Use it as primary context. If intent or scope is unclear, use read selectively until you understand the Change well enough to name it accurately. Avoid unrelated investigation. Finish only by calling structured_output; if tool calling is unavailable, return only JSON matching its schema.";
 const SHIP_OUTPUT_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
@@ -101,8 +101,7 @@ impl Session {
             .file_name()
             .and_then(|name| name.to_str())
             .context("change capsule has no valid ID")?;
-        let extension =
-            materialize_extension(CHANGE_SESSION_EXTENSION, "grove-change-session-extension")?;
+        let extension = materialize_extension(CHANGE_SESSION_EXTENSION, "grove-session")?;
         let status = Command::new("pi")
             .arg("--session-dir")
             .arg(&sessions)
@@ -146,27 +145,47 @@ impl Session {
 }
 
 pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
-    let capsule = env::var_os("GROVE_CHANGE_CAPSULE")
-        .map(PathBuf::from)
-        .context("GROVE_CHANGE_CAPSULE is not set")?;
+    let capsule = change_capsule()?;
+    change::validate_identity(&capsule, change_id)?;
+    validate_session_id(session_id)?;
     let mut prompt = String::new();
     std::io::stdin()
         .read_to_string(&mut prompt)
         .context("failed to read the title prompt")?;
-    println!(
-        "{}",
-        infer_change_title(&capsule, change_id, session_id, &prompt)?
-    );
-    Ok(())
+    let mut last_error = None;
+    for delay in [0, 250, 1_000] {
+        if delay > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        match infer_change_title(&capsule, &prompt) {
+            Ok(title) => {
+                println!("{title}");
+                return Ok(());
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.expect("title inference attempted at least once"))
 }
 
-fn infer_change_title(
-    capsule: &Path,
-    change_id: &str,
-    session_id: &str,
-    prompt: &str,
-) -> Result<String> {
-    validate_pi()?;
+pub(crate) fn apply_change_title(change_id: &str, session_id: &str) -> Result<()> {
+    let capsule = change_capsule()?;
+    validate_session_id(session_id)?;
+    let mut title = String::new();
+    std::io::stdin()
+        .read_to_string(&mut title)
+        .context("failed to read the inferred title")?;
+    let title = validate_change_title(&title)?;
+    change::initialize_title(&capsule, change_id, title)
+}
+
+fn change_capsule() -> Result<PathBuf> {
+    env::var_os("GROVE_CHANGE_CAPSULE")
+        .map(PathBuf::from)
+        .context("GROVE_CHANGE_CAPSULE is not set")
+}
+
+fn validate_session_id(session_id: &str) -> Result<()> {
     let session_bytes = session_id.as_bytes();
     if !session_bytes.first().is_some_and(u8::is_ascii_alphanumeric)
         || !session_bytes.last().is_some_and(u8::is_ascii_alphanumeric)
@@ -176,6 +195,11 @@ fn infer_change_title(
     {
         bail!("invalid Pi session identity");
     }
+    Ok(())
+}
+
+fn infer_change_title(capsule: &Path, prompt: &str) -> Result<String> {
+    validate_pi()?;
     if prompt.trim().is_empty() {
         bail!("cannot infer a title from an empty prompt");
     }
@@ -188,10 +212,16 @@ fn infer_change_title(
         "structured_output",
         "Change naming",
     )?;
-    let title = value["change"]
-        .as_str()
-        .context("Pi returned invalid structured Change output")?
-        .trim();
+    validate_change_title(
+        value["change"]
+            .as_str()
+            .context("Pi returned invalid structured Change output")?,
+    )
+    .map(str::to_owned)
+}
+
+fn validate_change_title(title: &str) -> Result<&str> {
+    let title = title.trim();
     let words = title.split_whitespace().collect::<Vec<_>>();
     if title.is_empty()
         || title.len() > 80
@@ -203,9 +233,7 @@ fn infer_change_title(
     {
         bail!("Pi returned an invalid title");
     }
-
-    change::initialize_title(capsule, change_id, title)?;
-    Ok(title.to_owned())
+    Ok(title)
 }
 
 fn run_structured_worker(
@@ -270,6 +298,7 @@ fn run_structured_worker_with_extension(
         send_rpc_prompt(&mut stdin, prompt)?;
         let mut attempts = 1;
         let mut result = None;
+        let mut last_response = None;
         for line in lines.by_ref() {
             let line = line.with_context(|| format!("failed to read Pi {action} RPC output"))?;
             let event: serde_json::Value = serde_json::from_str(&line)
@@ -279,6 +308,22 @@ fn run_structured_worker_with_extension(
                 && event["success"] == false
             {
                 bail!("Pi {action} worker rejected the prompt");
+            }
+            if event["type"] == "message_end"
+                && event["message"]["role"] == "assistant"
+                && event["message"]["stopReason"] == "error"
+            {
+                let message = event["message"]["errorMessage"]
+                    .as_str()
+                    .unwrap_or("provider request failed");
+                bail!("Pi {action} worker failed: {message}");
+            }
+            if event["type"] == "message_end" && event["message"]["role"] == "assistant" {
+                last_response = event["message"]["content"].as_array().and_then(|content| {
+                    content
+                        .iter()
+                        .find_map(|part| part["text"].as_str().map(str::to_owned))
+                });
             }
             if event["type"] == "tool_execution_end"
                 && event["toolName"] == "structured_output"
@@ -290,8 +335,20 @@ fn run_structured_worker_with_extension(
                 result = Some(event["result"]["details"].clone());
             }
             if event["type"] == "agent_settled" {
-                if result.is_some() || attempts == 2 {
+                if result.is_some() {
                     return Ok(result);
+                }
+                if attempts == 2 {
+                    if let Some(response) = last_response {
+                        return serde_json::from_str(&response)
+                            .map(Some)
+                            .with_context(|| {
+                                format!(
+                                    "Pi {action} worker returned invalid JSON instead of structured output"
+                                )
+                            });
+                    }
+                    return Ok(None);
                 }
                 attempts += 1;
                 send_rpc_prompt(

@@ -269,6 +269,16 @@ impl Change {
     }
 }
 
+pub(crate) fn validate_identity(capsule: &Path, expected_id: &str) -> Result<()> {
+    let path = capsule.join("change.json");
+    let record = Record::load_optional(&path)?
+        .with_context(|| format!("change record is missing from {}", capsule.display()))?;
+    if record.id != expected_id {
+        bail!("change identity does not match capsule record");
+    }
+    Ok(())
+}
+
 pub(crate) fn initialize_title(capsule: &Path, expected_id: &str, title: &str) -> Result<()> {
     update_record(capsule, expected_id, |record| {
         if record.title.is_none() {

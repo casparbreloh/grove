@@ -1,17 +1,33 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const LINK_TYPE = "grove.change";
 const NAMING_LIFECYCLES = new Set(["startup", "new", "fork"]);
 
-export default function changeSession(pi, spawnProcess = spawn) {
+export default function changeSession(pi, spawnProcess = spawn, applyTitle = spawnSync) {
   let currentSessionId;
-  let armedSessionId;
+  let request;
+
+  function stop() {
+    const active = request;
+    const child = active?.child;
+    request = undefined;
+    clearTimeout(active?.timer);
+    if (!child || child.exitCode !== null) return;
+    try {
+      if (process.platform !== "win32" && child.pid) process.kill(-child.pid);
+      else child.kill();
+    } catch {}
+  }
+
+  function failed(ctx, active) {
+    if (request !== active) return;
+    request = undefined;
+    ctx.ui?.notify?.("Grove could not name this session", "warning");
+  }
 
   pi.on("session_start", (event, ctx) => {
-    const sessionId = ctx.sessionManager.getSessionId();
-    currentSessionId = sessionId;
-    armedSessionId = undefined;
-
+    stop();
+    currentSessionId = ctx.sessionManager.getSessionId();
     const changeId = process.env.GROVE_CHANGE_ID;
     if (!changeId) return;
 
@@ -21,75 +37,106 @@ export default function changeSession(pi, spawnProcess = spawn) {
         entry.customType === LINK_TYPE &&
         entry.data?.changeId === changeId,
     );
-    if (!linked) {
-      pi.appendEntry(LINK_TYPE, { changeId });
-    }
+    if (!linked) pi.appendEntry(LINK_TYPE, { changeId });
     if (NAMING_LIFECYCLES.has(event.reason) && !pi.getSessionName()) {
-      armedSessionId = sessionId;
+      request = { changeId, sessionId: currentSessionId };
     }
+  });
+
+  pi.on("session_info_changed", (event) => {
+    if (event.name) stop();
   });
 
   pi.on("session_shutdown", () => {
     currentSessionId = undefined;
-    armedSessionId = undefined;
+    stop();
   });
 
   pi.on("input", (event, ctx) => {
     if (event.source !== "interactive") return { action: "continue" };
     const prompt = String(event.text ?? "").trim();
     const executable = process.env.GROVE_EXECUTABLE;
-    const changeId = process.env.GROVE_CHANGE_ID;
-    const capturedSessionId = armedSessionId;
+    const active = request;
     if (
+      !active ||
+      active.child ||
       !executable ||
-      !changeId ||
-      !capturedSessionId ||
       prompt.length < 3 ||
       prompt.startsWith("/")
     ) {
       return { action: "continue" };
     }
 
-    armedSessionId = undefined;
     let stdout = "";
     const child = spawnProcess(
       executable,
-      ["__title", "--change", changeId, "--session", capturedSessionId],
+      ["__title", "--change", active.changeId, "--session", active.sessionId],
       {
         cwd: process.cwd(),
         env: process.env,
         stdio: ["pipe", "pipe", "ignore"],
+        detached: process.platform !== "win32",
       },
     );
+    active.child = child;
+    active.timer = setTimeout(() => {
+      if (request !== active) return;
+      stop();
+      ctx.ui?.notify?.("Grove could not name this session", "warning");
+    }, 60_000);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
-      if (stdout.length > 256) child.kill();
+      if (stdout.length > 256) stop();
     });
     child.once("close", (code) => {
+      clearTimeout(active.timer);
       const title = stdout.trim();
       if (
-        code === 0 &&
-        title.length > 0 &&
-        !title.includes("\n") &&
-        !title.includes("\r") &&
-        currentSessionId === capturedSessionId
+        code !== 0 ||
+        !title ||
+        title.includes("\n") ||
+        title.includes("\r") ||
+        request !== active ||
+        currentSessionId !== active.sessionId
       ) {
-        try {
-          if (
-            ctx.sessionManager.getSessionId() === capturedSessionId &&
-            !pi.getSessionName()
-          ) {
-            pi.setSessionName(title);
-          }
-        } catch {}
+        failed(ctx, active);
+        return;
+      }
+      try {
+        if (
+          ctx.sessionManager.getSessionId() !== active.sessionId ||
+          pi.getSessionName()
+        ) {
+          return;
+        }
+        const applied = applyTitle(
+          executable,
+          [
+            "__title",
+            "--change",
+            active.changeId,
+            "--session",
+            active.sessionId,
+            "--apply",
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            input: title,
+            stdio: ["pipe", "ignore", "ignore"],
+            timeout: 5_000,
+          },
+        );
+        if (applied.status === 0) pi.setSessionName(title);
+        else ctx.ui?.notify?.("Grove could not save the session title", "warning");
+      } finally {
+        if (request === active) request = undefined;
       }
     });
-    child.on("error", () => {});
-    child.stdin.on("error", () => child.kill());
+    child.once("error", () => failed(ctx, active));
+    child.stdin.once("error", stop);
     child.stdin.end(prompt);
-    child.stdout.unref?.();
-    child.unref();
     return { action: "continue" };
   });
 }

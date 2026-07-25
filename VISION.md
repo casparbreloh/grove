@@ -56,9 +56,9 @@ and Grove never rewrites or normalizes it.
 
 Grove deliberately does not keep Pi running after its terminal closes. There
 is no daemon, PTY host, detach key, or multiplexer. Resuming a Change starts Pi
-again against the same native session directory. The advisory activity lock is
-a safety boundary against concurrent writers and destructive mutation, not a
-user-facing agent status model.
+again against the same native session directory. The single advisory activity
+lock excludes competing managed Pi, synchronization, and archival mutation; it
+is not a user-facing agent status model and does not block explicit shipping.
 
 `grove sync` explicitly fetches exactly the primary branch's configured merge
 ref into its upstream-tracking ref, fast-forwards the local primary branch, and
@@ -135,7 +135,7 @@ continuation, background polling, or Grove-owned copy of remote state. Pi, Git,
 the remote, and the hosting provider remain authoritative for their respective
 data.
 
-Before starting the worker, Grove rejects a busy Change, unresolved Git state,
+Before starting the worker, Grove rejects unresolved Git state,
 missing publication prerequisites, unsupported hosting provider, unavailable
 authentication, or a repository without a usable push remote. A local-only
 repository therefore receives one short explanation and no provider request or
@@ -143,7 +143,7 @@ partial local shipping work. The command promises a pull request rather than
 silently redefining `ship` to mean commit-only work.
 
 Shipping explicitly sends summarized source and repository context, plus files
-selectively read by Luna, to the OpenAI Codex provider and consumes tokens. Git,
+selectively read by Sol, to the OpenAI Codex provider and consumes tokens. Git,
 remote, and hosting effects are deterministic Grove operations authorized by
 the explicit command, not implicit activity elsewhere.
 

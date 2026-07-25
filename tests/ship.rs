@@ -2,7 +2,45 @@ mod support;
 
 use std::{fs, process::Stdio};
 
-use support::{TestRepo, stderr, stdout};
+use support::{TestChange, TestRepo, stderr, stdout};
+
+#[test]
+fn ship_runs_while_managed_pi_is_open() {
+    let repo = TestRepo::new();
+    let remote = repo.create_local_origin();
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:example/repo.git",
+    ]);
+    let (child, gate) = repo.start_blocking_new();
+    let capsule = repo.change_capsules().pop().unwrap();
+    let change = TestChange {
+        id: capsule.file_name().unwrap().to_string_lossy().into_owned(),
+        path: capsule.join("workspace"),
+    };
+    repo.set_change_title(&change, "Fix Grove Session Errors");
+    fs::write(change.path.join("session-fixes.txt"), "fixed\n").unwrap();
+
+    let shipped = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"fix: allow shipping while Pi is open","body":"Allows explicit shipping without weakening activity protection for sync and archive."}}"#,
+        )
+        .output()
+        .unwrap();
+    assert!(shipped.status.success(), "{}", stderr(&shipped));
+    assert_eq!(
+        stdout(&shipped),
+        "✓ Shipped https://github.com/example/repo/pull/1\n"
+    );
+
+    repo.release_blocking_agent(child, &gate);
+}
 
 #[test]
 fn ship_recovers_after_create_failure_and_updates_pull_request_metadata() {

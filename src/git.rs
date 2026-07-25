@@ -468,15 +468,23 @@ impl Git {
         Ok(())
     }
 
-    pub(crate) fn validate_clean_ship(&self, path: &Path) -> Result<()> {
-        if self.is_dirty(path)? {
+    pub(crate) fn validate_clean_ship(&self, path: &Path, branch: &str) -> Result<String> {
+        let current = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if current.as_deref() != Some(branch) || self.is_dirty(path)? {
             bail!("Change Git state changed while shipping; rerun grove ship");
         }
-        Ok(())
+        self.text_at(path, &["rev-parse", "HEAD"])
     }
 
-    pub(crate) fn push_ship(&self, path: &Path, remote: &str, branch: &str) -> Result<()> {
-        let head_oid = self.text_at(path, &["rev-parse", "HEAD"])?;
+    pub(crate) fn push_ship(
+        &self,
+        path: &Path,
+        remote: &str,
+        branch: &str,
+        head_oid: &str,
+    ) -> Result<()> {
         let destination = format!("{head_oid}:refs/heads/{branch}");
         self.checked_at(path, &["push", remote, &destination])?;
         self.checked_at(

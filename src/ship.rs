@@ -19,7 +19,6 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         .context("cannot ship an Untitled Change")?;
     let branch = publication_branch(title)?;
     let session = Session::for_workspace(&change.path)?;
-    let _lock = session.lock()?;
     let push_remote = git.push_remote(&change.path)?;
     let code_host = CodeHost::from_remote(&push_remote.url)?;
     let target_branch = code_host.preflight()?;
@@ -69,8 +68,8 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         };
         git.commit_ship(&change.path, subject, &snapshot)?;
     }
-    git.validate_clean_ship(&change.path)?;
-    git.push_ship(&change.path, &push_remote.name, &branch)?;
+    let head_oid = git.validate_clean_ship(&change.path, &branch)?;
+    git.push_ship(&change.path, &push_remote.name, &branch, &head_oid)?;
 
     let pull_request = match existing_pull_request {
         Some(existing) => match metadata.pull_request {

@@ -15,15 +15,29 @@ for argument do
 done
 
 if test "$mode" = rpc; then
+  rpc_counted=
   while IFS= read -r request; do
     printf 'rpc=%s\n' "$request" >> "$GROVE_TEST_AGENT_LOG"
     if test -n "${GROVE_TEST_RPC_BLOCK-}"; then
       while test -e "$GROVE_TEST_RPC_BLOCK"; do sleep 0.05; done
     fi
+    if test -n "${GROVE_TEST_RPC_FAILURES-}" && test -z "$rpc_counted"; then
+      rpc_counted=1
+      failures=0
+      test ! -f "$GROVE_TEST_RPC_FAILURES" || failures=$(cat "$GROVE_TEST_RPC_FAILURES")
+      failures=$((failures + 1))
+      printf '%s' "$failures" > "$GROVE_TEST_RPC_FAILURES"
+      test "$failures" -ge 3 || exit 17
+    fi
     if test "${GROVE_TEST_TITLE_EXIT-0}" -ne 0; then
       exit "$GROVE_TEST_TITLE_EXIT"
     fi
     printf '{"type":"response","command":"prompt","success":true}\n'
+    if test -n "${GROVE_TEST_RAW_CHANGE-}"; then
+      printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\\"change\\":\\"%s\\"}"}],"stopReason":"stop"}}\n' "$GROVE_TEST_RAW_CHANGE"
+      printf '{"type":"agent_settled"}\n'
+      continue
+    fi
     case "$schema" in
       *'"change"'*)
         if test -n "${GROVE_TEST_TITLE-}"; then
@@ -64,9 +78,11 @@ if test -n "$session_dir"; then
     fi
     title_file="$session_dir/.title-$session_id"
     (
-      if printf '%s' "$GROVE_TEST_AGENT_PROMPT" | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session "$session_id" > "$title_file" 2>/dev/null; then
+      if printf '%s' "$GROVE_TEST_AGENT_PROMPT" | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session "$session_id" > "$title_file" 2>> "$GROVE_TEST_AGENT_LOG"; then
         title=$(tr -d '\r\n' < "$title_file")
-        printf '{"type":"session_info","id":"grove-title","parentId":"grove-link","timestamp":"2026-01-01T00:00:00.002Z","name":"%s"}\n' "$title" >> "$session_file"
+        if printf '%s' "$title" | "$GROVE_EXECUTABLE" __title --change "$GROVE_CHANGE_ID" --session "$session_id" --apply 2>> "$GROVE_TEST_AGENT_LOG"; then
+          printf '{"type":"session_info","id":"grove-title","parentId":"grove-link","timestamp":"2026-01-01T00:00:00.002Z","name":"%s"}\n' "$title" >> "$session_file"
+        fi
       fi
       rm -f "$title_file"
     ) </dev/null >/dev/null 2>/dev/null &

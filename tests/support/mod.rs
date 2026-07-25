@@ -312,8 +312,9 @@ impl TestRepo {
         while self.change_record(capsule)["title"] != expected {
             assert!(
                 Instant::now() < deadline,
-                "change title never became {expected:?}: {}",
-                self.change_record(capsule)
+                "change title never became {expected:?}: {}\n{}",
+                self.change_record(capsule),
+                self.agent_log()
             );
             thread::sleep(Duration::from_millis(20));
         }

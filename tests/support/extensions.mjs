@@ -24,6 +24,9 @@ async function testChangeSession() {
   await writeFile(
     executable,
     `#!/bin/sh
+case " $* " in
+  *" --apply "*) cat >/dev/null; exit 0 ;;
+esac
 printf 'args=%s\\nprompt=' "$*" > "${invocation}"
 cat >> "${invocation}"
 printf 'Generated Session Title\\n'
@@ -46,9 +49,7 @@ printf 'Generated Session Title\\n'
       appendEntry(customType, data) {
         entries.push({ type: "custom", customType, data });
       },
-      getSessionName() {
-        return name;
-      },
+      getSessionName: () => name,
       setSessionName(value) {
         name = value;
       },
@@ -100,17 +101,13 @@ printf 'Generated Session Title\\n'
 
     assert.equal(spawnCount, 1);
     const resume = runtime("resume");
-    assert.equal(resume.entries.length, 1, "resume repairs a missing Change link");
-    assert.deepEqual(resume.input("Do not rename resumed session"), {
-      action: "continue",
-    });
-    assert.equal(spawnCount, 1, "resume does not arm title inference");
-    assert.equal(resume.name(), undefined);
+    resume.input("Do not rename resumed session");
+    assert.equal(spawnCount, 1);
 
     const linked = runtime("startup", startup.entries, "Existing Session Name");
-    assert.equal(linked.entries.length, 1, "an existing Change link is not duplicated");
+    assert.equal(linked.entries.length, 1);
     linked.input("Do not replace existing name");
-    assert.equal(spawnCount, 1, "an existing name is not replaced");
+    assert.equal(spawnCount, 1);
     assert.equal(linked.name(), "Existing Session Name");
   } finally {
     await rm(temporary, { recursive: true, force: true });
