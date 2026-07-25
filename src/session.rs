@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -117,12 +117,19 @@ impl Session {
     }
 }
 
-pub(crate) fn infer_title(
-    capsule: &Path,
-    change_id: &str,
-    session_id: &str,
-    prompt: &str,
-) -> Result<String> {
+pub(crate) fn title(change_id: &str, session_id: &str) -> Result<()> {
+    let capsule = env::var_os("GROVE_CHANGE_CAPSULE")
+        .map(PathBuf::from)
+        .context("GROVE_CHANGE_CAPSULE is not set")?;
+    let mut prompt = String::new();
+    std::io::stdin()
+        .read_to_string(&mut prompt)
+        .context("failed to read the title prompt")?;
+    println!("{}", infer_title(&capsule, change_id, session_id, &prompt)?);
+    Ok(())
+}
+
+fn infer_title(capsule: &Path, change_id: &str, session_id: &str, prompt: &str) -> Result<String> {
     validate_pi()?;
     let session_bytes = session_id.as_bytes();
     if !session_bytes.first().is_some_and(u8::is_ascii_alphanumeric)

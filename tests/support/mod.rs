@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{
     env,
     ffi::OsStr,
@@ -19,7 +21,7 @@ pub struct TestRepo {
     git_config: PathBuf,
     navigation: PathBuf,
     agent_log: PathBuf,
-    forge_log: PathBuf,
+    hosting_log: PathBuf,
     agent: PathBuf,
 }
 
@@ -43,7 +45,7 @@ impl TestRepo {
         let git_config = root.path().join("gitconfig");
         let navigation = root.path().join("navigation");
         let agent_log = root.path().join("agent.log");
-        let forge_log = root.path().join("forge.log");
+        let hosting_log = root.path().join("hosting.log");
         let agent = root.path().join("agent");
 
         let fixture = Self {
@@ -53,7 +55,7 @@ impl TestRepo {
             git_config,
             navigation,
             agent_log,
-            forge_log,
+            hosting_log,
             agent,
         };
         fixture.git_from(
@@ -66,7 +68,7 @@ impl TestRepo {
         );
         fixture.initialize(&fixture.repo);
         fixture.configure_agent();
-        fixture.configure_forge();
+        fixture.configure_shipping();
         fixture
     }
 
@@ -443,7 +445,7 @@ impl TestRepo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation)
             .env("GROVE_TEST_AGENT_LOG", &self.agent_log)
-            .env("GROVE_TEST_FORGE_LOG", &self.forge_log)
+            .env("GROVE_TEST_HOSTING_LOG", &self.hosting_log)
             .env("PATH", self.test_path());
     }
 }
@@ -580,8 +582,8 @@ impl TestRepo {
             .is_some()
     }
 
-    pub fn forge_log(&self) -> String {
-        fs::read_to_string(&self.forge_log).unwrap_or_default()
+    pub fn hosting_log(&self) -> String {
+        fs::read_to_string(&self.hosting_log).unwrap_or_default()
     }
 
     pub fn navigation(&self) -> PathBuf {
@@ -643,17 +645,15 @@ impl TestRepo {
         fs::copy(&self.agent, bin.join("pi")).expect("install fake Pi executable");
     }
 
-    fn configure_forge(&self) {
+    fn configure_shipping(&self) {
         let bin = self.home.join("bin");
-        let forge = bin.join("gh");
-        fs::write(&forge, include_str!("forge.sh")).expect("write fake forge");
-        fs::set_permissions(&forge, fs::Permissions::from_mode(0o755))
-            .expect("make fake forge executable");
-        fs::copy(&forge, bin.join("glab")).expect("install fake glab executable");
-        let ssh = bin.join("ssh");
-        fs::write(&ssh, include_str!("ssh.sh")).expect("write fake ssh");
-        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755))
-            .expect("make fake ssh executable");
+        let shipping = include_str!("shipping.sh");
+        for program in ["gh", "glab", "ssh"] {
+            let executable = bin.join(program);
+            fs::write(&executable, shipping).expect("write fake shipping executable");
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+                .expect("make fake shipping executable");
+        }
     }
 
     fn test_path(&self) -> std::ffi::OsString {
@@ -668,6 +668,14 @@ impl TestRepo {
         ]);
         std::env::join_paths(paths).expect("build test PATH")
     }
+}
+
+pub fn stdout(output: &Output) -> String {
+    String::from_utf8(output.stdout.clone()).expect("stdout is UTF-8")
+}
+
+pub fn stderr(output: &Output) -> String {
+    String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8")
 }
 
 fn find_executable(name: &str) -> PathBuf {

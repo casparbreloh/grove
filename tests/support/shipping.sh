@@ -1,6 +1,21 @@
 #!/bin/sh
 
-printf 'program=%s args=%s\n' "$(basename "$0")" "$*" >> "$GROVE_TEST_FORGE_LOG"
+case "$(basename "$0")" in
+  ssh)
+    case "$*" in
+      *git-upload-pack*) exec git-upload-pack "$GROVE_TEST_REMOTE_PATH" ;;
+      *git-receive-pack*) exec git-receive-pack "$GROVE_TEST_REMOTE_PATH" ;;
+      *) echo "unsupported fake ssh invocation: $*" >&2; exit 1 ;;
+    esac
+    ;;
+  gh|glab)
+    printf 'program=%s args=%s\n' "$(basename "$0")" "$*" >> "$GROVE_TEST_HOSTING_LOG"
+    ;;
+  *)
+    echo "unsupported fake shipping program: $(basename "$0")" >&2
+    exit 1
+    ;;
+esac
 
 case " $* " in
   *" --version "*|*" auth status "*) exit 0 ;;

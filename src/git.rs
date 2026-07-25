@@ -43,6 +43,11 @@ pub(crate) enum WorktreeState {
     Missing,
 }
 
+pub(crate) struct CurrentChange {
+    pub(crate) path: PathBuf,
+    pub(crate) title: Option<String>,
+}
+
 pub(crate) struct WorktreeView {
     pub(crate) id: String,
     pub(crate) title: Option<String>,
@@ -262,6 +267,26 @@ impl Git {
 
     pub(crate) fn current_path(&self) -> Result<PathBuf> {
         self.current_root()
+    }
+
+    pub(crate) fn current_change(&self) -> Result<Option<CurrentChange>> {
+        let current = self.current_root()?;
+        let repository = self.repository()?;
+        for (capsule, record) in repository.records()? {
+            if record.state.is_active() && capsule.join("workspace") == current {
+                let worktrees = self.worktrees()?;
+                let worktree = managed_worktree(&worktrees, &current)
+                    .context("current Change has no expected worktree")?;
+                if worktree.prunable {
+                    bail!("current Change worktree is missing");
+                }
+                return Ok(Some(CurrentChange {
+                    path: current,
+                    title: record.title,
+                }));
+            }
+        }
+        Ok(None)
     }
 
     pub(crate) fn ship_target(&self, path: &Path) -> Result<ShipTarget> {
