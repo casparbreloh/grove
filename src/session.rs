@@ -14,8 +14,7 @@ use anyhow::{Context, Result, bail};
 use crate::change;
 
 const EXTENSION: &[u8] = include_bytes!("pi-extension.ts");
-const CHANGE_TITLE_MODEL: &str = "openai-codex/gpt-5.6-luna";
-const SHIP_MODEL: &str = "openai-codex/gpt-5.6-terra";
+const WORKER_MODEL: &str = "openai-codex/gpt-5.6-luna";
 const CHANGE_TITLE_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Output only the title on one line, with no quotes, punctuation-only words, explanation, or prefix.";
 const SHIP_PROMPT: &str = "Detect the hosting provider from the supplied push URL and use gh or glab when available. Validate access and inspect existing branch and pull request state before changing anything. Commit all work using Conventional Commit subjects without bodies, create or reuse a branch without rewriting published history, push it with an upstream, and create or update the pull request with a simple title and short description. On success, output only `GROVE_PULL_REQUEST=<url>`. On failure, explain what completed and do not output that line.";
 
@@ -84,7 +83,7 @@ impl Session {
             .arg("--print")
             .arg("--no-session")
             .arg("--model")
-            .arg(SHIP_MODEL)
+            .arg(WORKER_MODEL)
             .arg("--append-system-prompt")
             .arg(SHIP_PROMPT)
             .arg(format!(
@@ -156,7 +155,7 @@ pub(crate) fn infer_title(
         .arg("--print")
         .arg("--no-session")
         .arg("--model")
-        .arg(CHANGE_TITLE_MODEL)
+        .arg(WORKER_MODEL)
         .arg("--no-tools")
         .arg("--no-context-files")
         .arg("--no-skills")

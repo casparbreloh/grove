@@ -73,7 +73,7 @@ project context. Grove passes the selected remote name and a credential-free URL
 to the worker so it can detect the hosting provider and use an available CLI
 such as `gh` or `glab`.
 
-The GPT-5.6 Terra worker validates access, inspects existing branch and
+The GPT-5.6 Luna worker validates access, inspects existing branch and
 pull-request state, commits all work with Conventional Commit subjects, creates
 or reuses a branch, pushes it, and creates or updates the pull request with a
 simple title and description. Success requires the worker to return a
@@ -205,9 +205,9 @@ eval "$(grove init zsh)"
 ## Install
 
 Git 2.38 or newer and `pi` on `PATH` are required for the full workflow.
-Shipping also requires access to GPT-5.6 Terra, a network push remote, and
-suitable authenticated hosting tools such as `gh` for GitHub or `glab` for
-GitLab. Managed title inference requires access to GPT-5.6 Luna.
+Shipping and managed title inference require access to GPT-5.6 Luna. Shipping
+also requires a network push remote and suitable authenticated hosting tools
+such as `gh` for GitHub or `glab` for GitLab.
 
 ```sh
 cargo install --path .

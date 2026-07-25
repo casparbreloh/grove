@@ -246,7 +246,7 @@ fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
         "arg=<--no-session>",
         "arg=<--model>",
         "arg=<--append-system-prompt>",
-        "arg=<openai-codex/gpt-5.6-terra>",
+        "arg=<openai-codex/gpt-5.6-luna>",
         "remote origin",
         "https://github.com/example/repo.git",
         "gh or glab",
