@@ -11,9 +11,11 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, bail};
 
-use crate::{change, prompts};
+use crate::change;
 
 const EXTENSION: &[u8] = include_bytes!("pi-extension.ts");
+const CHANGE_TITLE_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Output only the title on one line, with no quotes, punctuation-only words, explanation, or prefix.";
+const SHIP_PROMPT: &str = "Detect the hosting provider from the supplied push URL and use gh or glab when available. Validate access and inspect existing branch and pull request state before changing anything. Commit all work using Conventional Commit subjects without bodies, create or reuse a branch without rewriting published history, push it with an upstream, and create or update the pull request with a simple title and short description. On success, output only `GROVE_PULL_REQUEST=<url>`. On failure, explain what completed and do not output that line.";
 
 pub(crate) struct Session {
     capsule: PathBuf,
@@ -74,12 +76,16 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn ship(&self, remote: &str, url: &str) -> Result<()> {
+    pub(crate) fn ship(&self, remote: &str, url: &str) -> Result<String> {
         validate_pi()?;
         let output = Command::new("pi")
             .arg("--print")
             .arg("--no-session")
-            .arg(prompts::ship(remote, url))
+            .arg("--append-system-prompt")
+            .arg(SHIP_PROMPT)
+            .arg(format!(
+                "Ship this Change through Git remote {remote} with push URL {url}."
+            ))
             .current_dir(&self.workspace)
             .env_remove("GROVE_DIRECTIVE_CD_FILE")
             .output()
@@ -89,12 +95,22 @@ impl Session {
                     self.workspace.display()
                 )
             })?;
-        std::io::stdout()
-            .write_all(&output.stdout)
-            .context("failed to write Pi shipping output")?;
-        std::io::stderr()
-            .write_all(&output.stderr)
-            .context("failed to write Pi shipping errors")?;
+        let stdout = String::from_utf8(output.stdout.clone())
+            .context("Pi shipping output was not valid UTF-8")?;
+        let pull_request = stdout.lines().find_map(|line| {
+            line.strip_prefix("GROVE_PULL_REQUEST=").filter(|url| {
+                (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains(char::is_whitespace)
+            })
+        });
+        if !output.status.success() || pull_request.is_none() {
+            std::io::stdout()
+                .write_all(&output.stdout)
+                .context("failed to write Pi shipping output")?;
+            std::io::stderr()
+                .write_all(&output.stderr)
+                .context("failed to write Pi shipping errors")?;
+        }
         if !output.status.success() {
             bail!(
                 "Pi shipping worker exited with {} in {}",
@@ -102,18 +118,9 @@ impl Session {
                 self.workspace.display()
             );
         }
-        let stdout =
-            String::from_utf8(output.stdout).context("Pi shipping output was not valid UTF-8")?;
-        let pull_request = stdout.lines().find_map(|line| {
-            line.strip_prefix("GROVE_PULL_REQUEST=").filter(|url| {
-                (url.starts_with("https://") || url.starts_with("http://"))
-                    && !url.contains(char::is_whitespace)
-            })
-        });
-        if pull_request.is_none() {
-            bail!("Pi finished without creating or updating a pull request");
-        }
-        Ok(())
+        pull_request
+            .map(str::to_owned)
+            .context("Pi finished without creating or updating a pull request")
     }
 
     pub(crate) fn lock(&self) -> Result<change::Lock> {
@@ -149,7 +156,7 @@ pub(crate) fn infer_title(
         .arg("--no-skills")
         .arg("--no-extensions")
         .arg("--system-prompt")
-        .arg(prompts::CHANGE_TITLE)
+        .arg(CHANGE_TITLE_PROMPT)
         .arg(prompt)
         .current_dir(capsule.join("workspace"))
         .output()

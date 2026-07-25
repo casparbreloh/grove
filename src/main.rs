@@ -1,6 +1,5 @@
 mod change;
 mod git;
-mod prompts;
 mod session;
 
 use std::{
@@ -807,7 +806,9 @@ fn ship(git: &Git) -> Result<()> {
     let session = Session::for_workspace(&selected.worktree_path)?;
     let _lock = session.lock()?;
     let target = git.ship_target(&selected.worktree_path)?;
-    session.ship(&target.remote, &target.url)
+    let pull_request = session.ship(&target.remote, &target.url)?;
+    println!("✓ Shipped {pull_request}");
+    Ok(())
 }
 
 fn archive(git: &Git, force: bool) -> Result<()> {

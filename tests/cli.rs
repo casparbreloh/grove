@@ -234,10 +234,9 @@ fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(
-        stdout(&output).contains("https://github.com/example/repo/pull/1"),
-        "{}",
-        stdout(&output)
+    assert_eq!(
+        stdout(&output),
+        "✓ Shipped https://github.com/example/repo/pull/1\n"
     );
     let log = repo.agent_log();
     let invocation = &log[before.len()..];
@@ -245,6 +244,7 @@ fn ship_passes_the_push_target_to_one_isolated_pi_worker() {
         "mode=print",
         "arg=<--print>",
         "arg=<--no-session>",
+        "arg=<--append-system-prompt>",
         "remote origin",
         "https://github.com/example/repo.git",
         "gh or glab",
