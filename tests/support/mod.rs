@@ -21,7 +21,7 @@ pub struct TestRepo {
     git_config: PathBuf,
     navigation: PathBuf,
     agent_log: PathBuf,
-    hosting_log: PathBuf,
+    shipping_log: PathBuf,
     agent: PathBuf,
 }
 
@@ -45,7 +45,7 @@ impl TestRepo {
         let git_config = root.path().join("gitconfig");
         let navigation = root.path().join("navigation");
         let agent_log = root.path().join("agent.log");
-        let hosting_log = root.path().join("hosting.log");
+        let shipping_log = root.path().join("shipping.log");
         let agent = root.path().join("agent");
 
         let fixture = Self {
@@ -55,7 +55,7 @@ impl TestRepo {
             git_config,
             navigation,
             agent_log,
-            hosting_log,
+            shipping_log,
             agent,
         };
         fixture.git_from(
@@ -445,7 +445,7 @@ impl TestRepo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GROVE_DIRECTIVE_CD_FILE", &self.navigation)
             .env("GROVE_TEST_AGENT_LOG", &self.agent_log)
-            .env("GROVE_TEST_HOSTING_LOG", &self.hosting_log)
+            .env("GROVE_TEST_SHIPPING_LOG", &self.shipping_log)
             .env("PATH", self.test_path());
     }
 }
@@ -582,8 +582,8 @@ impl TestRepo {
             .is_some()
     }
 
-    pub fn hosting_log(&self) -> String {
-        fs::read_to_string(&self.hosting_log).unwrap_or_default()
+    pub fn shipping_log(&self) -> String {
+        fs::read_to_string(&self.shipping_log).unwrap_or_default()
     }
 
     pub fn navigation(&self) -> PathBuf {

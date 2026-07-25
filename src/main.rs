@@ -1,9 +1,7 @@
 mod archive;
 mod change;
 mod git;
-mod hosting;
 mod init;
-mod navigation;
 mod navigator;
 mod new;
 mod session;

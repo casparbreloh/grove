@@ -77,9 +77,9 @@ fn ship_publishes_and_updates_a_change_deterministically() {
     ] {
         assert!(invocation.contains(expected), "{invocation}");
     }
-    let hosting = repo.hosting_log();
-    assert!(hosting.contains("auth status"), "{hosting}");
-    assert!(hosting.contains("repos/example/repo/pulls"), "{hosting}");
+    let shipping = repo.shipping_log();
+    assert!(shipping.contains("auth status"), "{shipping}");
+    assert!(shipping.contains("repos/example/repo/pulls"), "{shipping}");
 
     fs::write(change.path.join("feature.txt"), "first\nsecond\n").unwrap();
     let update = repo
@@ -148,10 +148,10 @@ fn ship_supports_gitlab_with_the_same_structured_worker() {
         stdout(&output),
         "✓ Shipped https://gitlab.com/example/repo/-/merge_requests/1\n"
     );
-    let hosting = repo.hosting_log();
-    assert!(hosting.contains("program=glab"), "{hosting}");
+    let shipping = repo.shipping_log();
+    assert!(shipping.contains("program=glab"), "{shipping}");
     assert!(
-        hosting.contains("projects/example%2Frepo/merge_requests"),
-        "{hosting}"
+        shipping.contains("projects/example%2Frepo/merge_requests"),
+        "{shipping}"
     );
 }

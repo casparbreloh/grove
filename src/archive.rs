@@ -2,8 +2,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::{
     git::Git,
-    navigation,
-    navigator::{change_rows, pick},
+    navigator::{change_rows, destination, navigate, pick, require_shell_navigation},
     session::Session,
 };
 
@@ -26,8 +25,8 @@ pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
         return Ok(());
     };
     let archive_destination = if selected.workspace() == current {
-        navigation::require_shell_navigation()?;
-        Some(navigation::destination(git, &git.primary_path()?)?)
+        require_shell_navigation()?;
+        Some(destination(git, &git.primary_path()?)?)
     } else {
         None
     };
@@ -40,7 +39,7 @@ pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
     git.finish_archive(prepared)?;
     eprintln!("✓ Archived {}", selected.title_label());
     if let Some(path) = archive_destination {
-        navigation::navigate(&path)?;
+        navigate(&path)?;
     }
     Ok(())
 }

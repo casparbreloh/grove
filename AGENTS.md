@@ -12,10 +12,9 @@ edge cases.
 ## Layout
 
 - `src/main.rs` owns Clap types and command dispatch only.
-- `src/new.rs`, `src/sync.rs`, `src/ship.rs`, and `src/archive.rs` own their command flows; ship also owns publication branch and state validation.
-- `src/navigator.rs` owns Change rows, the navigator, picker, and terminal rendering.
-- `src/init.rs` owns shell initialization, while `src/navigation.rs` owns calling-shell navigation shared by the navigator and archive flow.
-- `src/hosting.rs` is the shared `gh`/`glab` boundary.
+- `src/new.rs`, `src/sync.rs`, `src/ship.rs`, and `src/archive.rs` own their command flows; ship also owns publication branch, state validation, and the private `gh`/`glab` boundary.
+- `src/navigator.rs` owns Change rows, the navigator, picker, terminal rendering, and calling-shell navigation shared with the archive flow.
+- `src/init.rs` owns shell initialization.
 - `src/change.rs` owns repository directories, immutable Change identity, minimal capsule records, titles, and lifecycle transitions.
 - `src/git.rs` is the deep Git module. It owns creation lineage, path-based workspace inventory, integration detection, rollback, branch cleanup, and destructive validation; keep raw Git operations private there.
 - `src/session.rs` is the narrow Pi adapter: validation, capsule lock, direct blocking launch/resume, extension materialization, and isolated structured workers.

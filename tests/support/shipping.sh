@@ -9,7 +9,7 @@ case "$(basename "$0")" in
     esac
     ;;
   gh|glab)
-    printf 'program=%s args=%s\n' "$(basename "$0")" "$*" >> "$GROVE_TEST_HOSTING_LOG"
+    printf 'program=%s args=%s\n' "$(basename "$0")" "$*" >> "$GROVE_TEST_SHIPPING_LOG"
     ;;
   *)
     echo "unsupported fake shipping program: $(basename "$0")" >&2
