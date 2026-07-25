@@ -208,7 +208,7 @@ fn pi_extensions_link_sessions_and_validate_structured_output() {
 #[test]
 fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let repo = TestRepo::new();
-    let gate = repo.block_title_generator();
+    let gate = repo.block_rpc_worker();
     repo.grove()
         .arg("new")
         .env(
@@ -216,7 +216,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
             "Please implement native session title inference",
         )
         .env("GROVE_TEST_TITLE", "Implement Native Session Titles")
-        .env("GROVE_TEST_TITLE_BLOCK", &gate)
+        .env("GROVE_TEST_RPC_BLOCK", &gate)
         .assert()
         .success();
 
@@ -282,7 +282,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     assert!(log.contains("arg=<openai-codex/gpt-5.6-luna>"), "{log}");
     assert!(!repo.navigation_exists());
 
-    repo.release_title_generator(&gate);
+    repo.release_rpc_worker(&gate);
     repo.wait_for_change_title(&capsule, "Implement Native Session Titles");
     repo.wait_for_session_content(r#""name":"Implement Native Session Titles""#);
     assert!(capsule.join(".activity.lock").is_file());

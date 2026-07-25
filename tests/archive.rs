@@ -2,7 +2,9 @@ mod support;
 
 use std::fs;
 
-use support::{TestRepo, stderr, stdout};
+use support::{
+    TestRepo, assert_inline_terminal_restored, assert_terminal_restored, stderr, stdout,
+};
 
 #[test]
 fn integrated_merge_cherry_pick_and_squash_archive_but_unmerged_work_does_not() {
@@ -151,14 +153,49 @@ fn archive_preserves_native_sessions_and_excludes_change() {
 }
 
 #[test]
-fn force_archives_and_discards_local_only_work() {
+fn force_discards_local_work_but_keeps_git_locked_worktrees_protected() {
     let repo = TestRepo::new();
     let change = repo.create_change(None);
     let capsule = change.path.parent().unwrap();
     repo.git_from(&change.path, ["switch", "-c", "discarded-change"]);
     repo.commit_file(&change.path, "committed.txt", "committed\n");
     fs::write(change.path.join("dirty.txt"), "discarded\n").unwrap();
+    let head_before = repo.change_head(&change);
+    let status_before = repo.git_from(&change.path, ["status", "--porcelain=v1"]);
+    let dirty_before = fs::read(change.path.join("dirty.txt")).unwrap();
+    repo.git([
+        "worktree",
+        "lock",
+        "--reason",
+        "protected from forced archive",
+        change.path.to_str().unwrap(),
+    ]);
+    let record_before = fs::read(capsule.join("change.json")).unwrap();
 
+    let locked = repo
+        .grove_from(&change.path)
+        .args(["archive", "--force"])
+        .output()
+        .unwrap();
+    assert!(!locked.status.success(), "{locked:?}");
+    assert!(stderr(&locked).contains("locked"), "{locked:?}");
+    assert!(change.path.exists());
+    assert_eq!(repo.change_head(&change), head_before);
+    assert_eq!(
+        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
+        status_before
+    );
+    assert_eq!(
+        fs::read(change.path.join("dirty.txt")).unwrap(),
+        dirty_before
+    );
+    assert_eq!(
+        fs::read(capsule.join("change.json")).unwrap(),
+        record_before
+    );
+    assert!(repo.branch_exists("discarded-change"));
+
+    repo.git(["worktree", "unlock", change.path.to_str().unwrap()]);
     repo.grove_from(&change.path)
         .args(["archive", "--force"])
         .assert()
@@ -171,38 +208,4 @@ fn force_archives_and_discards_local_only_work() {
     assert!(!capsule.join("artifacts").exists());
     assert!(!change.path.exists());
     assert!(!repo.branch_exists("discarded-change"));
-}
-
-fn assert_terminal_restored(terminal: &str) {
-    let flags = terminal.split_whitespace().collect::<Vec<_>>();
-    assert!(flags.contains(&"icanon"), "{terminal:?}");
-    assert!(flags.contains(&"echo"), "{terminal:?}");
-    let hidden = terminal.rfind("\x1b[?25l").expect("picker hides cursor");
-    let shown = terminal.rfind("\x1b[?25h").expect("picker restores cursor");
-    assert!(hidden < shown, "{terminal:?}");
-}
-
-fn assert_inline_terminal_restored(terminal: &str) {
-    assert_terminal_restored(terminal);
-    assert!(
-        !terminal.contains("\x1b[?1049h"),
-        "entered alternate screen: {terminal:?}"
-    );
-    assert!(
-        !terminal.contains("\x1b[?1049l"),
-        "left alternate screen: {terminal:?}"
-    );
-    let hidden = terminal.rfind("\x1b[?25l").expect("navigator hides cursor");
-    let shown = terminal
-        .rfind("\x1b[?25h")
-        .expect("navigator restores cursor");
-    let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
-        .into_iter()
-        .filter_map(|sequence| terminal.rfind(sequence))
-        .max()
-        .expect("navigator clears its transient UI before exit");
-    assert!(
-        hidden < cleared && cleared < shown,
-        "navigator UI was not cleared before exit: {terminal:?}"
-    );
 }

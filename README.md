@@ -68,28 +68,31 @@ totals.
 
 `ship` runs only from the current managed Change. Grove refuses unresolved Git
 operations, busy or untitled Changes, missing push remotes, local-only remotes,
-unsupported hosts, and unavailable forge access before publication. GitHub uses
+unsupported hosts, and unavailable code-host access before publication. GitHub uses
 `gh`; GitLab uses `glab`.
 
 Grove creates or reuses the Title's kebab-case publication branch, stages the
-complete Change, and makes one isolated GPT-5.6 Luna RPC request for structured
-commit and pull-request metadata. The request receives a compact file index,
-statistics, commit subjects, current review metadata, and a bounded zero-context
+complete Change, and starts one isolated GPT-5.6 Luna RPC worker for structured
+commit and pull-request metadata. The worker receives a compact file index,
+statistics, commit subjects, current pull-request metadata, and a bounded zero-context
 patch. It may selectively read files when that context is insufficient, but it
 cannot mutate the workspace. Grove deterministically commits without a body,
 pushes without rewriting published history, and creates or conditionally
 updates the pull request. New publication uses the pull-request title as the
-initial commit subject; later work receives an incremental subject. Concurrent
-review edits are preserved. Failures may leave staged work, a commit, branch, or
-push in place; rerunning converges from that Git and forge state. The Change
+initial commit subject; later work receives an incremental subject. Grove
+rechecks existing pull-request metadata immediately before replacing it and
+aborts when it observes a concurrent edit. Failures may leave staged work, a
+commit, branch, or push in place; rerunning converges from that Git and code-host
+state. The Change
 remains active through review.
 
 `archive` targets the current managed Change. From the primary checkout it opens
 the same picker. Safe archival accepts work integrated by merge, cherry-pick or
 rebase-shaped history, or an equivalent squash. It refuses dirty or genuinely
 unmerged work, including unique content hidden in a merge resolution. `--force`
-explicitly and irreversibly discards that work. Both paths delete an attached local
-branch without a configured upstream; tracking branches are preserved.
+explicitly and irreversibly discards that work, but never overrides a Git
+worktree lock. Both paths delete an attached local branch without a configured
+upstream; tracking branches are preserved.
 
 Navigator shell actions write a navigation directive for the calling shell.
 They preserve the current relative subdirectory when that directory exists in

@@ -18,8 +18,8 @@ done
 if test "$mode" = rpc; then
   while IFS= read -r request; do
     printf 'rpc=%s\n' "$request" >> "$GROVE_TEST_AGENT_LOG"
-    if test -n "${GROVE_TEST_TITLE_BLOCK-}"; then
-      while test -e "$GROVE_TEST_TITLE_BLOCK"; do sleep 0.05; done
+    if test -n "${GROVE_TEST_RPC_BLOCK-}"; then
+      while test -e "$GROVE_TEST_RPC_BLOCK"; do sleep 0.05; done
     fi
     if test "${GROVE_TEST_TITLE_EXIT-0}" -ne 0; then
       exit "$GROVE_TEST_TITLE_EXIT"

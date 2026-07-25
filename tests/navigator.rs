@@ -2,7 +2,9 @@ mod support;
 
 use std::fs;
 
-use support::{TestRepo, stderr, stdout};
+use support::{
+    TestRepo, assert_inline_terminal_restored, assert_terminal_restored, stderr, stdout,
+};
 
 #[test]
 fn command_and_shell_navigation_is_one_coherent_workflow() {
@@ -347,40 +349,6 @@ fn navigator_rows_adapt_to_narrow_terminals_without_losing_change_ids() {
     assert!(short.status.success(), "{short:?}");
     assert!(stdout(&short).contains("Main"), "{}", stdout(&short));
     assert_inline_terminal_restored(&stdout(&short));
-}
-
-fn assert_terminal_restored(terminal: &str) {
-    let flags = terminal.split_whitespace().collect::<Vec<_>>();
-    assert!(flags.contains(&"icanon"), "{terminal:?}");
-    assert!(flags.contains(&"echo"), "{terminal:?}");
-    let hidden = terminal.rfind("\x1b[?25l").expect("picker hides cursor");
-    let shown = terminal.rfind("\x1b[?25h").expect("picker restores cursor");
-    assert!(hidden < shown, "{terminal:?}");
-}
-
-fn assert_inline_terminal_restored(terminal: &str) {
-    assert_terminal_restored(terminal);
-    assert!(
-        !terminal.contains("\x1b[?1049h"),
-        "entered alternate screen: {terminal:?}"
-    );
-    assert!(
-        !terminal.contains("\x1b[?1049l"),
-        "left alternate screen: {terminal:?}"
-    );
-    let hidden = terminal.rfind("\x1b[?25l").expect("navigator hides cursor");
-    let shown = terminal
-        .rfind("\x1b[?25h")
-        .expect("navigator restores cursor");
-    let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
-        .into_iter()
-        .filter_map(|sequence| terminal.rfind(sequence))
-        .max()
-        .expect("navigator clears its transient UI before exit");
-    assert!(
-        hidden < cleared && cleared < shown,
-        "navigator UI was not cleared before exit: {terminal:?}"
-    );
 }
 
 fn assert_no_navigator_legend(terminal: &str) {

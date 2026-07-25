@@ -35,7 +35,7 @@ enum Cmd {
     },
     /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
     Sync,
-    /// Ship the current Change as a pull request with Pi
+    /// Ship the current Change as a pull request
     Ship,
     /// Archive an active Change
     Archive {
@@ -77,6 +77,6 @@ fn main() -> Result<()> {
         Some(Cmd::Ship) => ship::run(&Git::discover()?),
         Some(Cmd::Archive { force }) => archive::run(&Git::discover()?, force),
         Some(Cmd::Init { shell }) => init::run(shell),
-        Some(Cmd::Title { change, session }) => session::title(&change, &session),
+        Some(Cmd::Title { change, session }) => session::name_change(&change, &session),
     }
 }

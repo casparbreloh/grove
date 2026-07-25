@@ -219,6 +219,35 @@ fn sync_conservatively_preserves_unsafe_topology_and_lineage() {
 fn sync_validation_and_fetch_failures_happen_before_mutation() {
     {
         let repo = TestRepo::new();
+        let publisher = repo.create_local_origin();
+        let stale_main = repo.git(["rev-parse", "main"]);
+        let stale_upstream = repo.git(["rev-parse", "refs/remotes/origin/main"]);
+        let change = repo.create_change(Some("main"));
+        let head_before = repo.commit_file(&change.path, "change.txt", "local change\n");
+        let record_path = change.path.parent().unwrap().join("change.json");
+        fs::write(&record_path, b"{ malformed Change metadata\n").unwrap();
+        let record_before = fs::read(&record_path).unwrap();
+
+        repo.commit_file(&publisher, "upstream.txt", "remote advance\n");
+        repo.git_from(&publisher, ["push", "origin", "main"]);
+        let output = repo.grove().arg("sync").output().unwrap();
+
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            stderr(&output).contains("invalid change record"),
+            "{output:?}"
+        );
+        assert_eq!(repo.git(["rev-parse", "main"]), stale_main);
+        assert_eq!(
+            repo.git(["rev-parse", "refs/remotes/origin/main"]),
+            stale_upstream
+        );
+        assert_eq!(repo.change_head(&change), head_before);
+        assert_eq!(fs::read(record_path).unwrap(), record_before);
+    }
+
+    {
+        let repo = TestRepo::new();
         repo.create_local_origin();
         let change = repo.create_change(Some("main"));
         let content_path = change.path.join("change.txt");

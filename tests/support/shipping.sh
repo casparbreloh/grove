@@ -27,10 +27,27 @@ case " $* " in
 esac
 
 case " $* " in
-  *" repos/"*"/pulls "*)
+  *" repos/"*"/pulls"*)
     case " $* " in
-      *" --method POST "*|*" --method PATCH "*)
-        cat >/dev/null
+      *" --method POST "*)
+        payload=$(cat)
+        printf 'payload=%s\n' "$payload" >> "$GROVE_TEST_SHIPPING_LOG"
+        if test "${GROVE_TEST_CREATE_EXIT-0}" -ne 0; then
+          echo "injected create failure" >&2
+          exit "$GROVE_TEST_CREATE_EXIT"
+        fi
+        printf '{"number":1,"html_url":"%s","title":"%s","body":"%s"}\n' \
+          "${GROVE_TEST_RESULT_URL-https://github.com/example/repo/pull/1}" \
+          "${GROVE_TEST_RESULT_TITLE-feat: ship change}" \
+          "${GROVE_TEST_RESULT_BODY-Ships the Change.}"
+        ;;
+      *" --method PATCH "*)
+        payload=$(cat)
+        printf 'payload=%s\n' "$payload" >> "$GROVE_TEST_SHIPPING_LOG"
+        if test "${GROVE_TEST_UPDATE_EXIT-0}" -ne 0; then
+          echo "injected update failure" >&2
+          exit "$GROVE_TEST_UPDATE_EXIT"
+        fi
         printf '{"number":1,"html_url":"%s","title":"%s","body":"%s"}\n' \
           "${GROVE_TEST_RESULT_URL-https://github.com/example/repo/pull/1}" \
           "${GROVE_TEST_RESULT_TITLE-feat: ship change}" \
@@ -50,8 +67,25 @@ case " $* " in
   *" repos/"*) printf '{"default_branch":"main"}\n' ;;
   *" projects/"*"/merge_requests"*)
     case " $* " in
-      *" --method POST "*|*" --method PUT "*)
-        cat >/dev/null
+      *" --method POST "*)
+        payload=$(cat)
+        printf 'payload=%s\n' "$payload" >> "$GROVE_TEST_SHIPPING_LOG"
+        if test "${GROVE_TEST_CREATE_EXIT-0}" -ne 0; then
+          echo "injected create failure" >&2
+          exit "$GROVE_TEST_CREATE_EXIT"
+        fi
+        printf '{"iid":1,"web_url":"%s","title":"%s","description":"%s","source_project_id":1}\n' \
+          "${GROVE_TEST_RESULT_URL-https://gitlab.com/example/repo/-/merge_requests/1}" \
+          "${GROVE_TEST_RESULT_TITLE-feat: ship change}" \
+          "${GROVE_TEST_RESULT_BODY-Ships the Change.}"
+        ;;
+      *" --method PUT "*)
+        payload=$(cat)
+        printf 'payload=%s\n' "$payload" >> "$GROVE_TEST_SHIPPING_LOG"
+        if test "${GROVE_TEST_UPDATE_EXIT-0}" -ne 0; then
+          echo "injected update failure" >&2
+          exit "$GROVE_TEST_UPDATE_EXIT"
+        fi
         printf '{"iid":1,"web_url":"%s","title":"%s","description":"%s","source_project_id":1}\n' \
           "${GROVE_TEST_RESULT_URL-https://gitlab.com/example/repo/-/merge_requests/1}" \
           "${GROVE_TEST_RESULT_TITLE-feat: ship change}" \

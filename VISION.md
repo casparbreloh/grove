@@ -114,7 +114,7 @@ not expose a dry-run or staged publication workflow. Invoking it authorizes the
 documented commit, branch, provider, push, and hosting effects needed to ship
 the Change.
 
-After inexpensive local and forge validation, Grove owns the deterministic Git
+After inexpensive local and code-host validation, Grove owns the deterministic Git
 and hosting operations. It creates or reuses the stable Title-derived
 publication branch, stages the complete Change, commits without a body, pushes
 without force, and creates or conditionally updates the pull request through
@@ -123,10 +123,11 @@ without force, and creates or conditionally updates the pull request through
 One purpose-built, noninteractive Pi RPC worker produces only schema-validated
 commit and pull-request metadata. Grove supplies a compact index of the complete
 Change and a bounded incremental patch; the worker may use read when that index
-is insufficient, but it cannot mutate Git or contact the forge. New publication
+is insufficient, but it cannot mutate Git or contact the code host. New publication
 uses the pull-request title as its initial commit subject, while later work gets
-an incremental Conventional Commit subject. Grove rechecks review metadata
-before editing so concurrent human changes are not overwritten.
+an incremental Conventional Commit subject. Grove rechecks pull-request
+metadata immediately before replacing it and aborts when it observes a
+concurrent human edit.
 
 The command remains in the foreground and returns success only with the created
 or updated pull-request identity. There is no daemon, queue, hidden
@@ -174,7 +175,7 @@ Changes.
 
 ## Later and deliberately outside the core
 
-Additional forge adapters and bounded AI assistance may follow demonstrated
+Additional code-host adapters and bounded AI assistance may follow demonstrated
 shipping needs. Another interactive agent should require clear user demand and
 a similarly small, trustworthy native seam.
 

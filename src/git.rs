@@ -72,14 +72,14 @@ pub(crate) struct SyncResult {
     pub(crate) skipped: usize,
 }
 
-pub(crate) struct ShipTarget {
-    pub(crate) remote: String,
+pub(crate) struct PushRemote {
+    pub(crate) name: String,
     pub(crate) url: String,
 }
 
-pub(crate) struct ShipContext {
+pub(crate) struct ShipSnapshot {
     pub(crate) staged: bool,
-    pub(crate) text: String,
+    pub(crate) summary: String,
     head_oid: String,
     index_tree: String,
     worktree_state: Vec<u8>,
@@ -289,7 +289,7 @@ impl Git {
         Ok(None)
     }
 
-    pub(crate) fn ship_target(&self, path: &Path) -> Result<ShipTarget> {
+    pub(crate) fn push_remote(&self, path: &Path) -> Result<PushRemote> {
         self.validate_resolved_state(path)?;
         let remotes = self.text_at(path, &["remote"])?;
         let remotes = remotes.lines().collect::<Vec<_>>();
@@ -326,8 +326,8 @@ impl Git {
         let url = self
             .text_at(path, &["remote", "get-url", "--push", &remote])
             .with_context(|| format!("push remote '{remote}' has no usable URL"))?;
-        Ok(ShipTarget {
-            remote,
+        Ok(PushRemote {
+            name: remote,
             url: network_remote(&url)?,
         })
     }
@@ -373,10 +373,12 @@ impl Git {
         }
     }
 
-    pub(crate) fn has_ship_work(&self, path: &Path, base: &str) -> Result<bool> {
-        Ok(self.is_dirty(path)?
-            || self.text_at(path, &["rev-parse", "HEAD"])?
-                != self.text_at(path, &["rev-parse", base])?)
+    pub(crate) fn has_publishable_work(&self, path: &Path, base: &str) -> Result<bool> {
+        if self.is_dirty(path)? {
+            return Ok(true);
+        }
+        let count = self.text_at(path, &["rev-list", "--count", &format!("{base}..HEAD")])?;
+        Ok(count != "0")
     }
 
     pub(crate) fn prepare_ship(&self, path: &Path, branch: &str) -> Result<()> {
@@ -390,12 +392,7 @@ impl Git {
             }
             Some(_) => {}
             None if self.branch_exists_at(path, branch)? => {
-                let branch_head = self.text_at(path, &["rev-parse", branch])?;
-                let current_head = self.text_at(path, &["rev-parse", "HEAD"])?;
-                if branch_head != current_head {
-                    bail!("publication branch '{branch}' points at different history");
-                }
-                self.checked_at(path, &["switch", branch])?;
+                bail!("publication branch '{branch}' already belongs to another Change")
             }
             None => {
                 self.checked_at(path, &["switch", "--create", branch])?;
@@ -405,7 +402,7 @@ impl Git {
         Ok(())
     }
 
-    pub(crate) fn ship_context(&self, path: &Path, base: &str) -> Result<ShipContext> {
+    pub(crate) fn capture_ship_snapshot(&self, path: &Path, base: &str) -> Result<ShipSnapshot> {
         let staged = self.differs_at(path, &["diff", "--cached", "--quiet", "--exit-code"])?;
         let head_oid = self.text_at(path, &["rev-parse", "HEAD"])?;
         let index_tree = self.text_at(path, &["write-tree"])?;
@@ -426,12 +423,12 @@ impl Git {
         } else {
             ""
         };
-        Ok(ShipContext {
+        Ok(ShipSnapshot {
             staged,
             head_oid,
             index_tree,
             worktree_state,
-            text: format!(
+            summary: format!(
                 "Complete changed files:\n{files}\n\nComplete diff statistics:\n{statistics}\n\nExisting commit subjects:\n{subjects}\n\nNewly staged files:\n{incremental_files}\n\nNewly staged statistics:\n{incremental_statistics}\n\nNewly staged zero-context patch:\n{patch}{truncation}"
             ),
         })
@@ -441,7 +438,7 @@ impl Git {
         &self,
         path: &Path,
         branch: &str,
-        context: &ShipContext,
+        context: &ShipSnapshot,
     ) -> Result<()> {
         let current = self
             .symbolic_head_at(path)?
@@ -463,7 +460,7 @@ impl Git {
         &self,
         path: &Path,
         subject: &str,
-        context: &ShipContext,
+        context: &ShipSnapshot,
     ) -> Result<()> {
         self.checked_at(path, &["commit", "--quiet", "--message", subject])?;
         if self.text_at(path, &["rev-parse", "HEAD^"])? != context.head_oid
@@ -482,8 +479,21 @@ impl Git {
     }
 
     pub(crate) fn push_ship(&self, path: &Path, remote: &str, branch: &str) -> Result<()> {
-        let destination = format!("HEAD:refs/heads/{branch}");
-        self.checked_at(path, &["push", "--set-upstream", remote, &destination])?;
+        let head_oid = self.text_at(path, &["rev-parse", "HEAD"])?;
+        let destination = format!("{head_oid}:refs/heads/{branch}");
+        self.checked_at(path, &["push", remote, &destination])?;
+        self.checked_at(
+            path,
+            &["config", &format!("branch.{branch}.remote"), remote],
+        )?;
+        self.checked_at(
+            path,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ],
+        )?;
         Ok(())
     }
 
@@ -563,6 +573,19 @@ impl Git {
             bail!("primary worktree has uncommitted changes");
         }
 
+        let repository = self.repository()?;
+        let mut records = repository
+            .records()?
+            .into_iter()
+            .filter(|(_, record)| record.state.is_active())
+            .map(|(capsule, record)| (record.created_at, capsule, record))
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.2.id.cmp(&right.2.id))
+        });
+
         let upstream_refspec = format!("+{merge_ref}:{upstream}");
         self.checked_at(
             &primary.path,
@@ -613,18 +636,6 @@ impl Git {
             bail!("primary branch changed while fast-forwarding to '{upstream}'");
         }
 
-        let repository = self.repository()?;
-        let mut records = repository
-            .records()?
-            .into_iter()
-            .filter(|(_, record)| record.state.is_active())
-            .map(|(capsule, record)| (record.created_at, capsule, record))
-            .collect::<Vec<_>>();
-        records.sort_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.2.id.cmp(&right.2.id))
-        });
         let identities = records
             .iter()
             .map(|(_, _, record)| (record.id.clone(), record.title.clone()))
@@ -867,7 +878,8 @@ impl Git {
                 .closing
                 .context("closing Change has no closing facts")?;
             let expected_path = capsule.join("workspace");
-            if managed_worktree(&worktrees, &expected_path)
+            let current_worktrees = self.worktrees()?;
+            if managed_worktree(&current_worktrees, &expected_path)
                 .is_some_and(|worktree| !worktree.prunable && worktree.path.exists())
             {
                 restore_active(&capsule, &record.id)?;
@@ -912,7 +924,7 @@ impl Git {
         if target.prunable || !target.path.exists() {
             bail!("worktree is missing: {}", target.path.display());
         }
-        if target.locked && !force {
+        if target.locked {
             bail!("worktree is locked: {}", target.path.display());
         }
         if !force && self.is_dirty(&target.path)? {

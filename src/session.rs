@@ -18,22 +18,50 @@ const CHANGE_SESSION_EXTENSION: &[u8] = include_bytes!("extensions/change-sessio
 const STRUCTURED_OUTPUT_EXTENSION: &[u8] = include_bytes!("extensions/structured-output.ts");
 const WORKER_MODEL: &str = "openai-codex/gpt-5.6-luna";
 const CHANGE_PROMPT: &str = "Create a concise title of exactly three or four words for the user's request. Call structured_output with the title in the change field. Do not answer in any other way.";
-const CHANGE_OUTPUT_SCHEMA: &str = r#"{"type":"object","properties":{"change":{"type":"string","minLength":1,"maxLength":80}},"required":["change"],"additionalProperties":false}"#;
+const CHANGE_OUTPUT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "change": { "type": "string", "minLength": 1, "maxLength": 80 }
+  },
+  "required": ["change"],
+  "additionalProperties": false
+}"#;
 const SHIP_PROMPT: &str = "Write concise publication metadata for the supplied Change. A commit is a single Conventional Commit subject describing only newly staged work, with no body. Pull-request metadata describes the complete Change; return it only when a pull request must be created or its current title and body no longer fit. Treat the supplied summary as an index of the complete publication. Use it as primary context. If intent or scope is unclear, use read selectively until you understand the Change well enough to name it accurately. Avoid unrelated investigation. Finish only by calling structured_output.";
-const SHIP_OUTPUT_SCHEMA: &str = r#"{"type":"object","properties":{"commit":{"anyOf":[{"type":"string"},{"type":"null"}]},"pull_request":{"anyOf":[{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"],"additionalProperties":false},{"type":"null"}]}},"required":["commit","pull_request"],"additionalProperties":false}"#;
+const SHIP_OUTPUT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "commit": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+    "pull_request": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "body": { "type": "string" }
+          },
+          "required": ["title", "body"],
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "required": ["commit", "pull_request"],
+  "additionalProperties": false
+}"#;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PullRequestOutput {
+pub(crate) struct PullRequestMetadata {
     pub(crate) title: String,
     pub(crate) body: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ShipOutput {
+pub(crate) struct ShipMetadata {
     pub(crate) commit: Option<String>,
-    pub(crate) pull_request: Option<PullRequestOutput>,
+    pub(crate) pull_request: Option<PullRequestMetadata>,
 }
 
 pub(crate) struct Session {
@@ -96,20 +124,20 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn ship(&self, context: &str) -> Result<ShipOutput> {
+    pub(crate) fn generate_ship_metadata(&self, summary: &str) -> Result<ShipMetadata> {
         validate_pi()?;
         let value = run_structured_worker(
             &self.workspace,
             SHIP_PROMPT,
             SHIP_OUTPUT_SCHEMA,
-            context,
+            summary,
             "read,structured_output",
             "shipping metadata",
         )?;
-        let output: ShipOutput = serde_json::from_value(value)
+        let metadata: ShipMetadata = serde_json::from_value(value)
             .context("Pi returned invalid structured shipping metadata")?;
-        validate_ship_output(&output)?;
-        Ok(output)
+        validate_ship_metadata(&metadata)?;
+        Ok(metadata)
     }
 
     pub(crate) fn lock(&self) -> Result<change::Lock> {
@@ -117,7 +145,7 @@ impl Session {
     }
 }
 
-pub(crate) fn title(change_id: &str, session_id: &str) -> Result<()> {
+pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
     let capsule = env::var_os("GROVE_CHANGE_CAPSULE")
         .map(PathBuf::from)
         .context("GROVE_CHANGE_CAPSULE is not set")?;
@@ -125,11 +153,19 @@ pub(crate) fn title(change_id: &str, session_id: &str) -> Result<()> {
     std::io::stdin()
         .read_to_string(&mut prompt)
         .context("failed to read the title prompt")?;
-    println!("{}", infer_title(&capsule, change_id, session_id, &prompt)?);
+    println!(
+        "{}",
+        infer_change_title(&capsule, change_id, session_id, &prompt)?
+    );
     Ok(())
 }
 
-fn infer_title(capsule: &Path, change_id: &str, session_id: &str, prompt: &str) -> Result<String> {
+fn infer_change_title(
+    capsule: &Path,
+    change_id: &str,
+    session_id: &str,
+    prompt: &str,
+) -> Result<String> {
     validate_pi()?;
     let session_bytes = session_id.as_bytes();
     if !session_bytes.first().is_some_and(u8::is_ascii_alphanumeric)
@@ -270,12 +306,8 @@ fn run_structured_worker_with_extension(
     drop(stdin);
     drop(lines);
     let _ = child.kill();
-    let status = child.wait().context("failed to wait for Pi RPC worker")?;
-    match result? {
-        Some(value) => Ok(value),
-        None if status.success() => bail!("Pi {action} worker returned no structured output"),
-        None => bail!("Pi {action} worker exited with {status}"),
-    }
+    child.wait().context("failed to wait for Pi RPC worker")?;
+    result?.with_context(|| format!("Pi {action} worker returned no structured output"))
 }
 
 fn send_rpc_prompt(stdin: &mut impl Write, prompt: &str) -> Result<()> {
@@ -290,15 +322,18 @@ fn send_rpc_prompt(stdin: &mut impl Write, prompt: &str) -> Result<()> {
     stdin.flush().context("failed to flush Pi RPC prompt")
 }
 
-fn validate_ship_output(output: &ShipOutput) -> Result<()> {
-    if let Some(commit) = &output.commit {
+fn validate_ship_metadata(metadata: &ShipMetadata) -> Result<()> {
+    if let Some(commit) = &metadata.commit {
         validate_subject(commit, "commit")?;
     }
-    if let Some(pull_request) = &output.pull_request {
+    if let Some(pull_request) = &metadata.pull_request {
         validate_subject(&pull_request.title, "pull request title")?;
         if pull_request.body.trim().is_empty()
             || pull_request.body.len() > 1_000
-            || pull_request.body.contains(['\r', '\n'])
+            || pull_request
+                .body
+                .chars()
+                .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
         {
             bail!("Pi returned an invalid pull request body");
         }

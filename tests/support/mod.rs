@@ -191,6 +191,10 @@ impl TestRepo {
         assert_cmd::Command::from_std(self.compiled_grove(directory))
     }
 
+    pub fn grove_process_from(&self, directory: &Path) -> Command {
+        self.compiled_grove(directory)
+    }
+
     pub fn navigator_in_pty(&self, directory: &Path, ready: &str, input: &[u8]) -> Output {
         self.run_pty(
             self.sh_picker(directory, ""),
@@ -275,14 +279,14 @@ impl TestRepo {
         fs::read_to_string(&self.agent_log).unwrap_or_default()
     }
 
-    pub fn block_title_generator(&self) -> PathBuf {
-        let gate = self._root.path().join("title.block");
-        fs::write(&gate, "blocked").expect("create title generator gate");
+    pub fn block_rpc_worker(&self) -> PathBuf {
+        let gate = self._root.path().join("rpc.block");
+        fs::write(&gate, "blocked").expect("create RPC worker gate");
         gate
     }
 
-    pub fn release_title_generator(&self, gate: &Path) {
-        fs::remove_file(gate).expect("release title generator");
+    pub fn release_rpc_worker(&self, gate: &Path) {
+        fs::remove_file(gate).expect("release RPC worker");
     }
 
     pub fn change_record(&self, capsule: &Path) -> serde_json::Value {
@@ -676,6 +680,37 @@ pub fn stdout(output: &Output) -> String {
 
 pub fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8")
+}
+
+pub fn assert_terminal_restored(terminal: &str) {
+    let flags = terminal.split_whitespace().collect::<Vec<_>>();
+    assert!(flags.contains(&"icanon"), "{terminal:?}");
+    assert!(flags.contains(&"echo"), "{terminal:?}");
+    let hidden = terminal.rfind("\x1b[?25l").expect("navigator hides cursor");
+    let shown = terminal
+        .rfind("\x1b[?25h")
+        .expect("navigator restores cursor");
+    assert!(hidden < shown, "{terminal:?}");
+}
+
+pub fn assert_inline_terminal_restored(terminal: &str) {
+    assert_terminal_restored(terminal);
+    let hidden = terminal.rfind("\x1b[?25l").unwrap();
+    let shown = terminal.rfind("\x1b[?25h").unwrap();
+    assert!(
+        !terminal.contains("\x1b[?1049h"),
+        "entered alternate screen"
+    );
+    assert!(!terminal.contains("\x1b[?1049l"), "left alternate screen");
+    let cleared = ["\x1b[J", "\x1b[0J", "\x1b[2J", "\x1b[2K"]
+        .into_iter()
+        .filter_map(|sequence| terminal.rfind(sequence))
+        .max()
+        .expect("navigator clears its transient UI before exit");
+    assert!(
+        hidden < cleared && cleared < shown,
+        "navigator UI was not cleared before exit: {terminal:?}"
+    );
 }
 
 fn find_executable(name: &str) -> PathBuf {

@@ -13,109 +13,124 @@ use crate::{
 };
 
 pub(crate) fn run(git: &Git) -> Result<()> {
-    let selected = git
+    let change = git
         .current_change()?
         .context("current workspace is not a managed Grove Change")?;
-    let title = selected
+    let title = change
         .title
         .as_deref()
         .context("cannot ship an Untitled Change")?;
     let branch = publication_branch(title)?;
-    let session = Session::for_workspace(&selected.path)?;
+    let session = Session::for_workspace(&change.path)?;
     let _lock = session.lock()?;
-    let target = git.ship_target(&selected.path)?;
-    let host = Host::from_remote(&target.url)?;
-    let base = host.preflight()?;
-    let base_ref = git.fetch_ship_base(&selected.path, &target.remote, &base)?;
-    let existing = host.find_open(&branch)?;
-    let published =
-        existing.is_some() || git.remote_branch_exists(&selected.path, &target.remote, &branch)?;
-    if !published && !git.has_ship_work(&selected.path, &base_ref)? {
+    let push_remote = git.push_remote(&change.path)?;
+    let code_host = CodeHost::from_remote(&push_remote.url)?;
+    let target_branch = code_host.preflight()?;
+    let target_ref = git.fetch_ship_base(&change.path, &push_remote.name, &target_branch)?;
+    let existing_pull_request = code_host.find_pull_request(&branch)?;
+    let branch_published = existing_pull_request.is_some()
+        || git.remote_branch_exists(&change.path, &push_remote.name, &branch)?;
+    if !branch_published && !git.has_publishable_work(&change.path, &target_ref)? {
         bail!("Change has no work to ship");
     }
 
-    git.prepare_ship(&selected.path, &branch)?;
-    let context = git.ship_context(&selected.path, &base_ref)?;
-    let current_review = existing.as_ref().map_or_else(
+    git.prepare_ship(&change.path, &branch)?;
+    let snapshot = git.capture_ship_snapshot(&change.path, &target_ref)?;
+    let pull_request_context = existing_pull_request.as_ref().map_or_else(
         || "There is no open pull request.".to_owned(),
-        |review| {
+        |pull_request| {
             format!(
                 "Current pull request title: {}\nCurrent pull request body: {}",
-                review.title, review.body
+                pull_request.title, pull_request.body
             )
         },
     );
     let prompt = format!(
-        "Change title: {title}\nPublication branch: {branch}\nTarget branch: {}\nPublished history: {published}\nNew staged work: {}\n{current_review}\n\n{}",
-        base, context.staged, context.text
+        "Change title: {title}\nPublication branch: {branch}\nTarget branch: {target_branch}\nPublished history: {branch_published}\nNew staged work: {}\n{pull_request_context}\n\n{}",
+        snapshot.staged, snapshot.summary
     );
-    let output = session.ship(&prompt)?;
-    validate_ship_state(&output, published, context.staged, existing.is_some())?;
+    let metadata = session.generate_ship_metadata(&prompt)?;
+    validate_ship_metadata(
+        &metadata,
+        branch_published,
+        snapshot.staged,
+        existing_pull_request.is_some(),
+    )?;
 
-    git.validate_ship_snapshot(&selected.path, &branch, &context)?;
-    if context.staged {
-        let subject = if published {
-            output.commit.as_deref().context(
+    git.validate_ship_snapshot(&change.path, &branch, &snapshot)?;
+    if snapshot.staged {
+        let subject = if branch_published {
+            metadata.commit.as_deref().context(
                 "shipping metadata did not include a commit for newly staged published work",
             )?
         } else {
-            &output
+            &metadata
                 .pull_request
                 .as_ref()
                 .context("shipping metadata did not include pull request metadata")?
                 .title
         };
-        git.commit_ship(&selected.path, subject, &context)?;
+        git.commit_ship(&change.path, subject, &snapshot)?;
     }
-    git.validate_clean_ship(&selected.path)?;
-    git.push_ship(&selected.path, &target.remote, &branch)?;
+    git.validate_clean_ship(&change.path)?;
+    git.push_ship(&change.path, &push_remote.name, &branch)?;
 
-    let review = match existing {
+    let pull_request = match existing_pull_request {
         Some(existing) => {
-            if let Some(metadata) = output.pull_request {
-                let latest = host
-                    .find_open(&branch)?
+            if let Some(replacement) = metadata.pull_request {
+                let current = code_host
+                    .find_pull_request(&branch)?
                     .context("pull request disappeared while shipping")?;
-                if latest != existing {
+                if current != existing {
                     bail!("pull request changed while shipping; rerun grove ship");
                 }
-                if latest.title == metadata.title && latest.body == metadata.body {
-                    latest
+                if current.title == replacement.title && current.body == replacement.body {
+                    current
                 } else {
-                    host.update(&branch, &latest, &metadata.title, &metadata.body)?
+                    code_host.update_pull_request(
+                        &branch,
+                        &current,
+                        &replacement.title,
+                        &replacement.body,
+                    )?
                 }
             } else {
                 existing
             }
         }
         None => {
-            let metadata = output
+            let metadata = metadata
                 .pull_request
                 .context("shipping metadata did not include pull request metadata")?;
-            host.create(&branch, &base, &metadata.title, &metadata.body)?
+            code_host.create_pull_request(
+                &branch,
+                &target_branch,
+                &metadata.title,
+                &metadata.body,
+            )?
         }
     };
-    git.validate_clean_ship(&selected.path)?;
-    println!("✓ Shipped {}", review.url);
+    git.validate_clean_ship(&change.path)?;
+    println!("✓ Shipped {}", pull_request.url);
     Ok(())
 }
 
-fn validate_ship_state(
-    output: &session::ShipOutput,
-    published: bool,
+fn validate_ship_metadata(
+    metadata: &session::ShipMetadata,
+    branch_published: bool,
     staged: bool,
-    has_review: bool,
+    has_pull_request: bool,
 ) -> Result<()> {
-    if !published && output.commit.is_some() {
+    if !branch_published && metadata.commit.is_some() {
         bail!("shipping metadata included an unnecessary initial commit subject");
     }
-    if published && staged && output.commit.is_none() {
+    if branch_published && staged && metadata.commit.is_none() {
         bail!("shipping metadata did not include a commit for newly staged published work");
     }
-    if !staged && output.commit.is_some() {
+    if !staged && metadata.commit.is_some() {
         bail!("shipping metadata included a commit without newly staged work");
     }
-    if !has_review && output.pull_request.is_none() {
+    if !has_pull_request && metadata.pull_request.is_none() {
         bail!("shipping metadata did not include pull request metadata");
     }
     Ok(())
@@ -142,20 +157,20 @@ fn publication_branch(title: &str) -> Result<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Review {
+struct PullRequest {
     url: String,
     title: String,
     body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Host {
+enum CodeHost {
     GitHub { repository: String, owner: String },
     GitLab { project: String },
 }
 
 #[derive(Deserialize)]
-struct GitHubReview {
+struct GitHubPullRequest {
     number: u64,
     html_url: String,
     title: String,
@@ -163,7 +178,7 @@ struct GitHubReview {
 }
 
 #[derive(Deserialize)]
-struct GitLabReview {
+struct GitLabMergeRequest {
     iid: u64,
     web_url: String,
     title: String,
@@ -182,29 +197,29 @@ struct GitLabProject {
     default_branch: String,
 }
 
-enum OpenReview {
-    GitHub(GitHubReview),
-    GitLab(GitLabReview),
+enum HostPullRequest {
+    GitHub(GitHubPullRequest),
+    GitLab(GitLabMergeRequest),
 }
 
-impl OpenReview {
-    fn review(&self) -> Review {
+impl HostPullRequest {
+    fn pull_request(&self) -> PullRequest {
         match self {
-            Self::GitHub(review) => Review {
-                url: review.html_url.clone(),
-                title: review.title.clone(),
-                body: review.body.clone().unwrap_or_default(),
+            Self::GitHub(pull_request) => PullRequest {
+                url: pull_request.html_url.clone(),
+                title: pull_request.title.clone(),
+                body: pull_request.body.clone().unwrap_or_default(),
             },
-            Self::GitLab(review) => Review {
-                url: review.web_url.clone(),
-                title: review.title.clone(),
-                body: review.description.clone().unwrap_or_default(),
+            Self::GitLab(merge_request) => PullRequest {
+                url: merge_request.web_url.clone(),
+                title: merge_request.title.clone(),
+                body: merge_request.description.clone().unwrap_or_default(),
             },
         }
     }
 }
 
-impl Host {
+impl CodeHost {
     fn from_remote(remote: &str) -> Result<Self> {
         let (host, path) = remote_parts(remote)?;
         match host.as_str() {
@@ -271,19 +286,19 @@ impl Host {
         }
     }
 
-    fn find_open(&self, source_branch: &str) -> Result<Option<Review>> {
-        self.find_open_review(source_branch)?
-            .map(|review| self.validate_review(review.review()))
+    fn find_pull_request(&self, source_branch: &str) -> Result<Option<PullRequest>> {
+        self.find_host_pull_request(source_branch)?
+            .map(|pull_request| self.validate_pull_request(pull_request.pull_request()))
             .transpose()
     }
 
-    fn create(
+    fn create_pull_request(
         &self,
         source_branch: &str,
         target_branch: &str,
         title: &str,
         body: &str,
-    ) -> Result<Review> {
+    ) -> Result<PullRequest> {
         match self {
             Self::GitHub { repository, .. } => {
                 let endpoint = format!("repos/{repository}/pulls");
@@ -298,9 +313,9 @@ impl Host {
                     &payload,
                     "create GitHub pull request",
                 )?;
-                let review: GitHubReview = serde_json::from_slice(&output)
+                let pull_request: GitHubPullRequest = serde_json::from_slice(&output)
                     .context("invalid JSON from gh while creating pull request")?;
-                self.validate_review(OpenReview::GitHub(review).review())
+                self.validate_pull_request(HostPullRequest::GitHub(pull_request).pull_request())
             }
             Self::GitLab { project } => {
                 let endpoint = format!("projects/{}/merge_requests", encode_project(project));
@@ -325,44 +340,46 @@ impl Host {
                     &payload,
                     "create GitLab merge request",
                 )?;
-                let review: GitLabReview = serde_json::from_slice(&output)
+                let merge_request: GitLabMergeRequest = serde_json::from_slice(&output)
                     .context("invalid JSON from glab while creating merge request")?;
-                self.validate_review(OpenReview::GitLab(review).review())
+                self.validate_pull_request(HostPullRequest::GitLab(merge_request).pull_request())
             }
         }
     }
 
-    fn update(
+    fn update_pull_request(
         &self,
         source_branch: &str,
-        expected: &Review,
+        expected: &PullRequest,
         title: &str,
         body: &str,
-    ) -> Result<Review> {
-        let review = self
-            .find_open_review(source_branch)?
-            .with_context(|| format!("no open review found for source branch '{source_branch}'"))?;
-        if &review.review() != expected {
-            bail!("review changed before it could be updated");
+    ) -> Result<PullRequest> {
+        let host_pull_request = self
+            .find_host_pull_request(source_branch)?
+            .with_context(|| {
+                format!("no open pull request found for source branch '{source_branch}'")
+            })?;
+        if &host_pull_request.pull_request() != expected {
+            bail!("pull request changed before it could be updated");
         }
-        match (self, review) {
-            (Self::GitHub { repository, .. }, OpenReview::GitHub(review)) => {
-                let endpoint = format!("repos/{repository}/pulls/{}", review.number);
+        match (self, host_pull_request) {
+            (Self::GitHub { repository, .. }, HostPullRequest::GitHub(pull_request)) => {
+                let endpoint = format!("repos/{repository}/pulls/{}", pull_request.number);
                 let payload = json!({"title": title, "body": body});
                 let output = run_json_command(
                     command("gh", &["api", "--method", "PATCH", &endpoint]),
                     &payload,
                     "update GitHub pull request",
                 )?;
-                let review: GitHubReview = serde_json::from_slice(&output)
+                let pull_request: GitHubPullRequest = serde_json::from_slice(&output)
                     .context("invalid JSON from gh while updating pull request")?;
-                self.validate_review(OpenReview::GitHub(review).review())
+                self.validate_pull_request(HostPullRequest::GitHub(pull_request).pull_request())
             }
-            (Self::GitLab { project }, OpenReview::GitLab(review)) => {
+            (Self::GitLab { project }, HostPullRequest::GitLab(merge_request)) => {
                 let endpoint = format!(
                     "projects/{}/merge_requests/{}",
                     encode_project(project),
-                    review.iid
+                    merge_request.iid
                 );
                 let payload = json!({"title": title, "description": body});
                 let output = run_json_command(
@@ -380,15 +397,15 @@ impl Host {
                     &payload,
                     "update GitLab merge request",
                 )?;
-                let review: GitLabReview = serde_json::from_slice(&output)
+                let merge_request: GitLabMergeRequest = serde_json::from_slice(&output)
                     .context("invalid JSON from glab while updating merge request")?;
-                self.validate_review(OpenReview::GitLab(review).review())
+                self.validate_pull_request(HostPullRequest::GitLab(merge_request).pull_request())
             }
-            _ => unreachable!("review provider must match forge provider"),
+            _ => unreachable!("pull request provider must match code host"),
         }
     }
 
-    fn validate_review(&self, review: Review) -> Result<Review> {
+    fn validate_pull_request(&self, pull_request: PullRequest) -> Result<PullRequest> {
         let expected = match self {
             Self::GitHub { repository, .. } => {
                 format!("https://github.com/{repository}/pull/")
@@ -397,16 +414,16 @@ impl Host {
                 format!("https://gitlab.com/{project}/-/merge_requests/")
             }
         };
-        if !review.url.starts_with(&expected)
-            || review.url[expected.len()..].parse::<u64>().is_err()
+        if !pull_request.url.starts_with(&expected)
+            || pull_request.url[expected.len()..].parse::<u64>().is_err()
         {
-            bail!("forge returned an unexpected review URL");
+            bail!("code host returned an unexpected pull request URL");
         }
-        Ok(review)
+        Ok(pull_request)
     }
 
-    fn find_open_review(&self, source_branch: &str) -> Result<Option<OpenReview>> {
-        let reviews: Vec<OpenReview> = match self {
+    fn find_host_pull_request(&self, source_branch: &str) -> Result<Option<HostPullRequest>> {
+        let pull_requests: Vec<HostPullRequest> = match self {
             Self::GitHub { repository, owner } => {
                 let endpoint = format!("repos/{repository}/pulls");
                 let output = run_command(
@@ -427,9 +444,12 @@ impl Host {
                     ),
                     "find open GitHub pull request",
                 )?;
-                let reviews: Vec<GitHubReview> = serde_json::from_slice(&output)
+                let pull_requests: Vec<GitHubPullRequest> = serde_json::from_slice(&output)
                     .context("invalid JSON from gh while finding pull request")?;
-                reviews.into_iter().map(OpenReview::GitHub).collect()
+                pull_requests
+                    .into_iter()
+                    .map(HostPullRequest::GitHub)
+                    .collect()
             }
             Self::GitLab { project } => {
                 let project_endpoint = format!("projects/{}", encode_project(project));
@@ -463,19 +483,19 @@ impl Host {
                     ),
                     "find open GitLab merge request",
                 )?;
-                let reviews: Vec<GitLabReview> = serde_json::from_slice(&output)
+                let merge_requests: Vec<GitLabMergeRequest> = serde_json::from_slice(&output)
                     .context("invalid JSON from glab while finding merge request")?;
-                reviews
+                merge_requests
                     .into_iter()
-                    .filter(|review| review.source_project_id == source_project.id)
-                    .map(OpenReview::GitLab)
+                    .filter(|merge_request| merge_request.source_project_id == source_project.id)
+                    .map(HostPullRequest::GitLab)
                     .collect()
             }
         };
-        match reviews.as_slice() {
+        match pull_requests.as_slice() {
             [] => Ok(None),
-            [_] => Ok(reviews.into_iter().next()),
-            _ => bail!("multiple open reviews found for source branch '{source_branch}'"),
+            [_] => Ok(pull_requests.into_iter().next()),
+            _ => bail!("multiple open pull requests found for source branch '{source_branch}'"),
         }
     }
 }
@@ -566,14 +586,14 @@ fn run_json_command(
         child
             .stdin
             .as_mut()
-            .context("failed to open forge command input")?,
+            .context("failed to open code host command input")?,
         payload,
     )
     .with_context(|| format!("failed to send request while attempting to {action}"))?;
     child
         .stdin
         .take()
-        .context("failed to close forge command input")?
+        .context("failed to close code host command input")?
         .flush()
         .with_context(|| format!("failed to send request while attempting to {action}"))?;
     let output = child
