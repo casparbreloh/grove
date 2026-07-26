@@ -2,8 +2,8 @@
 
 Grove is a small Rust CLI layer over Git. Git remains the source of truth, and
 the local Change/worktree workflow should stay simple. See `README.md` for
-user-facing behavior, `VISION.md` for direction, and `CONTEXT.md` for the domain
-language and invariants.
+user-facing behavior, domain language, and invariants, and `VISION.md` for
+direction.
 
 Grove is fast-moving and pre-1.0. Prioritize common, high-impact workflows and
 destructive safety boundaries; do not add complexity for merely hypothetical
@@ -46,7 +46,7 @@ requires Node.js, matching Pi's runtime.
 
 ## Conventions
 
-- Use **Change**, **Change ID**, **Title**, and **Pi session** as defined in `CONTEXT.md`; do not reintroduce a semantic branch name or Grove session identity.
+- Use **Change**, **Change ID**, **Title**, and **Pi session** as defined in `README.md`; do not reintroduce a semantic branch name or Grove session identity.
 - Treat feature replacements as clean breaks: remove superseded commands, options, code paths, and tests in the same change. Do not add deprecations, aliases, or backward-compatibility surfaces unless explicitly requested.
 - In the navigator, the agent is the obvious primary action. Keep Enter agent-first without styling the selected row differently from the others.
 - Keep `main.rs` thin and deepen `change.rs`, `git.rs`, or `session.rs` around their existing authority.

@@ -13,8 +13,7 @@ grove ship     # have Pi commit, push, and open or update a pull request
 grove archive  # archive the current Change, or pick one from the primary checkout
 ```
 
-See [VISION.md](VISION.md) for the product direction and [CONTEXT.md](CONTEXT.md)
-for the domain vocabulary.
+See [VISION.md](VISION.md) for the product direction.
 
 ## Commands
 
