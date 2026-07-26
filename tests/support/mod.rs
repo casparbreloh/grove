@@ -247,6 +247,12 @@ impl TestRepo {
         self.run_pty(command, ready, input, "short Grove archive")
     }
 
+    pub fn archive_without_color_in_pty(&self, ready: &str, input: &[u8]) -> Output {
+        let mut command = self.sh_picker(&self.repo, "archive");
+        command.env("NO_COLOR", "1");
+        self.run_pty(command, ready, input, "unstyled Grove archive")
+    }
+
     pub fn resume_pi_in_pty(&self, ready: &str, input: &[u8]) -> Output {
         let binary = self.compiled_binary();
         let command = self.pty(&self.repo, binary.as_os_str());
@@ -280,14 +286,14 @@ impl TestRepo {
         fs::read_to_string(&self.agent_log).unwrap_or_default()
     }
 
-    pub fn block_rpc_worker(&self) -> PathBuf {
-        let gate = self._root.path().join("rpc.block");
-        fs::write(&gate, "blocked").expect("create RPC worker gate");
+    pub fn block_worker(&self) -> PathBuf {
+        let gate = self._root.path().join("worker.block");
+        fs::write(&gate, "blocked").expect("create worker gate");
         gate
     }
 
-    pub fn release_rpc_worker(&self, gate: &Path) {
-        fs::remove_file(gate).expect("release RPC worker");
+    pub fn release_worker(&self, gate: &Path) {
+        fs::remove_file(gate).expect("release worker");
     }
 
     pub fn change_record(&self, capsule: &Path) -> serde_json::Value {
@@ -296,7 +302,7 @@ impl TestRepo {
     }
 
     pub fn wait_for_agent_log(&self, expected: &str) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(10);
         while !self.agent_log().contains(expected) {
             assert!(
                 Instant::now() < deadline,

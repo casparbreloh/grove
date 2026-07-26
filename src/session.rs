@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -10,7 +10,7 @@ use std::{
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::change;
 
@@ -26,18 +26,18 @@ const CHANGE_OUTPUT_SCHEMA: &str = r#"{
   "required": ["change"],
   "additionalProperties": false
 }"#;
-const SHIP_PROMPT: &str = "Write concise publication metadata for the supplied Change. Set commit to null when Published history is false because Grove uses the new pull-request title for the initial commit. Otherwise, a commit is a single Conventional Commit subject describing only newly staged work, with no body. Pull-request metadata describes the complete Change; return it only when a pull request must be created or its current title and body no longer fit. Treat the supplied summary as an index of the complete publication. Use it as primary context. If intent or scope is unclear, use read selectively until you understand the Change well enough to name it accurately. Avoid unrelated investigation. Finish only by calling structured_output; if tool calling is unavailable, return only JSON matching its schema.";
+const SHIP_PROMPT: &str = "Write concise publication metadata for the supplied Change. Set commit to null when Published history is false because Grove uses the new pull-request title for the initial commit. Otherwise, a commit is a single Conventional Commit subject describing only newly staged work, with no body. A pull-request title is also a single Conventional Commit subject, but describes the complete Change. Return pull-request metadata only when a pull request must be created or its current title and body no longer fit. Treat the supplied summary as an index of the complete publication. Use it as primary context. If intent or scope is unclear, use read selectively until you understand the Change well enough to name it accurately. Avoid unrelated investigation. Finish only by calling structured_output.";
 const SHIP_OUTPUT_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
-    "commit": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+    "commit": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^.+: .+$" }, { "type": "null" }] },
     "pull_request": {
       "anyOf": [
         {
           "type": "object",
           "properties": {
-            "title": { "type": "string" },
-            "body": { "type": "string" }
+            "title": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^.+: .+$" },
+            "body": { "type": "string", "minLength": 1, "maxLength": 1000 }
           },
           "required": ["title", "body"],
           "additionalProperties": false
@@ -64,90 +64,71 @@ pub(crate) struct ShipMetadata {
     pub(crate) pull_request: Option<PullRequestMetadata>,
 }
 
-pub(crate) struct Session {
-    capsule: PathBuf,
-    workspace: PathBuf,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChangeTitle {
+    change: String,
 }
 
-impl Session {
-    pub(crate) fn for_workspace(workspace: &Path) -> Result<Self> {
-        let capsule = workspace
-            .parent()
-            .context("Grove workspace has no Change capsule")?
-            .to_owned();
-        Ok(Self {
-            capsule,
-            workspace: workspace.to_owned(),
-        })
-    }
-
-    pub(crate) fn prepare() -> Result<()> {
-        validate_pi()
-    }
-
-    pub(crate) fn attach(&self) -> Result<()> {
-        validate_pi()?;
-        let _lock = self.lock()?;
-        let sessions = self.capsule.join("pi");
-        create_private_directory_all(&sessions).with_context(|| {
-            format!(
-                "failed to create Pi session directory {}",
-                sessions.display()
-            )
-        })?;
-        let executable = env::current_exe().context("failed to locate the Grove executable")?;
-        let change_id = self
-            .capsule
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("change capsule has no valid ID")?;
-        let extension = materialize_extension(CHANGE_SESSION_EXTENSION, "grove-session")?;
-        let status = Command::new("pi")
-            .arg("--session-dir")
-            .arg(&sessions)
-            .arg("--continue")
-            .arg("--extension")
-            .arg(&extension)
-            .current_dir(&self.workspace)
-            .env("GROVE_EXECUTABLE", executable)
-            .env("GROVE_CHANGE_ID", change_id)
-            .env("GROVE_CHANGE_CAPSULE", &self.capsule)
-            .env_remove("GROVE_DIRECTIVE_CD_FILE")
-            .status();
-        let _ = fs::remove_file(&extension);
-        let status = status
-            .with_context(|| format!("failed to launch Pi in {}", self.workspace.display()))?;
-        if !status.success() {
-            bail!("Pi exited with {status} in {}", self.workspace.display());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn generate_ship_metadata(&self, summary: &str) -> Result<ShipMetadata> {
-        validate_pi()?;
-        let value = run_structured_worker(
-            &self.workspace,
-            SHIP_PROMPT,
-            SHIP_OUTPUT_SCHEMA,
-            summary,
-            "read,structured_output",
-            "shipping metadata",
-        )?;
-        let metadata: ShipMetadata = serde_json::from_value(value)
-            .context("Pi returned invalid structured shipping metadata")?;
-        validate_ship_metadata(&metadata)?;
-        Ok(metadata)
-    }
-
-    pub(crate) fn lock(&self) -> Result<change::Lock> {
-        change::lock(&self.capsule)
-    }
+pub(crate) fn require_pi() -> Result<()> {
+    validate_pi()
 }
 
-pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
-    let capsule = change_capsule()?;
-    change::validate_identity(&capsule, change_id)?;
-    validate_session_id(session_id)?;
+pub(crate) fn attach(workspace: &Path) -> Result<()> {
+    validate_pi()?;
+    let capsule = workspace
+        .parent()
+        .context("Grove workspace has no Change capsule")?;
+    let _lock = change::lock(capsule)?;
+    let sessions = capsule.join("pi");
+    create_private_directory_all(&sessions).with_context(|| {
+        format!(
+            "failed to create Pi session directory {}",
+            sessions.display()
+        )
+    })?;
+    let executable = env::current_exe().context("failed to locate the Grove executable")?;
+    let change_id = capsule
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("Change capsule has no valid ID")?;
+    let extension = materialize_extension(CHANGE_SESSION_EXTENSION, "grove-session")?;
+    let status = Command::new("pi")
+        .arg("--session-dir")
+        .arg(&sessions)
+        .arg("--continue")
+        .arg("--extension")
+        .arg(extension.path())
+        .current_dir(workspace)
+        .env("GROVE_EXECUTABLE", executable)
+        .env("GROVE_CHANGE_ID", change_id)
+        .env("GROVE_CHANGE_CAPSULE", capsule)
+        .env_remove("GROVE_DIRECTIVE_CD_FILE")
+        .status()
+        .with_context(|| format!("failed to launch Pi in {}", workspace.display()))?;
+    if !status.success() {
+        bail!("Pi exited with {status} in {}", workspace.display());
+    }
+    Ok(())
+}
+
+pub(crate) fn generate_ship_metadata(workspace: &Path, summary: &str) -> Result<ShipMetadata> {
+    validate_pi()?;
+    let metadata = run_structured_worker(
+        workspace,
+        SHIP_PROMPT,
+        SHIP_OUTPUT_SCHEMA,
+        summary,
+        "read,structured_output",
+        "shipping metadata",
+    )?;
+    validate_ship_metadata(&metadata)?;
+    Ok(metadata)
+}
+
+pub(crate) fn name_change(change_id: &str) -> Result<()> {
+    let capsule = change_capsule(change_id)?;
+    capsule.validate_identity()?;
     let mut prompt = String::new();
     std::io::stdin()
         .read_to_string(&mut prompt)
@@ -168,56 +149,38 @@ pub(crate) fn name_change(change_id: &str, session_id: &str) -> Result<()> {
     Err(last_error.expect("title inference attempted at least once"))
 }
 
-pub(crate) fn apply_change_title(change_id: &str, session_id: &str) -> Result<()> {
-    let capsule = change_capsule()?;
-    validate_session_id(session_id)?;
+pub(crate) fn apply_change_title(change_id: &str) -> Result<()> {
+    let capsule = change_capsule(change_id)?;
     let mut title = String::new();
     std::io::stdin()
         .read_to_string(&mut title)
         .context("failed to read the inferred title")?;
     let title = validate_change_title(&title)?;
-    change::initialize_title(&capsule, change_id, title)
+    capsule.initialize_title(title)
 }
 
-fn change_capsule() -> Result<PathBuf> {
-    env::var_os("GROVE_CHANGE_CAPSULE")
+fn change_capsule(change_id: &str) -> Result<change::Capsule> {
+    let path = env::var_os("GROVE_CHANGE_CAPSULE")
         .map(PathBuf::from)
-        .context("GROVE_CHANGE_CAPSULE is not set")
+        .context("GROVE_CHANGE_CAPSULE is not set")?;
+    change::Capsule::at(path, change_id.to_owned())
 }
 
-fn validate_session_id(session_id: &str) -> Result<()> {
-    let session_bytes = session_id.as_bytes();
-    if !session_bytes.first().is_some_and(u8::is_ascii_alphanumeric)
-        || !session_bytes.last().is_some_and(u8::is_ascii_alphanumeric)
-        || !session_bytes
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
-        bail!("invalid Pi session identity");
-    }
-    Ok(())
-}
-
-fn infer_change_title(capsule: &Path, prompt: &str) -> Result<String> {
+fn infer_change_title(capsule: &change::Capsule, prompt: &str) -> Result<String> {
     validate_pi()?;
     if prompt.trim().is_empty() {
         bail!("cannot infer a title from an empty prompt");
     }
 
-    let value = run_structured_worker(
-        &capsule.join("workspace"),
+    let output: ChangeTitle = run_structured_worker(
+        &capsule.workspace(),
         CHANGE_PROMPT,
         CHANGE_OUTPUT_SCHEMA,
         prompt,
         "structured_output",
         "Change naming",
     )?;
-    validate_change_title(
-        value["change"]
-            .as_str()
-            .context("Pi returned invalid structured Change output")?,
-    )
-    .map(str::to_owned)
+    validate_change_title(&output.change).map(str::to_owned)
 }
 
 fn validate_change_title(title: &str) -> Result<&str> {
@@ -227,6 +190,7 @@ fn validate_change_title(title: &str) -> Result<&str> {
         || title.len() > 80
         || title.contains(['\r', '\n'])
         || !(3..=4).contains(&words.len())
+        || !title.chars().all(change::display_safe)
         || words
             .iter()
             .any(|word| !word.chars().any(char::is_alphanumeric))
@@ -236,42 +200,20 @@ fn validate_change_title(title: &str) -> Result<&str> {
     Ok(title)
 }
 
-fn run_structured_worker(
+fn run_structured_worker<T: DeserializeOwned>(
     cwd: &Path,
     system_prompt: &str,
     schema: &str,
     prompt: &str,
     tools: &str,
     action: &str,
-) -> Result<serde_json::Value> {
+) -> Result<T> {
     let extension = materialize_extension(
         STRUCTURED_OUTPUT_EXTENSION,
         "grove-structured-output-extension",
     )?;
-    let result = run_structured_worker_with_extension(
-        cwd,
-        system_prompt,
-        schema,
-        prompt,
-        tools,
-        action,
-        &extension,
-    );
-    let _ = fs::remove_file(extension);
-    result
-}
-
-fn run_structured_worker_with_extension(
-    cwd: &Path,
-    system_prompt: &str,
-    schema: &str,
-    prompt: &str,
-    tools: &str,
-    action: &str,
-    extension: &Path,
-) -> Result<serde_json::Value> {
     let mut child = Command::new("pi")
-        .args(["--mode", "rpc", "--no-session", "--model", WORKER_MODEL])
+        .args(["--mode", "json", "--no-session", "--model", WORKER_MODEL])
         .args(["--thinking", "minimal", "--tools", tools])
         .args([
             "--no-context-files",
@@ -281,110 +223,91 @@ fn run_structured_worker_with_extension(
         ])
         .args(["--system-prompt", system_prompt])
         .arg("--extension")
-        .arg(extension)
+        .arg(extension.path())
         .args(["--structured-output-schema", schema])
         .current_dir(cwd)
         .env_remove("GROVE_DIRECTIVE_CD_FILE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("failed to launch Pi {action} worker"))?;
 
-    let mut stdin = child.stdin.take().context("Pi RPC worker has no input")?;
-    let stdout = child.stdout.take().context("Pi RPC worker has no output")?;
-    let mut lines = BufReader::new(stdout).lines();
-    let result = (|| -> Result<Option<serde_json::Value>> {
-        send_rpc_prompt(&mut stdin, prompt)?;
-        let mut attempts = 1;
-        let mut result = None;
-        let mut last_response = None;
-        for line in lines.by_ref() {
-            let line = line.with_context(|| format!("failed to read Pi {action} RPC output"))?;
-            let event: serde_json::Value = serde_json::from_str(&line)
-                .with_context(|| format!("Pi {action} worker returned invalid RPC JSONL"))?;
-            if event["type"] == "response"
-                && event["command"] == "prompt"
-                && event["success"] == false
-            {
-                bail!("Pi {action} worker rejected the prompt");
-            }
-            if event["type"] == "message_end"
-                && event["message"]["role"] == "assistant"
-                && event["message"]["stopReason"] == "error"
-            {
-                let message = event["message"]["errorMessage"]
-                    .as_str()
-                    .unwrap_or("provider request failed");
-                bail!("Pi {action} worker failed: {message}");
-            }
-            if event["type"] == "message_end" && event["message"]["role"] == "assistant" {
+    let prompt_written = child
+        .stdin
+        .take()
+        .context("Pi worker has no input")
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(prompt.as_bytes())
+                .context("failed to write Pi worker prompt")
+        });
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("failed to wait for Pi {action} worker"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "Pi {action} worker exited with {}: {}",
+            output.status,
+            stderr.trim()
+        );
+    }
+    prompt_written?;
+
+    let mut result = None;
+    let mut last_response = None;
+    let mut last_error = None;
+    for line in output.stdout.split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let event: serde_json::Value = serde_json::from_slice(line)
+            .with_context(|| format!("Pi {action} worker returned invalid JSONL"))?;
+        if event["type"] == "message_end" && event["message"]["role"] == "assistant" {
+            if event["message"]["stopReason"] == "error" {
+                last_error = Some(
+                    event["message"]["errorMessage"]
+                        .as_str()
+                        .unwrap_or("provider request failed")
+                        .to_owned(),
+                );
+            } else {
                 last_response = event["message"]["content"].as_array().and_then(|content| {
                     content
                         .iter()
                         .find_map(|part| part["text"].as_str().map(str::to_owned))
                 });
             }
-            if event["type"] == "tool_execution_end"
-                && event["toolName"] == "structured_output"
-                && event["isError"] != true
-            {
-                if result.is_some() {
-                    bail!("Pi {action} worker returned multiple structured outputs");
-                }
-                result = Some(event["result"]["details"].clone());
-            }
-            if event["type"] == "agent_settled" {
-                if result.is_some() {
-                    return Ok(result);
-                }
-                if attempts == 2 {
-                    if let Some(response) = last_response {
-                        return serde_json::from_str(&response)
-                            .map(Some)
-                            .with_context(|| {
-                                format!(
-                                    "Pi {action} worker returned invalid JSON instead of structured output"
-                                )
-                            });
-                    }
-                    return Ok(None);
-                }
-                attempts += 1;
-                send_rpc_prompt(
-                    &mut stdin,
-                    "Return the result now by calling structured_output with the required schema.",
-                )?;
-            }
         }
-        Ok(None)
-    })();
-
-    drop(stdin);
-    drop(lines);
-    let _ = child.kill();
-    child.wait().context("failed to wait for Pi RPC worker")?;
-    result?.with_context(|| format!("Pi {action} worker returned no structured output"))
-}
-
-fn send_rpc_prompt(stdin: &mut impl Write, prompt: &str) -> Result<()> {
-    serde_json::to_writer(
-        &mut *stdin,
-        &serde_json::json!({"type": "prompt", "message": prompt}),
-    )
-    .context("failed to encode Pi RPC prompt")?;
-    stdin
-        .write_all(b"\n")
-        .context("failed to write Pi RPC prompt")?;
-    stdin.flush().context("failed to flush Pi RPC prompt")
+        if event["type"] == "tool_execution_end"
+            && event["toolName"] == "structured_output"
+            && event["isError"] != true
+            && result.replace(event["result"]["details"].clone()).is_some()
+        {
+            bail!("Pi {action} worker returned multiple structured outputs");
+        }
+    }
+    if let Some(value) = result {
+        return serde_json::from_value(value)
+            .with_context(|| format!("Pi returned invalid structured {action} output"));
+    }
+    if let Some(response) = last_response {
+        return serde_json::from_str(&response)
+            .with_context(|| format!("Pi {action} worker returned invalid JSON"));
+    }
+    if let Some(error) = last_error {
+        bail!("Pi {action} worker failed: {error}");
+    }
+    bail!("Pi {action} worker returned no structured output")
 }
 
 fn validate_ship_metadata(metadata: &ShipMetadata) -> Result<()> {
     if let Some(commit) = &metadata.commit {
-        validate_subject(commit, "commit")?;
+        validate_conventional_subject(commit, "commit")?;
     }
     if let Some(pull_request) = &metadata.pull_request {
-        validate_subject(&pull_request.title, "pull request title")?;
+        validate_conventional_subject(&pull_request.title, "pull request title")?;
         if pull_request.body.trim().is_empty()
             || pull_request.body.len() > 1_000
             || pull_request
@@ -400,17 +323,37 @@ fn validate_ship_metadata(metadata: &ShipMetadata) -> Result<()> {
 
 fn validate_subject(subject: &str, label: &str) -> Result<()> {
     let subject = subject.trim();
-    if subject.is_empty()
-        || subject.len() > 100
-        || subject.contains(['\r', '\n'])
-        || !subject.contains(": ")
-    {
+    if subject.is_empty() || subject.len() > 100 || !subject.chars().all(change::display_safe) {
         bail!("Pi returned an invalid {label}");
     }
     Ok(())
 }
 
-fn materialize_extension(contents: &[u8], label: &str) -> Result<PathBuf> {
+fn validate_conventional_subject(subject: &str, label: &str) -> Result<()> {
+    validate_subject(subject, label)?;
+    if !subject.contains(": ") {
+        bail!("Pi returned an invalid {label}");
+    }
+    Ok(())
+}
+
+struct TemporaryExtension {
+    path: PathBuf,
+}
+
+impl TemporaryExtension {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TemporaryExtension {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn materialize_extension(contents: &[u8], label: &str) -> Result<TemporaryExtension> {
     let temporary = temporary_path(&env::temp_dir(), label).with_extension("ts");
     let mut options = fs::OpenOptions::new();
     options.create_new(true).write(true);
@@ -419,11 +362,12 @@ fn materialize_extension(contents: &[u8], label: &str) -> Result<PathBuf> {
     let mut file = options
         .open(&temporary)
         .with_context(|| format!("failed to create {}", temporary.display()))?;
+    let extension = TemporaryExtension { path: temporary };
     file.write_all(contents)
-        .with_context(|| format!("failed to write {}", temporary.display()))?;
+        .with_context(|| format!("failed to write {}", extension.path().display()))?;
     file.sync_all()
-        .with_context(|| format!("failed to sync {}", temporary.display()))?;
-    Ok(temporary)
+        .with_context(|| format!("failed to sync {}", extension.path().display()))?;
+    Ok(extension)
 }
 
 fn temporary_path(parent: &Path, label: &str) -> PathBuf {

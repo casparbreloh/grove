@@ -111,7 +111,7 @@ fn sync_fetches_exact_upstream_archives_and_rebases_safely() {
     assert_eq!(record["state"], "archived");
     assert_eq!(record["outcome"], "integrated");
     assert!(record["archived_at"].is_number());
-    assert_eq!(record["closing"], serde_json::Value::Null);
+    assert!(record.get("closing").is_none());
 
     for change in [&remaining, &reapplied, &protected] {
         assert_eq!(

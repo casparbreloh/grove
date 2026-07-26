@@ -22,7 +22,7 @@ export default function changeSession(pi, spawnProcess = spawn, applyTitle = spa
   function failed(ctx, active) {
     if (request !== active) return;
     request = undefined;
-    ctx.ui?.notify?.("Grove could not name this session", "warning");
+    ctx.ui?.notify?.("Grove could not infer a Change title", "warning");
   }
 
   pi.on("session_start", (event, ctx) => {
@@ -70,7 +70,7 @@ export default function changeSession(pi, spawnProcess = spawn, applyTitle = spa
     let stdout = "";
     const child = spawnProcess(
       executable,
-      ["__title", "--change", active.changeId, "--session", active.sessionId],
+      ["__title", "--change", active.changeId],
       {
         cwd: process.cwd(),
         env: process.env,
@@ -82,7 +82,7 @@ export default function changeSession(pi, spawnProcess = spawn, applyTitle = spa
     active.timer = setTimeout(() => {
       if (request !== active) return;
       stop();
-      ctx.ui?.notify?.("Grove could not name this session", "warning");
+      ctx.ui?.notify?.("Grove could not infer a Change title", "warning");
     }, 60_000);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -112,14 +112,7 @@ export default function changeSession(pi, spawnProcess = spawn, applyTitle = spa
         }
         const applied = applyTitle(
           executable,
-          [
-            "__title",
-            "--change",
-            active.changeId,
-            "--session",
-            active.sessionId,
-            "--apply",
-          ],
+          ["__title", "--change", active.changeId, "--apply"],
           {
             cwd: process.cwd(),
             env: process.env,
@@ -129,7 +122,7 @@ export default function changeSession(pi, spawnProcess = spawn, applyTitle = spa
           },
         );
         if (applied.status === 0) pi.setSessionName(title);
-        else ctx.ui?.notify?.("Grove could not save the session title", "warning");
+        else ctx.ui?.notify?.("Grove could not save the Change title", "warning");
       } finally {
         if (request === active) request = undefined;
       }

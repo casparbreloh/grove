@@ -11,9 +11,9 @@ workflow engine, or terminal multiplexer.
 - Keep the common workflow and command surface small.
 - Make the primary interface information-dense, simple, and clean.
 - Give every Change an immutable opaque identity and one stable human title.
-- Keep titles, Git identity, publication identity, and Pi-native session
-  identity separate.
-- Use Pi through its native TUI, native JSONL, and isolated structured RPC
+- Keep Titles and Pi-native session identity separate; derive Grove's stable
+  publication branch from the immutable Change ID.
+- Use Pi through its native TUI, native JSONL, and isolated structured JSON
   workers instead of adding a second agent or provider abstraction.
 - Keep interactive Pi lifecycle native, including `/new`, `/fork`, `/clone`,
   `/resume`, and native session navigation.
@@ -31,7 +31,8 @@ workflow engine, or terminal multiplexer.
 Grove provides path-backed Git workspaces, a stable Change identity and title,
 direct Pi launch and resume, recorded creation lineage, Git-backed inventory,
 destructive validation, explicit upstream synchronization, and safe archival.
-A Change's repository-scoped 8-hex ID identifies only its capsule. Each
+A Change's repository-scoped 8-character hexadecimal ID identifies its capsule
+and stable publication branch. Each
 workspace is a native Git worktree created with detached HEAD; branches appear
 only when a user, agent, or hosting provider needs one. Archival cleans up
 local-only branches while preserving tracking branches. The capsule groups
@@ -41,7 +42,7 @@ one private `~/.grove` path.
 Creating a Change remains a dependable local operation. Grove completes the
 capsule and worktree before starting interactive Pi. A small managed extension
 links every native Pi session to the Change and starts isolated, best-effort
-structured RPC title inference from the first substantial prompt. Naming runs
+structured JSON title inference from the first substantial prompt. Naming runs
 without delaying the real turn, never moves a path or renames Git, and leaves
 an honest `Untitled` state when it fails.
 
@@ -72,9 +73,9 @@ best-effort and may be partially completed if a later operation fails.
 Bare `grove` becomes the primary and only inventory interface. It is an inline,
 transient, Git-backed navigator: adaptive to terminal width, information-dense,
 and visually quiet. Titles remain dominant while concise columns expose useful
-local facts such as creation base, changed lines, conflicts, divergence, and
-path. Narrow terminals remove secondary information before compromising Change
-identity.
+local facts such as creation base, changed lines, untracked files, conflicts,
+divergence, and path. Narrow terminals remove secondary information before
+compromising Change identity.
 
 Main is pinned first as the base workspace, selected initially, and followed by
 active Changes. A Change's primary action launches or resumes Pi, its secondary
@@ -115,12 +116,12 @@ documented commit, branch, provider, push, and hosting effects needed to ship
 the Change.
 
 After inexpensive local and code-host validation, Grove owns the deterministic Git
-and hosting operations. It creates or reuses the stable Title-derived
-publication branch, stages the complete Change, commits without a body, pushes
+and hosting operations. It creates or reuses the stable Change-ID publication
+branch, stages the complete Change, commits without a body, pushes
 without force, and creates or conditionally updates the pull request through
 `gh` or `glab`. Existing published history is never rewritten.
 
-One purpose-built, noninteractive Pi RPC worker produces only schema-validated
+One purpose-built, noninteractive Pi JSON worker produces only schema-validated
 commit and pull-request metadata. Grove supplies a compact index of the complete
 Change and a bounded incremental patch; the worker may use read when that index
 is insufficient, but it cannot mutate Git or contact the code host. New publication

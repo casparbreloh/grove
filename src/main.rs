@@ -29,17 +29,20 @@ enum Cmd {
     /// Managed Pi makes an additional, asynchronous provider request from the
     /// first prompt to infer a title.
     New {
-        /// Start the change from this revision (`@` means the invoking worktree)
+        /// Start the Change from this revision (`@` means the invoking worktree)
         #[arg(long, value_name = "REF")]
         from: Option<String>,
     },
     /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
     Sync,
     /// Ship the current Change as a pull request
+    ///
+    /// Uses an isolated provider request for shipping metadata, then commits,
+    /// pushes, and creates or updates the pull request.
     Ship,
     /// Archive an active Change
     Archive {
-        /// Archive and discard unmerged work
+        /// Irreversibly discard uncommitted and unintegrated work
         #[arg(long)]
         force: bool,
     },
@@ -49,8 +52,6 @@ enum Cmd {
     Title {
         #[arg(long)]
         change: String,
-        #[arg(long)]
-        session: String,
         #[arg(long)]
         apply: bool,
     },
@@ -62,32 +63,37 @@ enum Shell {
     Zsh,
 }
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {}", change::display_text(&format!("{error:#}")));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
-    if std::env::args_os().len() == 2
-        && std::env::args_os().nth(1).as_deref() == Some("--usage-spec".as_ref())
-    {
+    let cli = Cli::parse();
+    if cli.usage_spec {
         clap_usage::generate(&mut Cli::command(), "grove", &mut std::io::stdout());
         return Ok(());
     }
 
-    match Cli::parse().command {
+    match cli.command {
         None => navigator::run(&Git::discover()?),
         Some(Cmd::New { from }) => new::run(&Git::discover()?, from.as_deref()),
         Some(Cmd::Sync) => sync::run(&Git::discover()?),
         Some(Cmd::Ship) => ship::run(&Git::discover()?),
         Some(Cmd::Archive { force }) => archive::run(&Git::discover()?, force),
         Some(Cmd::Init { shell }) => init::run(shell),
-        Some(Cmd::Title {
-            change,
-            session,
-            apply,
-        }) => {
+        Some(Cmd::Title { change, apply }) => {
             if apply {
-                session::apply_change_title(&change, &session)
+                session::apply_change_title(&change)
             } else {
-                session::name_change(&change, &session)
+                session::name_change(&change)
             }
         }
     }

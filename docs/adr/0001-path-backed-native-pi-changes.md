@@ -11,7 +11,8 @@ history and Pi remains responsible for conversation history.
 
 ## Decision
 
-Each Change receives an immutable random 8-hex ID used only for its capsule.
+Each Change receives an immutable generated 8-character lowercase hexadecimal ID
+used by its capsule and `grove/<change-id>` publication branch.
 The capsule lives at:
 
 ```text
@@ -28,9 +29,9 @@ pi/
 .metadata.lock
 ```
 
-The repository path is deterministic from the readable repository name and a
-8-hex digest of its canonical Git common directory. There is no repository
-registry or manifest.
+The repository path is deterministic from the readable repository name and an
+8-character hexadecimal digest of its canonical Git common directory. There is
+no repository registry or manifest.
 
 `workspace/` is a native Git worktree created with detached HEAD. Grove finds a
 Change by its exact capsule path, not by a branch. If a user or agent attaches a

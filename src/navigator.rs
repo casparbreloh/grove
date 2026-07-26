@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     io::{IsTerminal, Write},
     path::{Path, PathBuf},
 };
@@ -14,8 +13,9 @@ use crossterm::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
+    change::{display_safe, display_text, title_labels},
     git::{self, Git, WorktreeState},
-    session::Session,
+    session,
 };
 
 enum NavigatorAction {
@@ -32,14 +32,16 @@ pub(crate) fn run(git: &Git) -> Result<()> {
     };
     match action {
         NavigatorAction::Pi(row) => {
+            row.require_available()?;
             eprintln!(
                 "✓ Using {} at {}",
                 row.title_label,
-                row.worktree_path.display()
+                display_text(&row.worktree_path.display().to_string())
             );
-            Session::for_workspace(&row.worktree_path)?.attach()
+            session::attach(&row.worktree_path)
         }
         NavigatorAction::Workspace(row) => {
+            row.require_available()?;
             let destination = destination(git, &row.worktree_path)?;
             navigate(&destination)
         }
@@ -412,7 +414,7 @@ fn render_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> Resu
     let visible = &rows[start..rows.len().min(start + capacity)];
     let rows = visible.iter().collect::<Vec<_>>();
     let layout = TableLayout::new(&rows, usize::from(columns.saturating_sub(1)), 2);
-    writeln!(output, "{}\r", bold(&layout.header(), true))?;
+    writeln!(output, "{}\r", bold(&layout.header(), navigator_styling()))?;
     for (index, row) in rows.into_iter().enumerate() {
         writeln!(output, "{}\r", layout.row(row, start + index == selected))?;
     }
@@ -484,26 +486,21 @@ impl<W: Write> Drop for TerminalMode<'_, W> {
 pub(crate) fn change_rows(git: &Git) -> Result<Vec<Row>> {
     let worktrees = git.inventory()?;
     let current = git.current_path()?;
-    let mut title_counts = HashMap::from([("Main", 1_usize)]);
-    for worktree in &worktrees {
-        if let Some(title) = &worktree.title {
-            *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
-        }
-    }
+    let labels = title_labels(
+        worktrees
+            .iter()
+            .map(|worktree| (worktree.id.as_str(), worktree.title.as_deref())),
+        &["Main"],
+    );
     let mut rows = Vec::new();
-    for worktree in &worktrees {
-        let short_id = &worktree.id[..8];
-        let title_label = match &worktree.title {
-            Some(title) if title_counts.get(title.as_str()) == Some(&1) => title.clone(),
-            Some(title) => format!("{title} · {short_id}"),
-            None => format!("Untitled · {short_id}"),
-        };
-        let changes = match &worktree.state {
-            WorktreeState::Missing => "missing".to_owned(),
-            WorktreeState::Present(status) => format_changes(status),
+    for (worktree, title_label) in worktrees.iter().zip(labels) {
+        let (available, changes) = match &worktree.state {
+            WorktreeState::Missing => (false, "missing".to_owned()),
+            WorktreeState::Present(status) => (true, format_changes(status)),
         };
         rows.push(Row {
             current: worktree.current,
+            available,
             change_id: Some(worktree.id.clone()),
             worktree_path: worktree.path.clone(),
             title_label,
@@ -525,6 +522,7 @@ fn main_row(git: &Git) -> Result<Row> {
     let primary = git.primary_path()?;
     Ok(Row {
         current: current == primary,
+        available: true,
         change_id: None,
         worktree_path: primary.clone(),
         title_label: "Main".to_owned(),
@@ -538,6 +536,7 @@ fn main_row(git: &Git) -> Result<Row> {
 #[derive(Clone)]
 pub(crate) struct Row {
     current: bool,
+    available: bool,
     change_id: Option<String>,
     worktree_path: PathBuf,
     title_label: String,
@@ -548,6 +547,16 @@ pub(crate) struct Row {
 }
 
 impl Row {
+    fn require_available(&self) -> Result<()> {
+        if !self.available || !self.worktree_path.is_dir() {
+            bail!(
+                "Change workspace is missing: {}",
+                self.worktree_path.display()
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn is_current(&self) -> bool {
         self.current
     }
@@ -573,6 +582,9 @@ fn format_changes(status: &git::Status) -> String {
     if status.deleted > 0 {
         parts.push(format!("-{}", status.deleted));
     }
+    if status.untracked > 0 {
+        parts.push(format!("?{}", status.untracked));
+    }
     if status.conflicts > 0 {
         let label = if status.conflicts == 1 {
             "conflict"
@@ -596,7 +608,7 @@ fn format_divergence(divergence: &git::Divergence) -> String {
 fn padded(value: &str, width: usize) -> String {
     let value = value
         .chars()
-        .filter(|character| terminal_safe(*character))
+        .filter(|character| display_safe(*character))
         .collect::<String>();
     format!(
         "{value}{}",
@@ -605,10 +617,10 @@ fn padded(value: &str, width: usize) -> String {
 }
 
 pub(crate) fn fit_width(mut value: String, max_width: Option<usize>) -> String {
+    value.retain(display_safe);
     let Some(max_width) = max_width else {
         return value;
     };
-    value.retain(terminal_safe);
     if UnicodeWidthStr::width(value.as_str()) <= max_width {
         return value;
     }
@@ -628,18 +640,6 @@ pub(crate) fn fit_width(mut value: String, max_width: Option<usize>) -> String {
     }
     fitted.push('…');
     fitted
-}
-
-fn terminal_safe(character: char) -> bool {
-    UnicodeWidthChar::width(character).is_some()
-        && !matches!(
-            character,
-            '\u{061c}'
-                | '\u{200e}'
-                | '\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2066}'..='\u{2069}'
-        )
 }
 
 fn bold(value: &str, enabled: bool) -> String {

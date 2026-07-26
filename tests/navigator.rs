@@ -193,7 +193,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     repo.set_change_title(&changes[0], "Capture Native Sessions");
     repo.set_change_title(&changes[1], "Capture Native Sessions");
     repo.set_change_title(&changes[2], "Deploy API");
-    repo.set_change_title(&changes[4], "New Change");
+    repo.set_change_title(&changes[4], "New \u{202e}Change");
     fs::write(changes[2].path.join("uncommitted.txt"), "change\n").unwrap();
     repo.commit_file(repo.path(), "main-advance.txt", "main advance\n");
 
@@ -218,6 +218,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
         "{terminal}"
     );
     assert_eq!(terminal.matches("New Change").count(), 1, "{terminal}");
+    assert!(!terminal.contains('\u{202e}'), "{terminal}");
     for change in &changes {
         assert!(terminal.contains(&change.id), "{terminal}");
     }
@@ -227,6 +228,7 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
             "missing {metadata}: {terminal}"
         );
     }
+    assert!(terminal.contains("?1"), "{terminal}");
     assert!(!terminal.contains("ordinary") && !terminal.contains("detached"));
     assert!(!terminal.contains("Filter:"), "{terminal}");
     assert!(terminal.contains("› Main"), "{terminal}");
@@ -322,6 +324,39 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     let error = corrupt.grove().assert().failure().get_output().clone();
     assert!(stderr(&error).contains("invalid change record"));
     assert!(change.path.exists());
+}
+
+#[test]
+fn navigator_lists_healthy_changes_when_a_worktree_is_missing() {
+    let repo = TestRepo::new();
+    let missing = repo.create_change(None);
+    repo.set_change_title(&missing, "Missing Workspace Change");
+    fs::remove_dir_all(&missing.path).unwrap();
+    let healthy = repo.create_change(None);
+    repo.set_change_title(&healthy, "Healthy Workspace Change");
+
+    let output = repo.navigator_without_color_in_pty(repo.path(), "missing", b"\x1b");
+
+    assert!(output.status.success(), "{output:?}");
+    let terminal = stdout(&output);
+    assert!(terminal.contains("Missing Workspace Change"), "{terminal}");
+    assert!(terminal.contains("Healthy Workspace Change"), "{terminal}");
+    assert!(terminal.contains("missing"), "{terminal}");
+    assert_inline_terminal_restored(&terminal);
+
+    let agents = repo.agent_log().matches("mode=interactive").count();
+    let input = if terminal.find("Missing") < terminal.find("Healthy") {
+        b"\x1b[B\r".as_slice()
+    } else {
+        b"\x1b[B\x1b[B\r".as_slice()
+    };
+    let selected = repo.navigator_in_pty(repo.path(), "missing", input);
+    assert!(!selected.status.success(), "{selected:?}");
+    assert!(
+        stdout(&selected).contains("Change workspace is missing"),
+        "{selected:?}"
+    );
+    assert_eq!(repo.agent_log().matches("mode=interactive").count(), agents);
 }
 
 #[test]

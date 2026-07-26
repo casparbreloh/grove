@@ -3,18 +3,19 @@
 ## Glossary
 
 - **Change** — Grove's durable unit of work, from creation through archival.
-- **Change ID** — Grove-owned immutable 8-character lowercase hexadecimal identity, unique within its repository and used as its capsule directory name.
+- **Change ID** — Grove-owned immutable 8-character lowercase hexadecimal identity, unique within its repository and used by its capsule and publication branch.
 - **Title** — The Change's only human-facing name. The first successful inference initializes it once.
 - **Pi session** — A native Pi conversation with a Pi-owned ID, JSONL file, and optional native name. A Change may contain multiple Pi sessions.
 - **Repository directory** — `~/.grove/<repository-name>-<path-hash>/`, deterministically identified from the canonical Git common directory.
 - **Capsule** — `<repository-directory>/<change-id>/`, containing `change.json`, the active `workspace/`, native `pi/` sessions, and two lock files.
 - **Creation base** — The commit OID and optional parent branch recorded when the Change is created.
 - **Workspace** — A Change's directory, implemented as a native Git worktree and created with detached HEAD.
+- **Main** — The repository's primary checkout, pinned first in Grove's navigator.
 
 ## Invariants
 
 - Git commits, worktree HEADs, and refs are authoritative for code history; `change.json` is authoritative only for minimal Grove metadata.
-- Change ID, Title, Git branch names, and Pi session identity are independent. Titles never rename Git or move the capsule.
+- Title and Pi session identity are independent from Change identity. Titles never rename Git or move the capsule; Grove publication branches are `grove/<change-id>`.
 - Active Changes have one registered Git worktree at `<capsule>/workspace`. A branch may later be attached by the user or agent.
 - Grove identifies a Change by its record and exact workspace path, never by a branch name.
 - Managed Pi runs directly and synchronously with `<capsule>/pi`; there is no process persistence.

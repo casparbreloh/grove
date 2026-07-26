@@ -96,7 +96,7 @@ printf 'Generated Session Title\\n'
     await waitFor(() => startup.name() === "Generated Session Title");
     assert.equal(
       await readFile(invocation, "utf8"),
-      "args=__title --change change-123 --session session-456\nprompt=Implement extension coverage",
+      "args=__title --change change-123\nprompt=Implement extension coverage",
     );
 
     assert.equal(spawnCount, 1);
