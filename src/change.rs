@@ -13,8 +13,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
 
-const RECORD_VERSION: u8 = 4;
-
 pub(crate) struct RepositoryDirectory {
     path: PathBuf,
 }
@@ -101,7 +99,6 @@ enum Lifecycle {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Record {
-    version: u8,
     pub(crate) id: String,
     pub(crate) title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -174,15 +171,18 @@ impl Record {
                     .with_context(|| format!("failed to read change record {}", path.display()));
             }
         };
-        let record: Self = serde_json::from_slice(&bytes)
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("invalid change record {}", path.display()))?;
-        if record.version != RECORD_VERSION || !valid_id(&record.id) {
+        if value.get("version").is_some() {
             bail!(
-                "unsupported change record {} (version {}, expected {})",
-                path.display(),
-                record.version,
-                RECORD_VERSION
+                "versioned change record requires explicit conversion: {}",
+                path.display()
             );
+        }
+        let record: Self = serde_json::from_value(value)
+            .with_context(|| format!("invalid change record {}", path.display()))?;
+        if !valid_id(&record.id) {
+            bail!("invalid Change ID in record {}", path.display());
         }
         Ok(Some(record))
     }
@@ -214,7 +214,6 @@ impl Reserved {
                 }
             }
             let record = Record {
-                version: RECORD_VERSION,
                 id: id.clone(),
                 title: None,
                 publication_branch: None,

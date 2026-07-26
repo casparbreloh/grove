@@ -59,13 +59,13 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     assert_eq!(repository_name.len(), "repo-12345678".len());
     assert_eq!(repository.parent().unwrap(), grove_root);
     let record = repo.change_record(&capsule);
-    assert_eq!(record["version"], 4);
+    assert!(record.get("version").is_none());
     assert_eq!(record["id"], id);
     assert_eq!(record["state"], "active");
     assert_eq!(record["title"], serde_json::Value::Null);
     assert_eq!(record["base_oid"], original);
     assert_eq!(record["parent"], "main");
-    assert_eq!(record.as_object().unwrap().len(), 7);
+    assert_eq!(record.as_object().unwrap().len(), 6);
     assert!(!repository.join("repository.json").exists());
     assert!(!repo.navigation_exists());
     assert_eq!(
@@ -361,6 +361,26 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         workers_before_mismatch,
         "identity mismatch must fail before starting Pi"
     );
+    let record_path = unnamed.join("change.json");
+    let mut versioned = best_effort.change_record(&unnamed);
+    versioned["version"] = 4.into();
+    fs::write(&record_path, serde_json::to_vec_pretty(&versioned).unwrap()).unwrap();
+    let before = fs::read(&record_path).unwrap();
+    best_effort
+        .grove_from(&unnamed.join("workspace"))
+        .args([
+            "__title",
+            "--change",
+            &unnamed.file_name().unwrap().to_string_lossy(),
+            "--apply",
+        ])
+        .env("GROVE_CHANGE_CAPSULE", &unnamed)
+        .write_stdin("Do Not Migrate Records")
+        .assert()
+        .failure();
+    assert_eq!(fs::read(&record_path).unwrap(), before);
+    versioned.as_object_mut().unwrap().remove("version");
+    fs::write(&record_path, serde_json::to_vec_pretty(&versioned).unwrap()).unwrap();
     best_effort
         .grove_from(&unnamed.join("workspace"))
         .args([

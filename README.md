@@ -196,10 +196,11 @@ records on Unix). They can contain source, prompts, tool output, and
 secrets. Beyond the documented title request, Grove performs no implicit
 network activity.
 
-This is a pre-1.0 clean break. Grove accepts only the current Change record
-version and does not contain runtime migration or compatibility paths. Existing
-local capsules can be converted once with explicit Git and filesystem commands;
-Pi sessions remain untouched.
+`change.json` deliberately has no schema-version field or runtime migration
+machinery. During pre-1.0 development, incompatible records remain untouched
+and unavailable until an explicit one-off conversion; Pi sessions remain
+untouched. A future diagnostic command may explain and repair local state, but
+ordinary commands will never migrate it implicitly.
 
 ## Shell setup
 
