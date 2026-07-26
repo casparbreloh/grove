@@ -8,14 +8,15 @@ use std::{
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
 use crate::change::{
-    Capsule, Closing, Creation, Outcome, Record, RepositoryDirectory, lock as lock_change,
-    try_lock as try_lock_change,
+    Capsule, Closing, Creation, Outcome, Record, RepositoryDirectory, display_text,
+    lock as lock_change, publication_branch_base, try_lock as try_lock_change,
 };
 use anyhow::{Context, Result, bail};
 
 #[derive(Clone)]
 pub(crate) struct Git {
     cwd: PathBuf,
+    local_only: bool,
 }
 
 #[derive(Debug)]
@@ -171,7 +172,10 @@ impl Git {
 
     fn at(cwd: &Path) -> Result<Self> {
         let cwd = cwd.to_owned();
-        let git = Self { cwd };
+        let git = Self {
+            cwd,
+            local_only: false,
+        };
         git.text(&["rev-parse", "--git-dir"])
             .context("not inside a Git repository")?;
         if git.text(&["rev-parse", "--is-bare-repository"])? == "true" {
@@ -262,6 +266,200 @@ impl Git {
                 })
             })
             .collect()
+    }
+
+    pub(crate) fn diagnose(&self) -> Result<Vec<String>> {
+        let local = Self {
+            cwd: self.cwd.clone(),
+            local_only: true,
+        };
+        local.diagnose_local()
+    }
+
+    fn diagnose_local(&self) -> Result<Vec<String>> {
+        let worktrees = self.worktrees()?;
+        let inspection = self.repository()?.inspect()?;
+        let mut findings = inspection.findings;
+
+        for (capsule, record) in inspection.records {
+            let label = record_label(&record);
+            let expected_path = capsule.join("workspace");
+            let worktree = managed_worktree(&worktrees, &expected_path);
+            let wrong_path = worktrees.iter().find(|worktree| {
+                worktree.path != expected_path && worktree.path.starts_with(&capsule)
+            });
+            let workspace_metadata = std::fs::symlink_metadata(&expected_path).ok();
+            let workspace_is_directory = workspace_metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata.file_type().is_dir());
+
+            if !record.is_archived() && !self.is_full_commit(&record.base_oid) {
+                findings.push(format!(
+                    "{label}: creation base '{}' is not an available commit",
+                    record.base_oid
+                ));
+            }
+            if record.parent.as_deref().is_some_and(str::is_empty) {
+                findings.push(format!("{label}: creation parent is empty"));
+            }
+
+            if record.is_active() {
+                match worktree {
+                    Some(worktree) if worktree.prunable || workspace_metadata.is_none() => findings
+                        .push(format!(
+                            "{label}: worktree registration is stale at {}",
+                            expected_path.display()
+                        )),
+                    Some(_) if !workspace_is_directory => findings.push(format!(
+                        "{label}: workspace path is not a directory: {}",
+                        expected_path.display()
+                    )),
+                    Some(_) => {}
+                    None => {
+                        if let Some(wrong_path) = wrong_path {
+                            findings.push(format!(
+                                "{label}: worktree is registered at the wrong path {}",
+                                wrong_path.path.display()
+                            ));
+                        } else if workspace_metadata.is_some() && !workspace_is_directory {
+                            findings.push(format!(
+                                "{label}: workspace path is not a directory: {}",
+                                expected_path.display()
+                            ));
+                        } else if workspace_metadata.is_some() {
+                            findings.push(format!(
+                                "{label}: workspace exists but is not registered with Git"
+                            ));
+                        } else {
+                            findings.push(format!(
+                                "{label}: workspace and Git worktree registration are missing"
+                            ));
+                        }
+                    }
+                }
+            } else if record.is_closing() {
+                findings.push(format!("{label}: interrupted archive needs recovery"));
+                if let Some(closing) = record.closing() {
+                    if closing.target_oid.is_some() != closing.target_ref.is_some() {
+                        findings.push(format!(
+                            "{label}: interrupted archive has an incomplete integration target"
+                        ));
+                    }
+                    if !self.is_full_commit(&closing.tip_oid) {
+                        findings.push(format!(
+                            "{label}: archived tip '{}' is not an available commit",
+                            closing.tip_oid
+                        ));
+                    }
+                    if let Some(target_oid) = &closing.target_oid
+                        && !self.is_full_commit(target_oid)
+                    {
+                        findings.push(format!(
+                            "{label}: archive target '{target_oid}' is not an available commit"
+                        ));
+                    }
+                }
+            } else if record.is_archived()
+                && (worktree.is_some() || wrong_path.is_some() || workspace_metadata.is_some())
+            {
+                findings.push(format!(
+                    "{label}: archived Change still has a workspace or worktree registration"
+                ));
+            }
+
+            self.diagnose_publication(&record, worktree, &label, &mut findings)?;
+        }
+
+        Ok(findings)
+    }
+
+    fn diagnose_publication(
+        &self,
+        record: &Record,
+        worktree: Option<&Worktree>,
+        label: &str,
+        findings: &mut Vec<String>,
+    ) -> Result<()> {
+        let Some(branch) = record.publication_branch.as_deref() else {
+            if record.published_oid.is_some() {
+                findings.push(format!(
+                    "{label}: published commit is recorded without a publication branch"
+                ));
+            }
+            return Ok(());
+        };
+
+        let branch_matches = match record.title.as_deref() {
+            Some(title) => match publication_branch_base(title) {
+                Ok(base) => branch == base || branch == format!("{base}-{}", record.id),
+                Err(_) => {
+                    findings.push(format!(
+                        "{label}: Change Title cannot form a publication branch"
+                    ));
+                    false
+                }
+            },
+            None => {
+                findings.push(format!(
+                    "{label}: publication branch is recorded for an untitled Change"
+                ));
+                false
+            }
+        };
+        if !branch_matches {
+            findings.push(format!(
+                "{label}: publication branch '{branch}' does not match the Change Title"
+            ));
+        }
+
+        if record.is_archived() {
+            return Ok(());
+        }
+        let published_available = record.published_oid.as_deref().is_some_and(|oid| {
+            if self.is_full_commit(oid) {
+                true
+            } else {
+                findings.push(format!(
+                    "{label}: published commit '{oid}' is not available locally"
+                ));
+                false
+            }
+        });
+
+        if !record.is_active() || !branch_matches {
+            return Ok(());
+        }
+        if !self.branch_exists(branch)? {
+            findings.push(format!(
+                "{label}: publication branch '{branch}' is missing locally"
+            ));
+            return Ok(());
+        }
+        let branch_oid = self.peel_commit(&format!("refs/heads/{branch}"))?;
+        if let Some(worktree) = worktree.filter(|worktree| !worktree.prunable) {
+            if !self.is_ancestor(&branch_oid, &worktree.head_oid)? {
+                findings.push(format!(
+                    "{label}: publication branch '{branch}' is not an ancestor of Change HEAD"
+                ));
+            }
+            if let Some(published_oid) = record.published_oid.as_deref()
+                && published_available
+                && !self.is_ancestor(published_oid, &worktree.head_oid)?
+            {
+                findings.push(format!(
+                    "{label}: published commit is not an ancestor of Change HEAD"
+                ));
+            }
+        }
+        if let Some(published_oid) = record.published_oid.as_deref()
+            && published_available
+            && !self.is_ancestor(published_oid, &branch_oid)?
+        {
+            findings.push(format!(
+                "{label}: publication branch no longer contains the published commit"
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn current_path(&self) -> Result<PathBuf> {
@@ -1802,10 +2000,14 @@ impl Git {
     }
 
     fn raw_at(&self, cwd: &Path, args: &[&str]) -> Result<Output> {
-        Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
+        let mut command = Command::new("git");
+        command.arg("-C").arg(cwd).args(args);
+        if self.local_only {
+            command
+                .env("GIT_NO_LAZY_FETCH", "1")
+                .env("GIT_OPTIONAL_LOCKS", "0");
+        }
+        command
             .output()
             .with_context(|| format!("could not run git {}", args.join(" ")))
     }
@@ -1830,6 +2032,16 @@ fn managed_worktree<'a>(worktrees: &'a [Worktree], expected_path: &Path) -> Opti
     worktrees
         .iter()
         .find(|worktree| worktree.path == expected_path)
+}
+
+fn record_label(record: &Record) -> String {
+    record
+        .title
+        .as_deref()
+        .map(display_text)
+        .filter(|title| !title.is_empty())
+        .map(|title| format!("{title} · {}", record.id))
+        .unwrap_or_else(|| record.id.clone())
 }
 
 fn abbreviate_oid(oid: &str) -> String {

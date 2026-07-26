@@ -10,7 +10,7 @@ use support::{
 fn command_and_shell_navigation_is_one_coherent_workflow() {
     let repo = TestRepo::new();
     let help = stdout(repo.grove().arg("--help").assert().success().get_output());
-    for command in ["new", "sync", "ship", "archive", "init"] {
+    for command in ["new", "sync", "ship", "archive", "doctor", "init"] {
         assert!(help.contains(command), "{help}");
     }
     for (command, usage, flag) in [

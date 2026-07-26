@@ -11,6 +11,7 @@ grove new
 grove          # find a Change, resume Pi, or navigate workspaces
 grove ship     # have Pi commit, push, and open or update a pull request
 grove archive  # archive the current Change, or pick one from the primary checkout
+grove doctor   # inspect local Grove and Git state without changing it
 ```
 
 See [VISION.md](VISION.md) for the product direction.
@@ -23,6 +24,7 @@ grove new [--from REF]
 grove sync
 grove ship
 grove archive [--force]
+grove doctor
 grove init fish|zsh
 ```
 
@@ -100,6 +102,13 @@ unmerged work, including unique content hidden in a merge resolution. `--force`
 explicitly and irreversibly discards that work, but never overrides a Git
 worktree lock. Both paths delete an attached local branch without a configured
 upstream; tracking branches are preserved.
+
+`doctor` performs a local, read-only inspection of every Change capsule. It
+reports malformed or incomplete records, missing, stale, or misplaced worktree
+registrations, interrupted archives, inconsistent local publication state,
+unsafe permissions, and unusable existing lock files. It performs no repair,
+network access, or provider lookup, continues after individual findings, and
+exits unsuccessfully when it finds a problem.
 
 Navigator shell actions write a navigation directive for the calling shell.
 They preserve the current relative subdirectory when that directory exists in
@@ -199,8 +208,9 @@ network activity.
 `change.json` deliberately has no schema-version field or runtime migration
 machinery. During pre-1.0 development, incompatible records remain untouched
 and unavailable until an explicit one-off conversion; Pi sessions remain
-untouched. A future diagnostic command may explain and repair local state, but
-ordinary commands will never migrate it implicitly.
+untouched. `grove doctor` explains incompatible local state without changing
+it. Ordinary commands never migrate it implicitly; any future repairs remain
+explicit.
 
 ## Shell setup
 
