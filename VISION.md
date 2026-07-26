@@ -57,11 +57,11 @@ preserves tracking branches, honors worktree and activity locks, rejects active
 Git operations, and records only the facts needed to finish an interrupted
 removal safely.
 
-## Next: make local state legible
+## Current foundation: make local state legible
 
-Reliability should come before a broader workflow surface. One deliberately
-narrow new command, `grove doctor`, should inspect Grove and Git state without
-changing it by default. It should explain:
+Reliability comes before a broader workflow surface. The deliberately narrow
+`grove doctor` command inspects local Grove and Git state without changing it.
+It explains:
 
 - malformed or incomplete Change records;
 - capsules whose worktrees are missing, stale, or registered at the wrong path;
@@ -79,8 +79,8 @@ state, it should validate again immediately before replacement and preserve a
 private rollback copy. One-off development conversions belong in one-off tools,
 not in every future Grove invocation.
 
-This work is complete when corruption or an intentional clean break produces one
-useful diagnosis and no source, session, branch, or worktree is silently lost.
+Corruption or an intentional clean break should produce one useful diagnosis;
+source, sessions, branches, and worktrees remain untouched.
 
 ## Next product direction: begin from intent
 

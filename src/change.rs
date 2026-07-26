@@ -7,7 +7,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,148 @@ impl RepositoryDirectory {
     pub(crate) fn record(&self, id: &str) -> Result<Option<(PathBuf, Record)>> {
         let capsule = self.path.join(id);
         Ok(Record::load_optional(&capsule.join("change.json"))?.map(|record| (capsule, record)))
+    }
+
+    pub(crate) fn inspect(&self) -> Result<RepositoryInspection> {
+        let mut inspection = RepositoryInspection::default();
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(inspection),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to inspect Grove changes {}", self.path.display())
+                });
+            }
+        };
+        if !metadata.file_type().is_dir() {
+            inspection.findings.push(format!(
+                "Grove repository directory is not a directory: {}",
+                self.path.display()
+            ));
+            return Ok(inspection);
+        }
+        inspect_private_directory(
+            &self.path,
+            "Grove repository directory",
+            &mut inspection.findings,
+        );
+        let entries = fs::read_dir(&self.path)
+            .with_context(|| format!("failed to read Grove changes {}", self.path.display()))?;
+        let mut entries = entries
+            .collect::<std::io::Result<Vec<_>>>()
+            .with_context(|| format!("failed to read Grove change in {}", self.path.display()))?;
+        entries.sort_by_key(fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("failed to inspect {}", path.display()))?;
+            if !file_type.is_dir() {
+                inspection
+                    .findings
+                    .push(format!("{name}: capsule is not a directory"));
+                continue;
+            }
+            inspect_private_directory(&path, &name, &mut inspection.findings);
+            for lock in [".activity.lock", ".metadata.lock"] {
+                inspect_lock(&path.join(lock), &name, &mut inspection.findings);
+            }
+            let record_path = path.join("change.json");
+            if !inspect_private_file(&record_path, &name, "change.json", &mut inspection.findings) {
+                continue;
+            }
+            let record = match Record::load_optional(&record_path) {
+                Ok(Some(record)) => record,
+                Ok(None) => {
+                    inspection
+                        .findings
+                        .push(format!("{name}: change.json is missing"));
+                    continue;
+                }
+                Err(error) => {
+                    inspection.findings.push(format!("{name}: {error:#}"));
+                    continue;
+                }
+            };
+            if entry.file_name() != std::ffi::OsStr::new(&record.id) {
+                inspection.findings.push(format!(
+                    "{name}: Change ID '{}' does not match the capsule name",
+                    record.id
+                ));
+                continue;
+            }
+            inspection.records.push((path, record));
+        }
+        Ok(inspection)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct RepositoryInspection {
+    pub(crate) records: Vec<(PathBuf, Record)>,
+    pub(crate) findings: Vec<String>,
+}
+
+#[cfg(unix)]
+fn inspect_private_directory(path: &Path, label: &str, findings: &mut Vec<String>) {
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && metadata.permissions().mode() & 0o077 != 0
+    {
+        findings.push(format!(
+            "{label}: unsafe permissions {:03o} on {}",
+            metadata.permissions().mode() & 0o777,
+            path.display()
+        ));
+    }
+}
+
+#[cfg(not(unix))]
+fn inspect_private_directory(_path: &Path, _label: &str, _findings: &mut Vec<String>) {}
+
+fn inspect_private_file(path: &Path, label: &str, kind: &str, findings: &mut Vec<String>) -> bool {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(error) => {
+            findings.push(format!("{label}: cannot inspect {kind}: {error}"));
+            return false;
+        }
+    };
+    if !metadata.file_type().is_file() {
+        findings.push(format!("{label}: {kind} is not a regular file"));
+        return false;
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        findings.push(format!(
+            "{label}: unsafe permissions {:03o} on {kind}",
+            metadata.permissions().mode() & 0o777
+        ));
+    }
+    true
+}
+
+fn inspect_lock(path: &Path, label: &str, findings: &mut Vec<String>) {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            findings.push(format!(
+                "{label}: cannot inspect {}: {error}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            return;
+        }
+    };
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    if !metadata.file_type().is_file() {
+        findings.push(format!("{label}: {name} is not a regular file"));
+        return;
+    }
+    inspect_private_file(path, label, &name, findings);
+    if let Err(error) = OpenOptions::new().read(true).write(true).open(path) {
+        findings.push(format!("{label}: cannot open {name}: {error}"));
     }
 }
 
@@ -119,6 +261,10 @@ impl Record {
 
     pub(crate) fn is_closing(&self) -> bool {
         matches!(self.lifecycle, Lifecycle::Closing { .. })
+    }
+
+    pub(crate) fn is_archived(&self) -> bool {
+        matches!(self.lifecycle, Lifecycle::Archived { .. })
     }
 
     pub(crate) fn closing(&self) -> Option<&Closing> {

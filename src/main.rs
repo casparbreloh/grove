@@ -1,5 +1,6 @@
 mod archive;
 mod change;
+mod doctor;
 mod git;
 mod init;
 mod navigator;
@@ -46,6 +47,8 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Diagnose local Grove and Git state without changing it
+    Doctor,
     /// Print shell integration and completions
     Init { shell: Shell },
     #[command(name = "__title", hide = true)]
@@ -88,6 +91,7 @@ fn run() -> Result<()> {
         Some(Cmd::Sync) => sync::run(&Git::discover()?),
         Some(Cmd::Ship) => ship::run(&Git::discover()?),
         Some(Cmd::Archive { force }) => archive::run(&Git::discover()?, force),
+        Some(Cmd::Doctor) => doctor::run(&Git::discover()?),
         Some(Cmd::Init { shell }) => init::run(shell),
         Some(Cmd::Title { change, apply }) => {
             if apply {
