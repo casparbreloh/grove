@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::{change::publication_branch_base, git::Git, session};
 
-pub(crate) fn run(git: &Git) -> Result<()> {
+pub(crate) fn run_ship(git: &Git) -> Result<()> {
     let change = git
         .current_change()?
         .context("current workspace is not a managed Grove Change")?;

@@ -47,7 +47,7 @@ fn sync_fetches_main_archives_integrated_and_rebases_every_other_change() {
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        "Archived Integrated Change\nRebased Remaining Change\n"
+        "✓ Archived Integrated Change\n✓ Rebased Remaining Change\n"
     );
     assert_eq!(repo.git(["rev-parse", "main"]), upstream);
     assert_eq!(
@@ -108,7 +108,7 @@ fn sync_leaves_published_changes_untouched_and_runs_only_from_main() {
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        format!("Rebased Shared Title · {}\n", &unpublished.id[..8])
+        format!("✓ Rebased Shared Title · {}\n", &unpublished.id[..8])
     );
     assert_eq!(repo.change_head(&published), published_tip);
     assert_ne!(repo.change_head(&unpublished), unpublished_before);
@@ -208,7 +208,7 @@ fn sync_reports_restored_conflicts_but_continues_rebasing_other_changes() {
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        "Rebased Later Change\nCould not rebase Conflicting Change; restored unchanged\nError: sync encountered 1 rebase conflict\n"
+        "✓ Rebased Later Change\n! Could not rebase Conflicting Change; restored unchanged\nerror: sync encountered 1 rebase conflict\n"
     );
     assert_eq!(repo.change_head(&conflicting), conflicting_head);
     assert_eq!(

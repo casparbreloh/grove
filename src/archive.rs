@@ -3,10 +3,13 @@ use anyhow::{Context, Result, bail};
 use crate::{
     change,
     git::Git,
-    navigator::{change_rows, destination, navigate, pick, require_shell_navigation},
+    navigator::{
+        build_change_rows, navigate_calling_shell, pick_change, require_shell_navigation,
+        workspace_destination,
+    },
 };
 
-pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
+pub(crate) fn run_archive(git: &Git, force: bool) -> Result<()> {
     let current = git.current_path()?;
     let primary = git.primary_path()?;
     if current != primary {
@@ -17,16 +20,17 @@ pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
     }
     let recovered = git.recover_closing_archives()?;
     if recovered > 0 {
-        eprintln!("✓ Finished interrupted archives: {recovered}");
+        let suffix = if recovered == 1 { "" } else { "s" };
+        eprintln!("✓ Recovered {recovered} interrupted archive{suffix}");
     }
-    let rows = change_rows(git)?;
+    let rows = build_change_rows(git)?;
     let selected = if let Some(current) = rows.iter().find(|row| row.is_current()) {
         Some(current.clone())
     } else if current == primary {
         if recovered > 0 && rows.is_empty() {
             return Ok(());
         }
-        pick(rows)?
+        pick_change(rows)?
     } else {
         bail!("current workspace is not a managed Grove Change");
     };
@@ -34,7 +38,7 @@ pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
         return Ok(());
     };
     let archive_destination = if selected.workspace() == current {
-        Some(destination(git, &primary)?)
+        Some(workspace_destination(git, &primary)?)
     } else {
         None
     };
@@ -50,7 +54,7 @@ pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
     git.finish_archive(prepared)?;
     eprintln!("✓ Archived {}", selected.title_label());
     if let Some(path) = archive_destination {
-        navigate(&path)?;
+        navigate_calling_shell(&path)?;
     }
     Ok(())
 }

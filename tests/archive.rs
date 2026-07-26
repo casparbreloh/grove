@@ -171,8 +171,8 @@ fn interrupted_recovery_does_not_consume_the_requested_archive() {
 
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(
-        stderr(&output).contains("Finished interrupted archives: 1")
-            && stderr(&output).contains("Archived Archive Requested Change"),
+        stderr(&output).contains("✓ Recovered 1 interrupted archive\n")
+            && stderr(&output).contains("✓ Archived Archive Requested Change\n"),
         "{}",
         stderr(&output)
     );

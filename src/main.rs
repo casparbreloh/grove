@@ -15,16 +15,16 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use crate::git::Git;
 
 #[derive(Parser)]
-struct Cli {
+struct GroveCli {
     #[arg(long, hide = true)]
     usage_spec: bool,
 
     #[command(subcommand)]
-    command: Option<Cmd>,
+    command: Option<GroveCommand>,
 }
 
 #[derive(Subcommand)]
-enum Cmd {
+enum GroveCommand {
     /// Create a Change workspace and open Pi
     ///
     /// Managed Pi makes an additional, asynchronous provider request from the
@@ -50,7 +50,7 @@ enum Cmd {
     /// Diagnose local Grove and Git state without changing it
     Doctor,
     /// Print shell integration and completions
-    Init { shell: Shell },
+    Init { shell: ShellKind },
     #[command(name = "__title", hide = true)]
     Title {
         #[arg(long)]
@@ -61,7 +61,7 @@ enum Cmd {
 }
 
 #[derive(Clone, ValueEnum)]
-enum Shell {
+enum ShellKind {
     Fish,
     Zsh,
 }
@@ -70,30 +70,30 @@ fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Error: {}", change::display_text(&format!("{error:#}")));
+            eprintln!("error: {}", change::display_text(&format!("{error:#}")));
             std::process::ExitCode::FAILURE
         }
     }
 }
 
 fn run() -> Result<()> {
-    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
+    clap_complete::CompleteEnv::with_factory(GroveCli::command).complete();
 
-    let cli = Cli::parse();
+    let cli = GroveCli::parse();
     if cli.usage_spec {
-        clap_usage::generate(&mut Cli::command(), "grove", &mut std::io::stdout());
+        clap_usage::generate(&mut GroveCli::command(), "grove", &mut std::io::stdout());
         return Ok(());
     }
 
     match cli.command {
-        None => navigator::run(&Git::discover()?),
-        Some(Cmd::New { from }) => new::run(&Git::discover()?, from.as_deref()),
-        Some(Cmd::Sync) => sync::run(&Git::discover()?),
-        Some(Cmd::Ship) => ship::run(&Git::discover()?),
-        Some(Cmd::Archive { force }) => archive::run(&Git::discover()?, force),
-        Some(Cmd::Doctor) => doctor::run(&Git::discover()?),
-        Some(Cmd::Init { shell }) => init::run(shell),
-        Some(Cmd::Title { change, apply }) => {
+        None => navigator::run_navigator(&Git::discover()?),
+        Some(GroveCommand::New { from }) => new::run_new(&Git::discover()?, from.as_deref()),
+        Some(GroveCommand::Sync) => sync::run_sync(&Git::discover()?),
+        Some(GroveCommand::Ship) => ship::run_ship(&Git::discover()?),
+        Some(GroveCommand::Archive { force }) => archive::run_archive(&Git::discover()?, force),
+        Some(GroveCommand::Doctor) => doctor::run_doctor(&Git::discover()?),
+        Some(GroveCommand::Init { shell }) => init::run_init(shell),
+        Some(GroveCommand::Title { change, apply }) => {
             if apply {
                 session::apply_change_title(&change)
             } else {

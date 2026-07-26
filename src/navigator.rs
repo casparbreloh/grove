@@ -14,18 +14,18 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     change::{display_safe, display_text, title_labels},
-    git::{self, Git, WorktreeState},
+    git::{self, ChangeWorkspaceState, Git},
     session,
 };
 
 enum NavigatorAction {
-    Pi(Row),
-    Workspace(Row),
+    Pi(ChangeRow),
+    Workspace(ChangeRow),
     Main,
 }
 
-pub(crate) fn run(git: &Git) -> Result<()> {
-    let rows = change_rows(git)?;
+pub(crate) fn run_navigator(git: &Git) -> Result<()> {
+    let rows = build_change_rows(git)?;
     let main = main_row(git)?;
     let Some(action) = navigate_interactively(main, rows)? else {
         return Ok(());
@@ -38,21 +38,21 @@ pub(crate) fn run(git: &Git) -> Result<()> {
                 row.title_label,
                 display_text(&row.worktree_path.display().to_string())
             );
-            session::attach(&row.worktree_path)
+            session::attach_pi_session(&row.worktree_path)
         }
         NavigatorAction::Workspace(row) => {
             row.require_available()?;
-            let destination = destination(git, &row.worktree_path)?;
-            navigate(&destination)
+            let destination = workspace_destination(git, &row.worktree_path)?;
+            navigate_calling_shell(&destination)
         }
         NavigatorAction::Main => {
-            let destination = destination(git, &git.primary_path()?)?;
-            navigate(&destination)
+            let destination = workspace_destination(git, &git.primary_path()?)?;
+            navigate_calling_shell(&destination)
         }
     }
 }
 
-pub(crate) fn destination(git: &Git, destination_root: &Path) -> Result<PathBuf> {
+pub(crate) fn workspace_destination(git: &Git, destination_root: &Path) -> Result<PathBuf> {
     if !destination_root.is_dir() {
         bail!("workspace is missing: {}", destination_root.display());
     }
@@ -69,7 +69,7 @@ pub(crate) fn destination(git: &Git, destination_root: &Path) -> Result<PathBuf>
     })
 }
 
-pub(crate) fn navigate(path: &Path) -> Result<()> {
+pub(crate) fn navigate_calling_shell(path: &Path) -> Result<()> {
     let file = shell_navigation_file()?;
     std::fs::write(&file, path.as_os_str().as_encoded_bytes()).with_context(|| {
         format!(
@@ -104,7 +104,10 @@ fn shell_navigation_file() -> Result<PathBuf> {
         )
 }
 
-fn navigate_interactively(main: Row, rows: Vec<Row>) -> Result<Option<NavigatorAction>> {
+fn navigate_interactively(
+    main: ChangeRow,
+    rows: Vec<ChangeRow>,
+) -> Result<Option<NavigatorAction>> {
     let stderr = std::io::stderr();
     if !std::io::stdin().is_terminal() || !stderr.is_terminal() {
         bail!("interactive Change navigation requires a terminal");
@@ -122,8 +125,8 @@ fn navigate_interactively(main: Row, rows: Vec<Row>) -> Result<Option<NavigatorA
 
 fn navigate_raw(
     output: &mut impl Write,
-    main: &Row,
-    rows: &[Row],
+    main: &ChangeRow,
+    rows: &[ChangeRow],
     rendered_lines: &mut usize,
 ) -> Result<Option<NavigatorAction>> {
     let mut selected = 0;
@@ -162,7 +165,7 @@ fn navigate_raw(
     }
 }
 
-fn navigator_action(rows: &[Row], selected: usize, shell: bool) -> Option<NavigatorAction> {
+fn navigator_action(rows: &[ChangeRow], selected: usize, shell: bool) -> Option<NavigatorAction> {
     if selected == 0 {
         return Some(NavigatorAction::Main);
     }
@@ -193,8 +196,8 @@ fn navigator_styling() -> bool {
 
 fn redraw_navigator(
     output: &mut impl Write,
-    main: &Row,
-    rows: &[Row],
+    main: &ChangeRow,
+    rows: &[ChangeRow],
     selected: usize,
     rendered_lines: &mut usize,
 ) -> Result<()> {
@@ -218,8 +221,8 @@ fn clear_rendered(output: &mut impl Write, rendered_lines: usize) -> std::io::Re
 
 fn render_navigator(
     output: &mut impl Write,
-    main: &Row,
-    rows: &[Row],
+    main: &ChangeRow,
+    rows: &[ChangeRow],
     selected: usize,
 ) -> Result<usize> {
     let (max_width, height) = navigator_dimensions();
@@ -241,13 +244,15 @@ fn render_navigator(
             .map(|(index, row)| (start + index + 1, *row)),
     );
     let layout_rows = visible.iter().map(|(_, row)| *row).collect::<Vec<_>>();
-    let layout = TableLayout::new(&layout_rows, max_width, 2);
+    let layout = TableLayout::new(&layout_rows, max_width);
     writeln!(output, "{}\r", bold(&layout.header(), styled))?;
     for (logical_index, row) in visible {
         writeln!(output, "{}\r", layout.row(row, logical_index == selected))?;
     }
     Ok(layout_rows.len() + 1)
 }
+
+const TABLE_LEADING_WIDTH: usize = 2;
 
 struct TableLayout {
     leading_width: usize,
@@ -257,7 +262,8 @@ struct TableLayout {
 }
 
 impl TableLayout {
-    fn new(rows: &[&Row], max_width: usize, leading_width: usize) -> Self {
+    fn new(rows: &[&ChangeRow], max_width: usize) -> Self {
+        let leading_width = TABLE_LEADING_WIDTH;
         let mut title_width = measured_width(rows, "Title", |row| &row.title_label);
         let column_widths = [
             measured_width(rows, "Base", |row| &row.base),
@@ -300,13 +306,13 @@ impl TableLayout {
         header
     }
 
-    fn row(&self, row: &Row, selected: bool) -> String {
+    fn row(&self, row: &ChangeRow, selected: bool) -> String {
         let (title, mut metadata) = self.title(row);
         self.push_columns(&mut metadata, row_values(row));
         format!("{} {title}{metadata}", if selected { '›' } else { ' ' })
     }
 
-    fn title(&self, row: &Row) -> (String, String) {
+    fn title(&self, row: &ChangeRow) -> (String, String) {
         let suffix = row
             .change_id
             .as_deref()
@@ -319,12 +325,12 @@ impl TableLayout {
                 .strip_suffix(&suffix)
                 .unwrap_or(&row.title_label)
                 .to_owned(),
-            Some(self.title_width.saturating_sub(suffix_width)),
+            self.title_width.saturating_sub(suffix_width),
         );
         let used = UnicodeWidthStr::width(title.as_str()) + suffix_width;
         let metadata = format!(
             "{}{}",
-            fit_width(suffix, Some(suffix_width)),
+            fit_width(suffix, suffix_width),
             " ".repeat(self.title_width.saturating_sub(used))
         );
         (title, metadata)
@@ -338,11 +344,15 @@ impl TableLayout {
     }
 }
 
-fn row_values(row: &Row) -> [&str; 4] {
+fn row_values(row: &ChangeRow) -> [&str; 4] {
     [&row.base, &row.changes, &row.divergence, &row.path]
 }
 
-fn measured_width<'a>(rows: &'a [&Row], header: &str, value: impl Fn(&'a Row) -> &'a str) -> usize {
+fn measured_width<'a>(
+    rows: &'a [&ChangeRow],
+    header: &str,
+    value: impl Fn(&'a ChangeRow) -> &'a str,
+) -> usize {
     rows.iter()
         .copied()
         .map(value)
@@ -352,7 +362,7 @@ fn measured_width<'a>(rows: &'a [&Row], header: &str, value: impl Fn(&'a Row) ->
         .max(UnicodeWidthStr::width(header))
 }
 
-pub(crate) fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
+pub(crate) fn pick_change(choices: Vec<ChangeRow>) -> Result<Option<ChangeRow>> {
     if choices.is_empty() {
         bail!("no active changes to archive");
     }
@@ -364,14 +374,14 @@ pub(crate) fn pick(choices: Vec<Row>) -> Result<Option<Row>> {
     select(&mut output, &choices)
 }
 
-fn select(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
+fn select(output: &mut impl Write, choices: &[ChangeRow]) -> Result<Option<ChangeRow>> {
     let mut mode = TerminalMode::enter(output)?;
     let selection = select_raw(mode.output(), choices);
     mode.restore()?;
     selection
 }
 
-fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
+fn select_raw(output: &mut impl Write, choices: &[ChangeRow]) -> Result<Option<ChangeRow>> {
     let mut selected = 0;
     let mut rendered_lines = render_picker(output, choices, selected)?;
     output.flush()?;
@@ -404,7 +414,7 @@ fn select_raw(output: &mut impl Write, choices: &[Row]) -> Result<Option<Row>> {
     }
 }
 
-fn render_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> Result<usize> {
+fn render_picker(output: &mut impl Write, rows: &[ChangeRow], selected: usize) -> Result<usize> {
     let (columns, height) = terminal::size().unwrap_or((80, 24));
     if height < 3 {
         bail!("interactive Change selection requires at least 3 terminal rows");
@@ -413,7 +423,7 @@ fn render_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> Resu
     let start = selected.saturating_sub(capacity.saturating_sub(1));
     let visible = &rows[start..rows.len().min(start + capacity)];
     let rows = visible.iter().collect::<Vec<_>>();
-    let layout = TableLayout::new(&rows, usize::from(columns.saturating_sub(1)), 2);
+    let layout = TableLayout::new(&rows, usize::from(columns.saturating_sub(1)));
     writeln!(output, "{}\r", bold(&layout.header(), navigator_styling()))?;
     for (index, row) in rows.into_iter().enumerate() {
         writeln!(output, "{}\r", layout.row(row, start + index == selected))?;
@@ -423,7 +433,7 @@ fn render_picker(output: &mut impl Write, rows: &[Row], selected: usize) -> Resu
 
 fn redraw_picker(
     output: &mut impl Write,
-    rows: &[Row],
+    rows: &[ChangeRow],
     selected: usize,
     rendered_lines: &mut usize,
 ) -> Result<()> {
@@ -483,7 +493,7 @@ impl<W: Write> Drop for TerminalMode<'_, W> {
     }
 }
 
-pub(crate) fn change_rows(git: &Git) -> Result<Vec<Row>> {
+pub(crate) fn build_change_rows(git: &Git) -> Result<Vec<ChangeRow>> {
     let worktrees = git.inventory()?;
     let current = git.current_path()?;
     let labels = title_labels(
@@ -495,10 +505,10 @@ pub(crate) fn change_rows(git: &Git) -> Result<Vec<Row>> {
     let mut rows = Vec::new();
     for (worktree, title_label) in worktrees.iter().zip(labels) {
         let (available, changes) = match &worktree.state {
-            WorktreeState::Missing => (false, "missing".to_owned()),
-            WorktreeState::Present(status) => (true, format_changes(status)),
+            ChangeWorkspaceState::Missing => (false, "missing".to_owned()),
+            ChangeWorkspaceState::Present(status) => (true, format_changes(status)),
         };
-        rows.push(Row {
+        rows.push(ChangeRow {
             current: worktree.current,
             available,
             change_id: Some(worktree.id.clone()),
@@ -517,10 +527,10 @@ pub(crate) fn change_rows(git: &Git) -> Result<Vec<Row>> {
     Ok(rows)
 }
 
-fn main_row(git: &Git) -> Result<Row> {
+fn main_row(git: &Git) -> Result<ChangeRow> {
     let current = git.current_path()?;
     let primary = git.primary_path()?;
-    Ok(Row {
+    Ok(ChangeRow {
         current: current == primary,
         available: true,
         change_id: None,
@@ -534,7 +544,7 @@ fn main_row(git: &Git) -> Result<Row> {
 }
 
 #[derive(Clone)]
-pub(crate) struct Row {
+pub(crate) struct ChangeRow {
     current: bool,
     available: bool,
     change_id: Option<String>,
@@ -546,7 +556,7 @@ pub(crate) struct Row {
     path: String,
 }
 
-impl Row {
+impl ChangeRow {
     fn require_available(&self) -> Result<()> {
         if !self.available || !self.worktree_path.is_dir() {
             bail!(
@@ -574,29 +584,29 @@ impl Row {
     }
 }
 
-fn format_changes(status: &git::Status) -> String {
+fn format_changes(status: &git::WorkspaceStatus) -> String {
     let mut parts = Vec::new();
-    if status.added > 0 {
-        parts.push(format!("+{}", status.added));
+    if status.added_lines > 0 {
+        parts.push(format!("+{}", status.added_lines));
     }
-    if status.deleted > 0 {
-        parts.push(format!("-{}", status.deleted));
+    if status.deleted_lines > 0 {
+        parts.push(format!("-{}", status.deleted_lines));
     }
-    if status.untracked > 0 {
-        parts.push(format!("?{}", status.untracked));
+    if status.untracked_files > 0 {
+        parts.push(format!("?{}", status.untracked_files));
     }
-    if status.conflicts > 0 {
-        let label = if status.conflicts == 1 {
+    if status.conflicted_files > 0 {
+        let label = if status.conflicted_files == 1 {
             "conflict"
         } else {
             "conflicts"
         };
-        parts.push(format!("{} {label}", status.conflicts));
+        parts.push(format!("{} {label}", status.conflicted_files));
     }
     parts.join(" ")
 }
 
-fn format_divergence(divergence: &git::Divergence) -> String {
+fn format_divergence(divergence: &git::BranchDivergence) -> String {
     match (divergence.ahead, divergence.behind) {
         (0, 0) => String::new(),
         (ahead, 0) => format!("↑{ahead}"),
@@ -616,11 +626,8 @@ fn padded(value: &str, width: usize) -> String {
     )
 }
 
-pub(crate) fn fit_width(mut value: String, max_width: Option<usize>) -> String {
+fn fit_width(mut value: String, max_width: usize) -> String {
     value.retain(display_safe);
-    let Some(max_width) = max_width else {
-        return value;
-    };
     if UnicodeWidthStr::width(value.as_str()) <= max_width {
         return value;
     }

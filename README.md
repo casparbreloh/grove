@@ -62,8 +62,11 @@ Published Changes are never rebased. Dirty, busy, Git-locked, missing, or
 invalid-lineage Changes remain untouched and unreported. If a rebase conflicts,
 Grove aborts it, restores the Change exactly, reports the conflict, and continues
 synchronizing the other Changes before exiting unsuccessfully. Normal output
-reports only Changes that were archived or rebased. `sync` must be run from the
-primary worktree.
+reports only Changes that were archived or rebased. Completed milestones use
+`✓`, recoverable conditions use `!`, and fatal errors use `error:`. Progress and
+interaction go to stderr. Primary results stay on stdout: the ship URL, doctor
+report, shell integration, and internal title output. `sync` must be run from
+the primary worktree.
 
 `ship` runs only from the current managed Change. Grove refuses unresolved Git
 operations, untitled Changes, missing push remotes, local-only remotes,

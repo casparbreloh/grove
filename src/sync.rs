@@ -7,7 +7,7 @@ use crate::{
     git::{Git, SyncAction},
 };
 
-pub(crate) fn run(git: &Git) -> Result<()> {
+pub(crate) fn run_sync(git: &Git) -> Result<()> {
     let entries = git.sync()?;
     let labels = title_labels(
         entries
@@ -37,10 +37,10 @@ pub(crate) fn run(git: &Git) -> Result<()> {
     let mut output = std::io::stderr().lock();
     for (_, label, action) in rows {
         match action {
-            SyncAction::Archived => writeln!(output, "Archived {label}")?,
-            SyncAction::Rebased => writeln!(output, "Rebased {label}")?,
+            SyncAction::Archived => writeln!(output, "✓ Archived {label}")?,
+            SyncAction::Rebased => writeln!(output, "✓ Rebased {label}")?,
             SyncAction::ConflictRestored => {
-                writeln!(output, "Could not rebase {label}; restored unchanged")?
+                writeln!(output, "! Could not rebase {label}; restored unchanged")?
             }
         }
     }

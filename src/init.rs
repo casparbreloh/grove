@@ -1,17 +1,17 @@
 use std::io::Write;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap_complete::env::{EnvCompleter, Fish as FishCompleter, Zsh as ZshCompleter};
 
-use crate::Shell;
+use crate::ShellKind;
 
-pub(crate) fn run(shell: Shell) -> Result<()> {
-    let executable = std::env::current_exe()?;
+pub(crate) fn run_init(shell: ShellKind) -> Result<()> {
+    let executable = std::env::current_exe().context("failed to locate the Grove executable")?;
     let executable = executable.to_string_lossy();
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
     match shell {
-        Shell::Fish => {
+        ShellKind::Fish => {
             FishCompleter.write_registration(
                 "COMPLETE",
                 "grove",
@@ -19,9 +19,11 @@ pub(crate) fn run(shell: Shell) -> Result<()> {
                 &executable,
                 &mut output,
             )?;
-            output.write_all(include_bytes!("shell.fish"))?;
+            output
+                .write_all(include_bytes!("shell.fish"))
+                .context("failed to write Fish integration")?;
         }
-        Shell::Zsh => {
+        ShellKind::Zsh => {
             ZshCompleter.write_registration(
                 "COMPLETE",
                 "grove",
@@ -29,7 +31,9 @@ pub(crate) fn run(shell: Shell) -> Result<()> {
                 &executable,
                 &mut output,
             )?;
-            output.write_all(include_bytes!("shell.zsh"))?;
+            output
+                .write_all(include_bytes!("shell.zsh"))
+                .context("failed to write Zsh integration")?;
         }
     }
     Ok(())
