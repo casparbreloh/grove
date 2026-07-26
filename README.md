@@ -52,11 +52,15 @@ truncated.
 
 From the primary worktree, `sync` is the single repository-wide synchronization
 operation. It fetches exactly the current branch's configured merge ref into its
-upstream-tracking ref and fast-forwards the local branch; it does not fetch or
-prune unrelated refs and refuses divergent history or an unsafe update. It then
-archives clean Changes already integrated upstream through the safe
-archive-before-delete path and rebases every other eligible, unpublished Change
-onto the updated primary branch.
+upstream-tracking ref, inspects that remote's branch heads, and fast-forwards the
+local branch; it does not fetch or prune unrelated refs and refuses divergent
+history or an unsafe update. It then archives clean Changes already integrated
+upstream through the safe archive-before-delete path and rebases every other
+eligible, unpublished Change onto the updated primary branch. Finally, it
+deletes merged local branches that have no live branch on the synchronized
+remote, except branches checked out in any worktree. Integration for this
+repository-wide branch cleanup requires the branch tip to be an ancestor of the
+updated primary branch; squash-equivalent history is not enough.
 
 Published Changes are never rebased. Dirty, busy, Git-locked, missing, or
 invalid-lineage Changes remain untouched and unreported. If a rebase conflicts,
@@ -197,9 +201,11 @@ tool history.
 
 Grove stores no source snapshot or statistics. Successful archival removes
 `workspace/` and any attached local branch without a configured upstream.
-Tracking branches, the record, and Pi sessions remain. A registered detached
-worktree keeps commits reachable while active; after archival, unbranched
-source history is intentionally gone.
+Tracking branches survive archival, but a later `sync` removes them after their
+remote branch is gone and their tip is merged into the primary branch. The
+record and Pi sessions remain. A registered detached worktree keeps commits
+reachable while active; after archival, unbranched source history is
+intentionally gone.
 
 The three empty lock files have separate purposes: `.activity.lock` excludes a
 second managed Pi and archival while Pi is open; `.mutation.lock` prevents sync

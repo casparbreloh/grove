@@ -81,6 +81,67 @@ fn sync_fetches_main_archives_integrated_and_rebases_every_other_change() {
 }
 
 #[test]
+fn sync_deletes_merged_local_branches_without_remote_branches() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+
+    repo.git(["branch", "merged-local", "main"]);
+
+    repo.git(["switch", "-c", "unmerged-local"]);
+    repo.commit_file(repo.path(), "unmerged.txt", "unmerged\n");
+    repo.git(["switch", "main"]);
+
+    repo.git(["switch", "-c", "gone-tracking"]);
+    repo.commit_file(repo.path(), "published.txt", "published\n");
+    repo.git(["push", "--set-upstream", "origin", "gone-tracking"]);
+    let gone_tip = repo.commit_file(repo.path(), "local-ahead.txt", "integrated locally\n");
+    repo.git(["switch", "main"]);
+    repo.git_from(
+        &publisher,
+        ["fetch", repo.path().to_str().unwrap(), &gone_tip],
+    );
+    repo.git_from(
+        &publisher,
+        [
+            "merge",
+            "--no-ff",
+            "-m",
+            "Integrate local tip",
+            "FETCH_HEAD",
+        ],
+    );
+    repo.git_from(&publisher, ["push", "origin", "--delete", "gone-tracking"]);
+
+    repo.git_from(&publisher, ["switch", "-c", "live-remote"]);
+    repo.git_from(&publisher, ["push", "origin", "live-remote"]);
+    repo.git_from(&publisher, ["switch", "main"]);
+    repo.git(["branch", "live-remote", "main"]);
+
+    let checked_out_path = repo.home().join("ordinary-worktree");
+    repo.git([
+        "worktree",
+        "add",
+        "-b",
+        "checked-out-local",
+        checked_out_path.to_str().unwrap(),
+        "main",
+    ]);
+
+    repo.commit_file(&publisher, "upstream.txt", "upstream\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+    assert!(!repo.branch_exists("merged-local"));
+    assert!(!repo.branch_exists("gone-tracking"));
+    assert!(repo.branch_exists("unmerged-local"));
+    assert!(repo.branch_exists("live-remote"));
+    assert!(repo.branch_exists("checked-out-local"));
+}
+
+#[test]
 fn sync_leaves_published_changes_untouched_and_runs_only_from_main() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();
@@ -144,6 +205,7 @@ fn sync_does_not_race_a_change_being_shipped() {
         "origin",
         "git@github.com:example/repo.git",
     ]);
+    repo.git(["branch", "preserved-for-push-url", "main"]);
 
     let gate = repo.block_worker();
     let mut command = repo.grove_process_from(&change.path);
@@ -168,6 +230,7 @@ fn sync_does_not_race_a_change_being_shipped() {
     assert_eq!(stderr(&output), "");
     assert_eq!(repo.git(["rev-parse", "main"]), upstream);
     assert_eq!(repo.change_head(&change), change_head);
+    assert!(repo.branch_exists("preserved-for-push-url"));
 
     repo.release_worker(&gate);
     let output = child.wait_with_output().unwrap();
@@ -252,6 +315,7 @@ fn sync_validates_main_before_mutation() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();
     repo.commit_file(repo.path(), "local.txt", "local\n");
+    repo.git(["branch", "cleanup-must-wait", "main"]);
     let main_before = repo.git(["rev-parse", "main"]);
     repo.commit_file(&publisher, "remote.txt", "remote\n");
     repo.git_from(&publisher, ["push", "origin", "main"]);
@@ -264,4 +328,5 @@ fn sync_validates_main_before_mutation() {
         repo.git(["rev-parse", "refs/remotes/origin/main"]),
         remote_tip
     );
+    assert!(repo.branch_exists("cleanup-must-wait"));
 }

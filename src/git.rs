@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -1052,6 +1052,16 @@ impl Git {
             actions.insert(record.id, action);
         }
         drop(locks);
+        let remote_heads = self.remote_heads_at(&primary.path, &remote)?;
+        let ambiguous_push = self.remote_has_ambiguous_push_at(&primary.path, &remote)?;
+        self.cleanup_merged_local_branches(
+            &primary.path,
+            primary_branch,
+            &remote,
+            &remote_heads,
+            ambiguous_push,
+            &upstream_oid,
+        )?;
 
         Ok(identities
             .into_iter()
@@ -1459,6 +1469,161 @@ impl Git {
         {
             return Ok(());
         }
+        self.delete_local_branch(cwd, branch, expected)
+    }
+
+    fn cleanup_merged_local_branches(
+        &self,
+        cwd: &Path,
+        primary_branch: &str,
+        remote: &str,
+        remote_heads: &HashSet<String>,
+        ambiguous_push: bool,
+        primary_oid: &str,
+    ) -> Result<()> {
+        let branches = self.output_bytes_at(
+            cwd,
+            &[
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)",
+                "refs/heads",
+            ],
+        )?;
+        for line in branches.split(|byte| *byte == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            let mut fields = line.split(|byte| *byte == 0);
+            let reference = String::from_utf8(
+                fields
+                    .next()
+                    .context("Git returned a local branch without a ref")?
+                    .to_vec(),
+            )
+            .context("Git returned a non-UTF-8 local branch ref")?;
+            let branch = reference
+                .strip_prefix("refs/heads/")
+                .context("Git returned an invalid local branch ref")?;
+            let oid = String::from_utf8(
+                fields
+                    .next()
+                    .context("Git returned a local branch without an OID")?
+                    .to_vec(),
+            )
+            .context("Git returned a non-UTF-8 local branch OID")?;
+            if branch == primary_branch
+                || self
+                    .worktrees_at(cwd)?
+                    .iter()
+                    .any(|worktree| worktree.branch.as_deref() == Some(branch))
+                || self.branch_has_live_remote_at(
+                    cwd,
+                    branch,
+                    remote,
+                    remote_heads,
+                    ambiguous_push,
+                )?
+                || !self.is_ancestor(&oid, primary_oid)?
+            {
+                continue;
+            }
+            self.delete_local_branch(cwd, branch, &oid)?;
+        }
+        Ok(())
+    }
+
+    fn branch_has_live_remote_at(
+        &self,
+        cwd: &Path,
+        branch: &str,
+        synced_remote: &str,
+        remote_heads: &HashSet<String>,
+        ambiguous_push: bool,
+    ) -> Result<bool> {
+        if synced_remote == "." || ambiguous_push {
+            return Ok(true);
+        }
+        let Some((push_remote, merge_names_remote_branch)) =
+            self.effective_push_remote_at(cwd, branch)?
+        else {
+            return Ok(true);
+        };
+        if push_remote != synced_remote {
+            return Ok(true);
+        }
+        let remote_branch = if merge_names_remote_branch {
+            self.config_optional_at(cwd, &format!("branch.{branch}.merge"))?
+                .and_then(|reference| reference.strip_prefix("refs/heads/").map(str::to_owned))
+                .unwrap_or_else(|| branch.to_owned())
+        } else {
+            branch.to_owned()
+        };
+        Ok(remote_heads.contains(&remote_branch))
+    }
+
+    fn effective_push_remote_at(&self, cwd: &Path, branch: &str) -> Result<Option<(String, bool)>> {
+        if let Some(remote) =
+            self.config_optional_at(cwd, &format!("branch.{branch}.pushRemote"))?
+        {
+            return Ok(Some((remote, false)));
+        }
+        if let Some(remote) = self.config_optional_at(cwd, "remote.pushDefault")? {
+            return Ok(Some((remote, false)));
+        }
+        if let Some(remote) = self.config_optional_at(cwd, &format!("branch.{branch}.remote"))? {
+            let push_default = self
+                .config_optional_at(cwd, "push.default")?
+                .unwrap_or_else(|| "simple".to_owned());
+            let merge_names_remote_branch = match push_default.as_str() {
+                "current" | "matching" => false,
+                "simple" | "upstream" | "nothing" => true,
+                _ => return Ok(None),
+            };
+            return Ok(Some((remote, merge_names_remote_branch)));
+        }
+        let remotes = self.text_at(cwd, &["remote"])?;
+        let remotes = remotes.lines().collect::<Vec<_>>();
+        if remotes.contains(&"origin") {
+            return Ok(Some(("origin".to_owned(), false)));
+        }
+        Ok((remotes.len() == 1).then(|| (remotes[0].to_owned(), false)))
+    }
+
+    fn remote_heads_at(&self, cwd: &Path, remote: &str) -> Result<HashSet<String>> {
+        let output = self
+            .output_bytes_at(cwd, &["ls-remote", "--heads", "--refs", remote])
+            .with_context(|| format!("failed to inspect branches on remote '{remote}'"))?;
+        let mut heads = HashSet::new();
+        for line in output.split(|byte| *byte == b'\n') {
+            let mut fields = line.splitn(2, |byte| *byte == b'\t');
+            let Some(reference) = fields.nth(1) else {
+                continue;
+            };
+            let reference = String::from_utf8(reference.to_vec())
+                .context("Git returned a non-UTF-8 remote branch ref")?;
+            if let Some(branch) = reference.strip_prefix("refs/heads/") {
+                heads.insert(branch.to_owned());
+            }
+        }
+        Ok(heads)
+    }
+
+    fn remote_has_ambiguous_push_at(&self, cwd: &Path, remote: &str) -> Result<bool> {
+        if remote == "."
+            || self
+                .config_optional_at(cwd, &format!("remote.{remote}.push"))?
+                .is_some()
+        {
+            return Ok(true);
+        }
+        let fetch_urls = self.text_at(cwd, &["remote", "get-url", "--all", remote])?;
+        let push_urls = self.text_at(cwd, &["remote", "get-url", "--all", "--push", remote])?;
+        let fetch_urls = fetch_urls.lines().collect::<Vec<_>>();
+        let push_urls = push_urls.lines().collect::<Vec<_>>();
+        Ok(fetch_urls.len() != 1 || push_urls.len() != 1 || fetch_urls != push_urls)
+    }
+
+    fn delete_local_branch(&self, cwd: &Path, branch: &str, expected: &str) -> Result<()> {
         let reference = format!("refs/heads/{branch}");
         let args = ["update-ref", "-d", reference.as_str(), expected];
         let output = self.raw_at(cwd, &args)?;
