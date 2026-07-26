@@ -70,11 +70,11 @@ struct ChangeTitle {
     change: String,
 }
 
-pub(crate) fn require_pi() -> Result<()> {
+pub(crate) fn require_pi_available() -> Result<()> {
     validate_pi()
 }
 
-pub(crate) fn attach(workspace: &Path) -> Result<()> {
+pub(crate) fn attach_pi_session(workspace: &Path) -> Result<()> {
     validate_pi()?;
     let capsule = workspace
         .parent()
@@ -255,10 +255,14 @@ fn run_structured_worker<T: DeserializeOwned>(
     }
     prompt_written?;
 
+    parse_structured_worker_output(&output.stdout, action)
+}
+
+fn parse_structured_worker_output<T: DeserializeOwned>(stdout: &[u8], action: &str) -> Result<T> {
     let mut result = None;
     let mut last_response = None;
     let mut last_error = None;
-    for line in output.stdout.split(|byte| *byte == b'\n') {
+    for line in stdout.split(|byte| *byte == b'\n') {
         if line.is_empty() {
             continue;
         }

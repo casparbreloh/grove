@@ -16,7 +16,7 @@ use anyhow::{Context, Result, bail};
 #[derive(Clone)]
 pub(crate) struct Git {
     cwd: PathBuf,
-    local_only: bool,
+    diagnostic_environment: bool,
 }
 
 #[derive(Debug)]
@@ -28,20 +28,20 @@ struct Worktree {
     prunable: bool,
 }
 
-pub(crate) struct Status {
-    pub(crate) added: usize,
-    pub(crate) deleted: usize,
-    pub(crate) untracked: usize,
-    pub(crate) conflicts: usize,
+pub(crate) struct WorkspaceStatus {
+    pub(crate) added_lines: usize,
+    pub(crate) deleted_lines: usize,
+    pub(crate) untracked_files: usize,
+    pub(crate) conflicted_files: usize,
 }
 
-pub(crate) struct Divergence {
+pub(crate) struct BranchDivergence {
     pub(crate) ahead: usize,
     pub(crate) behind: usize,
 }
 
-pub(crate) enum WorktreeState {
-    Present(Status),
+pub(crate) enum ChangeWorkspaceState {
+    Present(WorkspaceStatus),
     Missing,
 }
 
@@ -54,13 +54,13 @@ pub(crate) struct CurrentChange {
     pub(crate) capsule: Capsule,
 }
 
-pub(crate) struct WorktreeView {
+pub(crate) struct ChangeWorkspaceView {
     pub(crate) id: String,
     pub(crate) title: Option<String>,
     pub(crate) path: PathBuf,
     pub(crate) base: String,
-    pub(crate) divergence: Option<Divergence>,
-    pub(crate) state: WorktreeState,
+    pub(crate) divergence: Option<BranchDivergence>,
+    pub(crate) state: ChangeWorkspaceState,
     pub(crate) current: bool,
 }
 
@@ -160,7 +160,7 @@ impl Git {
         let cwd = cwd.to_owned();
         let git = Self {
             cwd,
-            local_only: false,
+            diagnostic_environment: false,
         };
         git.text(&["rev-parse", "--git-dir"])
             .context("not inside a Git repository")?;
@@ -200,26 +200,14 @@ impl Git {
         Ok(reserved.finish())
     }
 
-    pub(crate) fn inventory(&self) -> Result<Vec<WorktreeView>> {
+    pub(crate) fn inventory(&self) -> Result<Vec<ChangeWorkspaceView>> {
         let worktrees = self.worktrees()?;
         let current = self.current_root()?;
         let repository = self.repository()?;
-        let mut records = Vec::new();
-        for (capsule, record) in repository.records()? {
-            if !record.is_active() {
-                continue;
-            }
-            records.push((record.created_at, capsule, record));
-        }
-        records.sort_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.2.id.cmp(&right.2.id))
-        });
-
-        records
+        repository
+            .active_records_by_creation()?
             .into_iter()
-            .map(|(_, capsule, record)| {
+            .map(|(capsule, record)| {
                 let expected_path = capsule.join("workspace");
                 let base = resolve_branch_base(self, &record)?;
                 let worktree = managed_worktree(&worktrees, &expected_path);
@@ -237,11 +225,11 @@ impl Git {
                     None
                 };
                 let state = if present {
-                    WorktreeState::Present(self.status(&path)?)
+                    ChangeWorkspaceState::Present(self.workspace_status(&path)?)
                 } else {
-                    WorktreeState::Missing
+                    ChangeWorkspaceState::Missing
                 };
-                Ok(WorktreeView {
+                Ok(ChangeWorkspaceView {
                     id: record.id,
                     title: record.title,
                     current: path == current,
@@ -257,7 +245,7 @@ impl Git {
     pub(crate) fn diagnose(&self) -> Result<Vec<String>> {
         let local = Self {
             cwd: self.cwd.clone(),
-            local_only: true,
+            diagnostic_environment: true,
         };
         local.diagnose_local()
     }
@@ -488,9 +476,7 @@ impl Git {
         self.validate_resolved_state(path)?;
         let remotes = self.text_at(path, &["remote"])?;
         let remotes = remotes.lines().collect::<Vec<_>>();
-        let branch = self
-            .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let branch = self.attached_branch_at(path)?;
         let branch_push_remote = branch
             .as_deref()
             .map(|branch| self.config_optional_at(path, &format!("branch.{branch}.pushRemote")))
@@ -586,9 +572,7 @@ impl Git {
             return Ok((selected.to_owned(), remote_oid));
         }
 
-        let current = self
-            .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let current = self.attached_branch_at(path)?;
         if let Some(current) = current
             && (current == base || current == fallback)
         {
@@ -655,9 +639,7 @@ impl Git {
         may_fast_forward_branch: bool,
     ) -> Result<()> {
         self.validate_resolved_state(path)?;
-        let current = self
-            .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let current = self.attached_branch_at(path)?;
         if current.as_deref() != Some(branch) {
             if self.branch_exists_at(path, branch)? {
                 let reference = format!("refs/heads/{branch}");
@@ -718,9 +700,7 @@ impl Git {
         branch: &str,
         context: &ShipSnapshot,
     ) -> Result<()> {
-        let current = self
-            .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let current = self.attached_branch_at(path)?;
         if current.as_deref() != Some(branch)
             || self.text_at(path, &["rev-parse", "HEAD"])? != context.head_oid
             || self.text_at(path, &["write-tree"])? != context.index_tree
@@ -750,9 +730,7 @@ impl Git {
     }
 
     pub(crate) fn validate_clean_ship(&self, path: &Path, branch: &str) -> Result<String> {
-        let current = self
-            .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        let current = self.attached_branch_at(path)?;
         if current.as_deref() != Some(branch) || self.is_dirty(path)? {
             bail!("Change Git state changed while shipping; rerun grove ship");
         }
@@ -801,7 +779,7 @@ impl Git {
     }
 
     fn validate_resolved_state(&self, path: &Path) -> Result<()> {
-        if self.status(path)?.conflicts > 0 {
+        if self.workspace_status(path)?.conflicted_files > 0 {
             bail!("cannot ship a Change with unresolved conflicts");
         }
         if self.git_operation_in_progress(path)? {
@@ -872,17 +850,7 @@ impl Git {
         }
 
         let repository = self.repository()?;
-        let mut records = repository
-            .records()?
-            .into_iter()
-            .filter(|(_, record)| record.is_active())
-            .map(|(capsule, record)| (record.created_at, capsule, record))
-            .collect::<Vec<_>>();
-        records.sort_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.2.id.cmp(&right.2.id))
-        });
+        let records = repository.active_records_by_creation()?;
 
         let upstream_refspec = format!("+{merge_ref}:{upstream}");
         self.checked_at(
@@ -936,12 +904,12 @@ impl Git {
 
         let identities = records
             .iter()
-            .map(|(_, _, record)| (record.id.clone(), record.title.clone()))
+            .map(|(_, record)| (record.id.clone(), record.title.clone()))
             .collect::<Vec<_>>();
         let mut actions = HashMap::new();
         let mut locks = Vec::new();
         let mut candidates = Vec::new();
-        for (_, capsule, record) in records {
+        for (capsule, record) in records {
             if record.parent.as_deref() != Some(primary_branch) {
                 continue;
             }
@@ -1609,43 +1577,43 @@ impl Git {
             .is_empty())
     }
 
-    fn status(&self, path: &Path) -> Result<Status> {
+    fn workspace_status(&self, path: &Path) -> Result<WorkspaceStatus> {
         let porcelain = self.text_at(path, &["status", "--porcelain"])?;
-        let mut conflicts = 0;
+        let mut conflicted_files = 0;
         for line in porcelain.lines() {
             let code = line.as_bytes().get(..2).unwrap_or_default();
             if matches!(code, b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU") {
-                conflicts += 1;
+                conflicted_files += 1;
             }
         }
-        let mut added = 0;
-        let mut deleted = 0;
+        let mut added_lines = 0;
+        let mut deleted_lines = 0;
         for line in self.text_at(path, &["diff", "--numstat", "HEAD"])?.lines() {
             let mut fields = line.split('\t');
-            added += fields
+            added_lines += fields
                 .next()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
-            deleted += fields
+            deleted_lines += fields
                 .next()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
         }
-        let untracked =
+        let untracked_files =
             self.output_bytes_at(path, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-        let untracked = untracked
+        let untracked_files = untracked_files
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
             .count();
-        Ok(Status {
-            added,
-            deleted,
-            untracked,
-            conflicts,
+        Ok(WorkspaceStatus {
+            added_lines,
+            deleted_lines,
+            untracked_files,
+            conflicted_files,
         })
     }
 
-    fn divergence(&self, path: &Path, base: &str) -> Result<Divergence> {
+    fn divergence(&self, path: &Path, base: &str) -> Result<BranchDivergence> {
         let counts = self.text_at(
             path,
             &[
@@ -1664,7 +1632,7 @@ impl Git {
             .next()
             .context("Git did not return an ahead count")?
             .parse()?;
-        Ok(Divergence { ahead, behind })
+        Ok(BranchDivergence { ahead, behind })
     }
 
     fn tip_integrated(&self, tip_oid: &str, base: &BranchBase) -> Result<bool> {
@@ -1804,6 +1772,13 @@ impl Git {
         }
     }
 
+    fn attached_branch_at(&self, cwd: &Path) -> Result<Option<String>> {
+        Ok(self
+            .symbolic_head_at(cwd)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned))
+            .filter(|branch| !branch.is_empty()))
+    }
+
     fn symbolic_head_at(&self, cwd: &Path) -> Result<Option<String>> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
         let output = self.raw_at(cwd, &args)?;
@@ -1850,7 +1825,7 @@ impl Git {
     fn raw_at(&self, cwd: &Path, args: &[&str]) -> Result<Output> {
         let mut command = Command::new("git");
         command.arg("-C").arg(cwd).args(args);
-        if self.local_only {
+        if self.diagnostic_environment {
             command
                 .env("GIT_NO_LAZY_FETCH", "1")
                 .env("GIT_OPTIONAL_LOCKS", "0");

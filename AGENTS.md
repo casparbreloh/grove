@@ -12,7 +12,7 @@ edge cases.
 ## Layout
 
 - `src/main.rs` owns Clap types and command dispatch only.
-- `src/new.rs`, `src/sync.rs`, `src/ship.rs`, and `src/archive.rs` own their command flows; ship also owns publication branch, state validation, and the private `gh`/`glab` boundary.
+- `src/new.rs`, `src/sync.rs`, `src/ship.rs`, `src/archive.rs`, and `src/doctor.rs` own their command flows; ship also owns publication branch, state validation, and the private `gh`/`glab` boundary.
 - `src/navigator.rs` owns Change rows, the navigator, picker, terminal rendering, and calling-shell navigation shared with the archive flow.
 - `src/init.rs` owns shell initialization.
 - `src/change.rs` owns repository directories, immutable Change identity, minimal capsule records, titles, and lifecycle transitions.
@@ -20,21 +20,31 @@ edge cases.
 - `src/session.rs` is the narrow Pi adapter: validation, capsule lock, direct blocking launch/resume, extension materialization, and isolated structured workers.
 - `src/extensions/` contains the flat Pi extension sources materialized by the session adapter.
 - `src/shell.fish` and `src/shell.zsh` are thin calling-shell wrappers.
-- `tests/new.rs`, `tests/sync.rs`, `tests/ship.rs`, `tests/archive.rs`, and `tests/navigator.rs` contain command-first compiled-CLI workflows matching `src/`; `tests/support/` owns real disposable repositories and minimal fake external seams.
+- `tests/new.rs`, `tests/sync.rs`, `tests/ship.rs`, `tests/archive.rs`, `tests/doctor.rs`, and `tests/navigator.rs` contain command-first compiled-CLI workflows matching `src/`; `tests/support/` owns real disposable repositories and minimal fake external seams.
 
 ## Commands
 
 ```sh
-cargo build
-cargo run -- --help
+cargo build --locked
+cargo run --locked -- --help
 cargo fmt --check
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --locked
+cargo clippy --locked --all-targets --all-features -- -D warnings
 git diff --check
 ```
 
-Safe squash detection requires Git 2.38 or newer. The extension contract test
-requires Node.js, matching Pi's runtime.
+Safe squash detection requires Git 2.38 or newer. The full suite targets Unix,
+requires Node.js for the extension contract, and exercises Fish and Zsh shell
+integration. CI uses the latest stable Rust toolchain; `Cargo.toml` records the
+minimum language version.
+
+For a focused loop, run a command test target or one workflow before the full
+suite:
+
+```sh
+cargo test --locked --test ship
+cargo test --locked --test ship ship_never_resets_or_races_an_existing_publication_branch
+```
 
 ## Testing
 
@@ -53,6 +63,10 @@ requires Node.js, matching Pi's runtime.
 - Let rustfmt and Clippy define mechanical Rust style.
 - Return contextual `Result`s for recoverable Git, filesystem, Pi, and process failures. Reserve panics for genuine invariants and tests.
 - Keep visibility and dependencies minimal; expose semantic operations rather than command plumbing.
+- Make identifiers and filenames useful search terms. Prefer specific domain-bearing names over generic names such as `run`, `row`, `data`, or `result` at module boundaries.
+- Use one documented spelling for each concept, avoid aliases and synonyms, and give distinct concepts distinct names and types.
+- Keep modules centered on the question named by their file and split genuinely independent concerns instead of creating grab bags. The large Git module is intentionally one deep authority; extract only along an existing safety boundary.
+- Put a concise comment immediately above a definition only when an important invariant or intentional omission cannot be expressed by its name or type.
 - Use `///` when Clap consumes it as user-facing help. Avoid non-functional implementation and test comments.
 - Validate before mutation. Preserve rollback, private modes, advisory locking, conservative integration detection, exact worktree/HEAD validation, compare-and-delete branch cleanup, and recoverable `closing` state. Keep destructive safety boundaries covered by coherent compiled-CLI workflows against real disposable Git repositories.
 - Pi JSONL is agent-owned and must remain byte-for-byte untouched by Grove. Grove-owned records must be atomic and private.

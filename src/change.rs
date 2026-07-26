@@ -36,6 +36,21 @@ impl RepositoryDirectory {
         Record::load_all(&self.path)
     }
 
+    pub(crate) fn active_records_by_creation(&self) -> Result<Vec<(PathBuf, Record)>> {
+        let mut records = self
+            .records()?
+            .into_iter()
+            .filter(|(_, record)| record.is_active())
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.1
+                .created_at
+                .cmp(&right.1.created_at)
+                .then_with(|| left.1.id.cmp(&right.1.id))
+        });
+        Ok(records)
+    }
+
     pub(crate) fn record(&self, id: &str) -> Result<Option<(PathBuf, Record)>> {
         let capsule = self.path.join(id);
         Ok(Record::load_optional(&capsule.join("change.json"))?.map(|record| (capsule, record)))

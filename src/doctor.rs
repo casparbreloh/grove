@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::{change::display_text, git::Git};
 
-pub(crate) fn run(git: &Git) -> Result<()> {
+pub(crate) fn run_doctor(git: &Git) -> Result<()> {
     let findings = git.diagnose()?;
     if findings.is_empty() {
         println!("✓ No problems found");
