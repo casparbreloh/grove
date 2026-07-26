@@ -59,7 +59,7 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     assert_eq!(repository_name.len(), "repo-12345678".len());
     assert_eq!(repository.parent().unwrap(), grove_root);
     let record = repo.change_record(&capsule);
-    assert_eq!(record["version"], 3);
+    assert_eq!(record["version"], 4);
     assert_eq!(record["id"], id);
     assert_eq!(record["state"], "active");
     assert_eq!(record["title"], serde_json::Value::Null);

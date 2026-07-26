@@ -7,12 +7,18 @@ use crate::{
 };
 
 pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
+    let current = git.current_path()?;
+    let primary = git.primary_path()?;
+    if current != primary {
+        require_shell_navigation()?;
+        if !git.is_managed_change_path(&current)? {
+            bail!("current workspace is not a managed Grove Change");
+        }
+    }
     let recovered = git.recover_closing_archives()?;
     if recovered > 0 {
         eprintln!("✓ Finished interrupted archives: {recovered}");
     }
-    let current = git.current_path()?;
-    let primary = git.primary_path()?;
     let rows = change_rows(git)?;
     let selected = if let Some(current) = rows.iter().find(|row| row.is_current()) {
         Some(current.clone())
@@ -28,7 +34,6 @@ pub(crate) fn run(git: &Git, force: bool) -> Result<()> {
         return Ok(());
     };
     let archive_destination = if selected.workspace() == current {
-        require_shell_navigation()?;
         Some(destination(git, &primary)?)
     } else {
         None

@@ -40,6 +40,10 @@ fn ship_runs_while_managed_pi_is_open() {
         repo.git_from(&change.path, ["log", "-1", "--format=%s"]),
         "fix: allow shipping while Pi is open"
     );
+    assert_eq!(
+        repo.git_from(&change.path, ["branch", "--show-current"]),
+        "fix-grove-session-errors"
+    );
 
     repo.release_blocking_agent(child, &gate);
 }
@@ -58,7 +62,7 @@ fn ship_recovers_after_create_failure_and_updates_pull_request_metadata() {
         "git@github.com:example/repo.git",
     ]);
     let agent_before = repo.agent_log();
-    let branch = format!("grove/{}", change.id);
+    let branch = "add-ai-native-shipping";
     let create_payload = format!(
         r#"{{"base":"main","body":"Adds deterministic Change shipping.","head":"{branch}","title":"feat: add AI-native shipping"}}"#
     );
@@ -79,6 +83,10 @@ fn ship_recovers_after_create_failure_and_updates_pull_request_metadata() {
         stderr(&failed)
     );
     let published_head = repo.change_head(&change);
+    assert_eq!(
+        repo.change_record(change.path.parent().unwrap())["publication_branch"],
+        branch
+    );
     assert_eq!(
         repo.git_from(&change.path, ["log", "-1", "--format=%s"]),
         "feat: add AI-native shipping"
@@ -165,6 +173,36 @@ fn ship_recovers_after_create_failure_and_updates_pull_request_metadata() {
 
     let published_tip = repo.change_head(&change);
     repo.git_from(&change.path, ["switch", "--detach"]);
+    let rerun = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_REVIEW_URL",
+            "https://github.com/example/repo/pull/1",
+        )
+        .env("GROVE_TEST_REVIEW_TITLE", "feat: refine AI-native shipping")
+        .env(
+            "GROVE_TEST_REVIEW_BODY",
+            "Adds deterministic initial and incremental shipping.",
+        )
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":null}"#,
+        )
+        .output()
+        .unwrap();
+    assert!(rerun.status.success(), "{}", stderr(&rerun));
+    assert_eq!(
+        repo.git_from(&change.path, ["branch", "--show-current"]),
+        branch
+    );
+    repo.git_from(&change.path, ["switch", "--detach"]);
+    let detached_tip = repo.commit_file(
+        &change.path,
+        "detached-followup.txt",
+        "detached follow-up\n",
+    );
     repo.commit_file(&remote, "upstream.txt", "upstream\n");
     repo.git_from(&remote, ["push", "origin", "main"]);
     let synced = repo
@@ -178,11 +216,45 @@ fn ship_recovers_after_create_failure_and_updates_pull_request_metadata() {
         .unwrap();
     assert!(synced.status.success(), "{}", stderr(&synced));
     assert!(
-        stderr(&synced).contains("publication branch is not rewritten"),
+        stderr(&synced).contains("run sync from the Change to rebase"),
         "{}",
         stderr(&synced)
     );
-    assert_eq!(repo.change_head(&change), published_tip);
+    let targeted = repo.grove_from(&change.path).arg("sync").output().unwrap();
+    assert!(targeted.status.success(), "{}", stderr(&targeted));
+    assert!(
+        stderr(&targeted).contains("published history is not rewritten"),
+        "{}",
+        stderr(&targeted)
+    );
+    assert_eq!(repo.change_head(&change), detached_tip);
+
+    let shipped = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .env(
+            "GROVE_TEST_REVIEW_URL",
+            "https://github.com/example/repo/pull/1",
+        )
+        .env("GROVE_TEST_REVIEW_TITLE", "feat: refine AI-native shipping")
+        .env(
+            "GROVE_TEST_REVIEW_BODY",
+            "Adds deterministic initial and incremental shipping.",
+        )
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":null}"#,
+        )
+        .output()
+        .unwrap();
+    assert!(shipped.status.success(), "{}", stderr(&shipped));
+    assert_eq!(
+        repo.git_from(&change.path, ["branch", "--show-current"]),
+        branch
+    );
+    assert_eq!(repo.git_from(&remote, ["rev-parse", branch]), detached_tip);
+    assert_ne!(published_tip, detached_tip);
 }
 
 #[test]
@@ -222,7 +294,8 @@ fn unchanged_change_stays_unpublished_when_remote_main_advances() {
         repo.git_from(&change.path, ["branch", "--show-current"]),
         ""
     );
-    assert!(!repo.branch_exists(&format!("grove/{}", change.id)));
+    assert!(!repo.branch_exists("leave-empty-change-unpublished"));
+    assert!(repo.change_record(change.path.parent().unwrap())["publication_branch"].is_null());
 }
 
 #[test]
@@ -237,11 +310,14 @@ fn duplicate_titles_have_distinct_publication_branches() {
     ]);
     let first = repo.create_change(None);
     repo.set_change_title(&first, "Shared Publication Title");
-    let first_branch = format!("grove/{}", first.id);
-    repo.git_from(&first.path, ["switch", "-c", &first_branch]);
+    let first_branch = "shared-publication-title";
+    repo.git_from(&first.path, ["switch", "-c", first_branch]);
 
     let second = repo.create_change(None);
     repo.set_change_title(&second, "Shared Publication Title");
+    let expected_branch = format!("shared-publication-title-{}", second.id);
+    let second_head = repo.change_head(&second);
+    repo.git(["branch", &expected_branch, &second_head]);
     fs::write(second.path.join("second.txt"), "second\n").unwrap();
     let output = repo
         .grove_from(&second.path)
@@ -256,8 +332,195 @@ fn duplicate_titles_have_distinct_publication_branches() {
 
     assert!(output.status.success(), "{}", stderr(&output));
     let second_branch = repo.git_from(&second.path, ["branch", "--show-current"]);
-    assert_eq!(second_branch, format!("grove/{}", second.id));
+    assert_eq!(second_branch, expected_branch);
     assert_ne!(second_branch, first_branch);
+}
+
+#[test]
+fn ship_never_resets_or_races_an_existing_publication_branch() {
+    let repo = TestRepo::new();
+    let remote = repo.create_local_origin();
+    let change = repo.create_change(None);
+    repo.set_change_title(&change, "Protect Existing Publication Branch");
+    let base = "protect-existing-publication-branch";
+    let fallback = format!("{base}-{}", change.id);
+    let change_head = repo.change_head(&change);
+    repo.git(["branch", base, &change_head]);
+    let occupied_head = repo.commit_file(repo.path(), "occupied.txt", "occupied\n");
+    repo.git(["branch", &fallback, &occupied_head]);
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:example/repo.git",
+    ]);
+    fs::write(change.path.join("change.txt"), "change\n").unwrap();
+    let agent_before = repo.agent_log();
+
+    let output = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &remote)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("refusing to reset it"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(
+        repo.git(["rev-parse", &format!("refs/heads/{fallback}")]),
+        occupied_head
+    );
+    assert_eq!(repo.change_head(&change), change_head);
+    assert_eq!(repo.agent_log(), agent_before);
+
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let change = repo.create_change(None);
+    repo.set_change_title(&change, "Protect Publication Race");
+    fs::write(change.path.join("race.txt"), "change\n").unwrap();
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:example/repo.git",
+    ]);
+    let gate = repo.block_worker();
+    let mut command = repo.grove_process_from(&change.path);
+    command
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &publisher)
+        .env("GROVE_TEST_WORKER_BLOCK", &gate)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"feat: protect publication race","body":"Protects branch creation with an exact lease."}}"#,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command.spawn().unwrap();
+    repo.wait_for_agent_log("prompt=");
+    repo.git_from(&publisher, ["branch", "protect-publication-race", "main"]);
+    repo.git_from(&publisher, ["push", "origin", "protect-publication-race"]);
+    let occupied_tip = repo.git_from(&publisher, ["rev-parse", "protect-publication-race"]);
+    repo.release_worker(&gate);
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_from(&publisher, ["rev-parse", "protect-publication-race"]),
+        occupied_tip
+    );
+    assert!(!repo.shipping_log().contains("--method POST"));
+    let retry = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &publisher)
+        .output()
+        .unwrap();
+    assert!(!retry.status.success(), "{retry:?}");
+    assert!(
+        stderr(&retry).contains("appeared before this Change published it"),
+        "{retry:?}"
+    );
+}
+
+#[test]
+fn remote_publication_branch_collision_uses_change_id_suffix() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    repo.git_from(
+        &publisher,
+        ["branch", "remote-publication-collision", "main"],
+    );
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:example/repo.git",
+    ]);
+    let change = repo.create_change(None);
+    repo.set_change_title(&change, "Remote Publication Collision");
+    fs::write(change.path.join("remote.txt"), "second\n").unwrap();
+
+    let output = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &publisher)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"feat: avoid remote branch collision","body":"Publishes on a Change-specific branch."}}"#,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        repo.git_from(&change.path, ["branch", "--show-current"]),
+        format!("remote-publication-collision-{}", change.id)
+    );
+}
+
+#[test]
+fn existing_pull_request_target_overrides_default_and_is_concurrency_state() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    repo.git_from(&publisher, ["switch", "-c", "release"]);
+    repo.commit_file(&publisher, "release.txt", "release\n");
+    repo.git_from(&publisher, ["push", "origin", "release"]);
+    repo.git([
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:example/repo.git",
+    ]);
+    let change = repo.create_change(None);
+    repo.set_change_title(&change, "Respect Existing Pull Request Target");
+    repo.git_from(
+        &change.path,
+        ["switch", "-c", "respect-existing-pull-request-target"],
+    );
+    fs::write(change.path.join("target.txt"), "target\n").unwrap();
+    let agent_before = repo.agent_log();
+
+    let output = repo
+        .grove_from(&change.path)
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &publisher)
+        .env("GROVE_TEST_DEFAULT_BRANCH", "missing-default")
+        .env(
+            "GROVE_TEST_REVIEW_URL",
+            "https://github.com/example/repo/pull/1",
+        )
+        .env("GROVE_TEST_REVIEW_TITLE", "feat: existing title")
+        .env("GROVE_TEST_REVIEW_BODY", "Existing body.")
+        .env("GROVE_TEST_REVIEW_TARGET", "release")
+        .env("GROVE_TEST_RECHECK_TARGET", "main")
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":"fix: respect existing target","pull_request":{"title":"feat: updated title","body":"Updated body."}}"#,
+        )
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("pull request changed during shipping"),
+        "{}",
+        stderr(&output)
+    );
+    let invocation = repo.agent_log();
+    assert!(
+        invocation[agent_before.len()..].contains("Target branch: release"),
+        "{}",
+        &invocation[agent_before.len()..]
+    );
+    assert!(
+        !repo.shipping_log().contains("--method PATCH"),
+        "{}",
+        repo.shipping_log()
+    );
 }
 
 #[test]
@@ -323,7 +586,7 @@ fn non_conventional_pull_request_title_does_not_commit_or_push() {
     assert_eq!(
         repo.git_from(
             &remote,
-            ["branch", "--list", &format!("grove/{}", change.id)]
+            ["branch", "--list", "reject-malformed-shipping-metadata"]
         ),
         ""
     );
@@ -368,10 +631,7 @@ fn ship_refuses_workspace_changes_made_during_metadata_generation() {
     );
     assert_eq!(repo.change_head(&change), head_before);
     assert_eq!(
-        repo.git_from(
-            &remote,
-            ["branch", "--list", &format!("grove/{}", change.id)],
-        ),
+        repo.git_from(&remote, ["branch", "--list", "protect-shipping-snapshot"],),
         ""
     );
 }
@@ -414,11 +674,8 @@ fn ship_uses_the_same_metadata_contract_for_gitlab() {
     );
     let shipping = repo.shipping_log();
     assert!(shipping.contains("program=glab"), "{shipping}");
-    let branch = format!("grove/{}", change.id);
-    let expected = format!(
-        r#"{{"description":"Adds deterministic GitLab shipping.","source_branch":"{branch}","target_branch":"main","title":"feat: support GitLab shipping"}}"#
-    );
-    assert_eq!(payloads(&shipping).last().copied(), Some(expected.as_str()));
+    let expected = r#"{"description":"Adds deterministic GitLab shipping.","source_branch":"support-gitlab-shipping","target_branch":"main","title":"feat: support GitLab shipping"}"#;
+    assert_eq!(payloads(&shipping).last().copied(), Some(expected));
 }
 
 fn payloads(log: &str) -> Vec<&str> {

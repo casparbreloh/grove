@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{git::Git, session};
+use crate::{change::publication_branch_base, git::Git, session};
 
 pub(crate) fn run(git: &Git) -> Result<()> {
     let change = git
@@ -14,20 +14,36 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         .title
         .as_deref()
         .context("cannot ship an Untitled Change")?;
-    let branch = format!("grove/{}", change.id);
+    let branch_base = publication_branch_base(title)?;
+    let fallback_branch = format!("{branch_base}-{}", change.id);
     let workspace = &change.workspace;
     let push_remote = git.push_remote(workspace)?;
     let code_host = CodeHost::from_remote(&push_remote.url)?;
-    let target_branch = code_host.preflight()?;
-    let target_ref = git.fetch_ship_base(workspace, &push_remote.name, &target_branch)?;
+    let default_target_branch = code_host.preflight()?;
+    let (branch, remote_branch_oid) = git.select_ship_branch(
+        workspace,
+        &push_remote.name,
+        &branch_base,
+        &fallback_branch,
+        change.publication_branch.as_deref(),
+        change.published_oid.as_deref(),
+    )?;
     let existing_pull_request = code_host.find_pull_request(&branch)?;
+    let target_branch = existing_pull_request.as_ref().map_or_else(
+        || default_target_branch,
+        |pull_request| pull_request.target_branch.clone(),
+    );
+    let target_ref = git.fetch_ship_base(workspace, &push_remote.name, &target_branch)?;
     let branch_published = existing_pull_request.is_some()
-        || git.remote_branch_exists(workspace, &push_remote.name, &branch)?;
+        || remote_branch_oid.is_some()
+        || change.published_oid.is_some();
     if !branch_published && !git.has_publishable_work(workspace, &target_ref)? {
         bail!("Change has no work to ship");
     }
 
-    git.prepare_ship(workspace, &branch)?;
+    let may_fast_forward_branch = change.publication_branch.as_deref() == Some(branch.as_str());
+    change.capsule.initialize_publication_branch(&branch)?;
+    git.prepare_ship(workspace, &branch, may_fast_forward_branch)?;
     let snapshot = git.capture_ship_snapshot(workspace, &target_ref)?;
     let pull_request_context = existing_pull_request.as_ref().map_or_else(
         || "There is no open pull request.".to_owned(),
@@ -49,6 +65,9 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         snapshot.staged,
         existing_pull_request.is_some(),
     )?;
+    if let Some(existing) = &existing_pull_request {
+        code_host.validate_pull_request_unchanged(&branch, existing)?;
+    }
 
     git.validate_ship_snapshot(workspace, &branch, &snapshot)?;
     if snapshot.staged {
@@ -66,7 +85,14 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         git.commit_ship(workspace, subject, &snapshot)?;
     }
     let head_oid = git.validate_clean_ship(workspace, &branch)?;
-    git.push_ship(workspace, &push_remote.name, &branch, &head_oid)?;
+    git.push_ship(
+        workspace,
+        &push_remote.name,
+        &branch,
+        &head_oid,
+        remote_branch_oid.as_deref(),
+    )?;
+    change.capsule.mark_published(&branch, &head_oid)?;
 
     let pull_request = match existing_pull_request {
         Some(existing) => match metadata.pull_request {
@@ -124,6 +150,7 @@ struct PullRequest {
     url: String,
     title: String,
     body: String,
+    target_branch: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +165,13 @@ struct GitHubPullRequest {
     html_url: String,
     title: String,
     body: Option<String>,
+    base: GitHubPullRequestBase,
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestBase {
+    #[serde(rename = "ref")]
+    branch: String,
 }
 
 #[derive(Deserialize)]
@@ -147,6 +181,7 @@ struct GitLabMergeRequest {
     title: String,
     description: Option<String>,
     source_project_id: u64,
+    target_branch: String,
 }
 
 #[derive(Deserialize)]
@@ -172,11 +207,13 @@ impl HostPullRequest {
                 url: pull_request.html_url.clone(),
                 title: pull_request.title.clone(),
                 body: pull_request.body.clone().unwrap_or_default(),
+                target_branch: pull_request.base.branch.clone(),
             },
             Self::GitLab(merge_request) => PullRequest {
                 url: merge_request.web_url.clone(),
                 title: merge_request.title.clone(),
                 body: merge_request.description.clone().unwrap_or_default(),
+                target_branch: merge_request.target_branch.clone(),
             },
         }
     }
@@ -308,6 +345,17 @@ impl CodeHost {
         }
     }
 
+    fn validate_pull_request_unchanged(
+        &self,
+        source_branch: &str,
+        expected: &PullRequest,
+    ) -> Result<()> {
+        if self.find_pull_request(source_branch)?.as_ref() != Some(expected) {
+            bail!("pull request changed during shipping");
+        }
+        Ok(())
+    }
+
     fn update_pull_request(
         &self,
         source_branch: &str,
@@ -321,7 +369,7 @@ impl CodeHost {
                 format!("no open pull request found for source branch '{source_branch}'")
             })?;
         if &host_pull_request.pull_request() != expected {
-            bail!("pull request changed before it could be updated");
+            bail!("pull request changed during shipping");
         }
         match (self, host_pull_request) {
             (Self::GitHub { repository, .. }, HostPullRequest::GitHub(pull_request)) => {

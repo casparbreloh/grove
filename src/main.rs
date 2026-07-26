@@ -33,7 +33,7 @@ enum Cmd {
         #[arg(long, value_name = "REF")]
         from: Option<String>,
     },
-    /// Fetch upstream, archive integrated Changes, and rebase eligible Changes
+    /// Update the primary worktree or rebase the current Change
     Sync,
     /// Ship the current Change as a pull request
     ///

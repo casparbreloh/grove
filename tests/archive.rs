@@ -186,6 +186,31 @@ fn interrupted_recovery_does_not_consume_the_requested_archive() {
             .contains(&interrupted.path.display().to_string())
     );
     assert!(!requested.path.exists());
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let tip = repo.commit_file(&change.path, "integrated.txt", "integrated\n");
+    repo.git(["merge", "--no-ff", "-m", "Integrate Change", &tip]);
+    let target = repo.git(["rev-parse", "main"]);
+    let capsule = mark_closing(&repo, &change);
+    let mut record = repo.change_record(&capsule);
+    record["closing"]["outcome"] = "integrated".into();
+    record["closing"]["target_oid"] = target.into();
+    record["closing"]["target_ref"] = "refs/heads/main".into();
+    fs::write(
+        capsule.join("change.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    repo.git([
+        "worktree",
+        "remove",
+        "--force",
+        change.path.to_str().unwrap(),
+    ]);
+    repo.commit_file(repo.path(), "later.txt", "later\n");
+    repo.grove().arg("archive").assert().success();
+    assert_eq!(repo.change_record(&capsule)["state"], "archived");
 }
 
 #[test]
@@ -219,6 +244,39 @@ fn interrupted_recovery_refuses_ambiguous_workspaces() {
         stderr(&output).contains("workspace HEAD changed"),
         "{output:?}"
     );
+    assert_eq!(repo.change_record(&capsule)["state"], "closing");
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let capsule = mark_closing(&repo, &change);
+    let before = fs::read(capsule.join("change.json")).unwrap();
+    let output = repo
+        .grove_from(&change.path)
+        .arg("archive")
+        .env_remove("GROVE_DIRECTIVE_CD_FILE")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("shell integration is not loaded"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read(capsule.join("change.json")).unwrap(), before);
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let capsule = interrupt_archive(&repo, &change, false);
+    let ordinary = repo.home().join("ordinary-archive-worktree");
+    repo.git(["branch", "ordinary-archive"]);
+    repo.git([
+        "worktree",
+        "add",
+        ordinary.to_str().unwrap(),
+        "ordinary-archive",
+    ]);
+    let output = repo.grove_from(&ordinary).arg("archive").output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stderr(&output).contains("not a managed Grove Change"));
     assert_eq!(repo.change_record(&capsule)["state"], "closing");
 }
 
@@ -300,6 +358,22 @@ fn force_discards_local_work_but_keeps_git_locked_worktrees_protected() {
     assert!(repo.branch_exists("discarded-change"));
 
     repo.git(["worktree", "unlock", change.path.to_str().unwrap()]);
+    let rebase =
+        PathBuf::from(repo.git_from(&change.path, ["rev-parse", "--git-path", "rebase-merge"]));
+    fs::create_dir_all(&rebase).unwrap();
+    let todo = rebase.join("git-rebase-todo");
+    fs::write(&todo, "break\n").unwrap();
+    let operation = repo
+        .grove_from(&change.path)
+        .args(["archive", "--force"])
+        .output()
+        .unwrap();
+    assert!(!operation.status.success(), "{operation:?}");
+    assert!(stderr(&operation).contains("Git operation is in progress"));
+    assert_eq!(fs::read_to_string(&todo).unwrap(), "break\n");
+    assert!(change.path.exists());
+    fs::remove_dir_all(rebase).unwrap();
+
     repo.grove_from(&change.path)
         .args(["archive", "--force"])
         .assert()

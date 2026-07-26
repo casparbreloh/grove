@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
 
-const RECORD_VERSION: u8 = 3;
+const RECORD_VERSION: u8 = 4;
 
 pub(crate) struct RepositoryDirectory {
     path: PathBuf,
@@ -104,6 +104,10 @@ pub(crate) struct Record {
     version: u8,
     pub(crate) id: String,
     pub(crate) title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) publication_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) published_oid: Option<String>,
     #[serde(flatten)]
     lifecycle: Lifecycle,
     pub(crate) created_at: u64,
@@ -148,16 +152,15 @@ impl Record {
                 continue;
             }
             let capsule = entry.path();
-            let Some(record) = Self::load_optional(&capsule.join("change.json"))? else {
-                continue;
+            let record = match Self::load_optional(&capsule.join("change.json")) {
+                Ok(Some(record)) => record,
+                Ok(None) => continue,
+                Err(error) if error.downcast_ref::<std::io::Error>().is_none() => continue,
+                Err(error) => return Err(error),
             };
-            if entry.file_name() != std::ffi::OsStr::new(&record.id) {
-                bail!(
-                    "change record ID does not match capsule {}",
-                    capsule.display()
-                );
+            if entry.file_name() == std::ffi::OsStr::new(&record.id) {
+                records.push((capsule, record));
             }
-            records.push((capsule, record));
         }
         Ok(records)
     }
@@ -214,6 +217,8 @@ impl Reserved {
                 version: RECORD_VERSION,
                 id: id.clone(),
                 title: None,
+                publication_branch: None,
+                published_oid: None,
                 lifecycle: Lifecycle::Active,
                 created_at,
                 base_oid: creation.base_oid.clone(),
@@ -297,6 +302,29 @@ impl Capsule {
         })
     }
 
+    pub(crate) fn initialize_publication_branch(&self, branch: &str) -> Result<()> {
+        self.update_record(|record| match record.publication_branch.as_deref() {
+            Some(existing) if existing != branch => {
+                bail!("Change '{}' already publishes from '{existing}'", record.id)
+            }
+            Some(_) => Ok(()),
+            None => {
+                record.publication_branch = Some(branch.to_owned());
+                Ok(())
+            }
+        })
+    }
+
+    pub(crate) fn mark_published(&self, branch: &str, oid: &str) -> Result<()> {
+        self.update_record(|record| {
+            if record.publication_branch.as_deref() != Some(branch) {
+                bail!("Change '{}' publication branch changed", record.id);
+            }
+            record.published_oid = Some(oid.to_owned());
+            Ok(())
+        })
+    }
+
     pub(crate) fn mark_closing(&self, closing: Closing) -> Result<()> {
         self.update_record(|record| {
             if !record.is_active() {
@@ -355,6 +383,26 @@ impl Capsule {
         update(&mut record)?;
         replace_json(&path, &record)
     }
+}
+
+pub(crate) fn publication_branch_base(title: &str) -> Result<String> {
+    let mut branch = String::new();
+    let mut separator = false;
+    for character in title.chars() {
+        if character.is_ascii_alphanumeric() {
+            if separator && !branch.is_empty() {
+                branch.push('-');
+            }
+            branch.push(character.to_ascii_lowercase());
+            separator = false;
+        } else if !branch.is_empty() {
+            separator = true;
+        }
+    }
+    if branch.is_empty() {
+        bail!("Change Title cannot form an ASCII publication branch");
+    }
+    Ok(branch)
 }
 
 pub(crate) fn title_labels<'a>(

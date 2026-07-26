@@ -11,8 +11,9 @@ workflow engine, or terminal multiplexer.
 - Keep the common workflow and command surface small.
 - Make the primary interface information-dense, simple, and clean.
 - Give every Change an immutable opaque identity and one stable human title.
-- Keep Titles and Pi-native session identity separate; derive Grove's stable
-  publication branch from the immutable Change ID.
+- Keep Titles and Pi-native session identity separate; derive automatic
+  publication branches from the immutable Change Title, using the Change ID
+  only to resolve collisions.
 - Use Pi through its native TUI, native JSONL, and isolated structured JSON
   workers instead of adding a second agent or provider abstraction.
 - Keep interactive Pi lifecycle native, including `/new`, `/fork`, `/clone`,
@@ -32,9 +33,9 @@ Grove provides path-backed Git workspaces, a stable Change identity and title,
 direct Pi launch and resume, recorded creation lineage, Git-backed inventory,
 destructive validation, explicit upstream synchronization, and safe archival.
 A Change's repository-scoped 8-character hexadecimal ID identifies its capsule
-and stable publication branch. Each
+and disambiguates its Title-derived publication branch when needed. Each
 workspace is a native Git worktree created with detached HEAD; branches appear
-only when a user, agent, or hosting provider needs one. Archival cleans up
+only when publication or native Git work needs one. Archival cleans up
 local-only branches while preserving tracking branches. The capsule groups
 minimal Grove metadata, the active workspace, and Pi-native sessions beneath
 one private `~/.grove` path.
@@ -61,12 +62,12 @@ again against the same native session directory. The single advisory activity
 lock excludes competing managed Pi, synchronization, and archival mutation; it
 is not a user-facing agent status model and does not block explicit shipping.
 
-`grove sync` explicitly fetches exactly the primary branch's configured merge
-ref into its upstream-tracking ref, fast-forwards the local primary branch, and
-leaves unrelated remote refs in place. It archives clean integrated Changes,
-rebases eligible clean linear Changes onto the fetched upstream, and
-conservatively skips Changes that cannot be synchronized safely. The batch is
-best-effort and may be partially completed if a later operation fails.
+From the primary worktree, `grove sync` fetches exactly the configured merge
+ref, fast-forwards the primary branch, leaves unrelated remote refs in place,
+and archives clean integrated Changes without rewriting the others. From a
+Change, it performs no network activity and rebases only that clean,
+unpublished, linear Change onto the current local primary tip. Conflicts restore
+the exact pre-rebase state.
 
 ## Phase 1: Grove as the navigator
 
@@ -116,9 +117,11 @@ documented commit, branch, provider, push, and hosting effects needed to ship
 the Change.
 
 After inexpensive local and code-host validation, Grove owns the deterministic Git
-and hosting operations. It creates or reuses the stable Change-ID publication
-branch, stages the complete Change, commits without a body, pushes
-without force, and creates or conditionally updates the pull request through
+and hosting operations. It creates or safely reuses an automatic lowercase ASCII kebab
+publication branch derived from the immutable Change Title, adding the Change ID
+only on collision. Existing branch refs are never reset. Grove stages the
+complete Change, commits without a body, pushes under an exact lease that cannot
+overwrite unobserved history, and creates or conditionally updates the pull request through
 `gh` or `glab`. Existing published history is never rewritten.
 
 One purpose-built, noninteractive Pi JSON worker produces only schema-validated
@@ -128,7 +131,8 @@ is insufficient, but it cannot mutate Git or contact the code host. New publicat
 uses the pull-request title as its initial commit subject, while later work gets
 an incremental Conventional Commit subject. Grove rechecks pull-request
 metadata immediately before replacing it and aborts when it observes a
-concurrent human edit.
+concurrent human edit, including retargeting. An existing pull request's target
+branch overrides the host default.
 
 The command remains in the foreground and returns success only with the created
 or updated pull-request identity. There is no daemon, queue, hidden

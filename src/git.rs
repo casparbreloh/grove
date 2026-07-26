@@ -48,6 +48,9 @@ pub(crate) struct CurrentChange {
     pub(crate) id: String,
     pub(crate) workspace: PathBuf,
     pub(crate) title: Option<String>,
+    pub(crate) publication_branch: Option<String>,
+    pub(crate) published_oid: Option<String>,
+    pub(crate) capsule: Capsule,
 }
 
 pub(crate) struct WorktreeView {
@@ -265,6 +268,14 @@ impl Git {
         self.current_root()
     }
 
+    pub(crate) fn is_managed_change_path(&self, path: &Path) -> Result<bool> {
+        Ok(self
+            .repository()?
+            .records()?
+            .into_iter()
+            .any(|(capsule, _)| capsule.join("workspace") == path))
+    }
+
     pub(crate) fn current_change(&self) -> Result<Option<CurrentChange>> {
         let current = self.current_root()?;
         let repository = self.repository()?;
@@ -277,9 +288,12 @@ impl Git {
                     bail!("current Change worktree is missing");
                 }
                 return Ok(Some(CurrentChange {
+                    capsule: Capsule::at(capsule, record.id.clone())?,
                     id: record.id,
                     workspace: current,
                     title: record.title,
+                    publication_branch: record.publication_branch,
+                    published_oid: record.published_oid,
                 }));
             }
         }
@@ -332,6 +346,8 @@ impl Git {
         remote: &str,
         branch: &str,
     ) -> Result<String> {
+        self.checked_at(path, &["check-ref-format", "--branch", branch])
+            .with_context(|| format!("code host returned invalid target branch '{branch}'"))?;
         let tracking = format!("refs/remotes/{remote}/{branch}");
         let refspec = format!("+refs/heads/{branch}:{tracking}");
         self.checked_at(
@@ -349,17 +365,90 @@ impl Git {
         Ok(tracking)
     }
 
-    pub(crate) fn remote_branch_exists(
+    pub(crate) fn select_ship_branch(
         &self,
         path: &Path,
         remote: &str,
-        branch: &str,
-    ) -> Result<bool> {
-        let args = ["ls-remote", "--exit-code", "--heads", remote, branch];
+        base: &str,
+        fallback: &str,
+        selected: Option<&str>,
+        published_oid: Option<&str>,
+    ) -> Result<(String, Option<String>)> {
+        if let Some(selected) = selected {
+            if selected != base && selected != fallback {
+                bail!("recorded publication branch '{selected}' does not match Change Title");
+            }
+            if let Some(published_oid) = published_oid
+                && !self.is_ancestor(published_oid, "HEAD")?
+            {
+                bail!("published history is not an ancestor of Change HEAD");
+            }
+            let remote_oid = self.remote_branch_oid(path, remote, selected)?;
+            if let Some(remote_oid) = &remote_oid {
+                let owned = if let Some(published_oid) = published_oid {
+                    self.is_ancestor(published_oid, remote_oid)?
+                        && self.is_ancestor(remote_oid, "HEAD")?
+                } else {
+                    self.branch_exists_at(path, selected)?
+                        && self.branch_has_configured_upstream_at(path, selected)?
+                        && self.peel_commit_at(path, selected)? == *remote_oid
+                };
+                if !owned {
+                    bail!(
+                        "publication branch '{selected}' appeared before this Change published it"
+                    );
+                }
+            }
+            return Ok((selected.to_owned(), remote_oid));
+        }
+
+        let current = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if let Some(current) = current
+            && (current == base || current == fallback)
+        {
+            let remote_oid = self.remote_branch_oid(path, remote, &current)?;
+            if let Some(remote_oid) = &remote_oid
+                && !self.is_ancestor(remote_oid, "HEAD")?
+            {
+                bail!("remote publication branch '{current}' is not an ancestor of Change HEAD");
+            }
+            return Ok((current, remote_oid));
+        }
+        if !self.branch_exists_at(path, base)?
+            && self.remote_branch_oid(path, remote, base)?.is_none()
+        {
+            return Ok((base.to_owned(), None));
+        }
+        if self.branch_exists_at(path, fallback)? {
+            let remote_oid = self.remote_branch_oid(path, remote, fallback)?;
+            if let Some(remote_oid) = &remote_oid
+                && !self.is_ancestor(remote_oid, "HEAD")?
+            {
+                bail!("remote publication branch '{fallback}' is not an ancestor of Change HEAD");
+            }
+            return Ok((fallback.to_owned(), remote_oid));
+        }
+        if self.remote_branch_oid(path, remote, fallback)?.is_some() {
+            bail!("publication branch '{fallback}' already exists on remote '{remote}'");
+        }
+        Ok((fallback.to_owned(), None))
+    }
+
+    fn remote_branch_oid(&self, path: &Path, remote: &str, branch: &str) -> Result<Option<String>> {
+        let reference = format!("refs/heads/{branch}");
+        let args = ["ls-remote", "--exit-code", remote, reference.as_str()];
         let output = self.raw_at(path, &args)?;
         match output.status.code() {
-            Some(0) => Ok(true),
-            Some(2) => Ok(false),
+            Some(0) => String::from_utf8(output.stdout)
+                .context("Git returned a non-UTF-8 remote branch OID")?
+                .split_whitespace()
+                .next()
+                .map(str::to_owned)
+                .map(Some)
+                .context("Git returned an empty remote branch result"),
+            Some(2) => Ok(None),
             _ => {
                 check(output, &args)?;
                 unreachable!()
@@ -375,20 +464,31 @@ impl Git {
         Ok(count != "0")
     }
 
-    pub(crate) fn prepare_ship(&self, path: &Path, branch: &str) -> Result<()> {
+    pub(crate) fn prepare_ship(
+        &self,
+        path: &Path,
+        branch: &str,
+        may_fast_forward_branch: bool,
+    ) -> Result<()> {
         self.validate_resolved_state(path)?;
-        match self
+        let current = self
             .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned))
-        {
-            Some(current) if current != branch => {
-                bail!("Change is already on publication branch '{current}', expected '{branch}'")
-            }
-            Some(_) => {}
-            None if self.branch_exists_at(path, branch)? => {
-                bail!("publication branch '{branch}' is not checked out by this Change")
-            }
-            None => {
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if current.as_deref() != Some(branch) {
+            if self.branch_exists_at(path, branch)? {
+                let reference = format!("refs/heads/{branch}");
+                let branch_oid = self.peel_commit_at(path, &reference)?;
+                let head_oid = self.peel_commit_at(path, "HEAD")?;
+                if branch_oid != head_oid {
+                    if !may_fast_forward_branch || !self.is_ancestor(&branch_oid, &head_oid)? {
+                        bail!(
+                            "publication branch '{branch}' does not match Change HEAD; refusing to reset it"
+                        );
+                    }
+                    self.checked_at(path, &["branch", "--force", branch, &head_oid])?;
+                }
+                self.checked_at(path, &["switch", branch])?;
+            } else {
                 self.checked_at(path, &["switch", "--create", branch])?;
             }
         }
@@ -481,9 +581,8 @@ impl Git {
         remote: &str,
         branch: &str,
         head_oid: &str,
+        expected_remote_oid: Option<&str>,
     ) -> Result<()> {
-        let destination = format!("{head_oid}:refs/heads/{branch}");
-        self.checked_at(path, &["push", remote, &destination])?;
         self.checked_at(
             path,
             &["config", &format!("branch.{branch}.remote"), remote],
@@ -496,6 +595,12 @@ impl Git {
                 &format!("refs/heads/{branch}"),
             ],
         )?;
+        let lease = format!(
+            "--force-with-lease=refs/heads/{branch}:{}",
+            expected_remote_oid.unwrap_or_default()
+        );
+        let destination = format!("{head_oid}:refs/heads/{branch}");
+        self.checked_at(path, &["push", &lease, remote, &destination])?;
         Ok(())
     }
 
@@ -515,6 +620,13 @@ impl Git {
         if self.status(path)?.conflicts > 0 {
             bail!("cannot ship a Change with unresolved conflicts");
         }
+        if self.git_operation_in_progress(path)? {
+            bail!("cannot ship while a Git operation is in progress");
+        }
+        Ok(())
+    }
+
+    fn git_operation_in_progress(&self, path: &Path) -> Result<bool> {
         for marker in [
             "MERGE_HEAD",
             "CHERRY_PICK_HEAD",
@@ -529,17 +641,17 @@ impl Git {
                 path.join(marker)
             };
             if marker.exists() {
-                bail!("cannot ship while a Git operation is in progress");
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     pub(crate) fn sync(&self) -> Result<SyncResult> {
         let worktrees = self.worktrees()?;
         let primary = worktrees.first().context("repository has no worktrees")?;
         if self.current_root()? != primary.path {
-            bail!("grove sync must be run from the primary worktree");
+            return self.sync_change(&worktrees, primary);
         }
         let primary_branch = primary
             .branch
@@ -704,6 +816,13 @@ impl Git {
                     record.id
                 );
             }
+            if self.git_operation_in_progress(&worktree.path)? {
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "Git operation is in progress"),
+                );
+                continue;
+            }
             if self.is_dirty(&worktree.path)? {
                 outcomes.insert(
                     record.id,
@@ -711,21 +830,17 @@ impl Git {
                 );
                 continue;
             }
-            let publication_branch = format!("grove/{}", record.id);
-            let has_publication_branch =
-                self.branch_exists_at(&worktree.path, &publication_branch)?;
             changes.push((
                 record.id,
                 worktree.path.clone(),
                 worktree.head_oid.clone(),
                 record.base_oid,
-                has_publication_branch,
             ));
         }
 
         let mut integrated = Vec::new();
         let mut remaining = Vec::new();
-        for (id, path, head_oid, creation_base_oid, has_publication_branch) in changes {
+        for (id, path, head_oid, creation_base_oid) in changes {
             if !self.is_full_commit(&creation_base_oid) {
                 outcomes.insert(
                     id,
@@ -769,7 +884,7 @@ impl Git {
             {
                 integrated.push((id, prepared));
             } else {
-                remaining.push((id, path, creation_base_oid, has_publication_branch));
+                remaining.push(id);
             }
         }
 
@@ -777,20 +892,11 @@ impl Git {
             self.finish_archive(prepared)?;
             outcomes.insert(id, (SyncOutcome::Archived, "integrated upstream"));
         }
-        for (id, path, creation_base_oid, has_publication_branch) in &remaining {
-            if *has_publication_branch {
-                outcomes.insert(
-                    id.clone(),
-                    (SyncOutcome::Skipped, "publication branch is not rewritten"),
-                );
-            } else if self.rebase_change(path, &upstream_oid, creation_base_oid)? {
-                outcomes.insert(id.clone(), (SyncOutcome::Rebased, "onto upstream"));
-            } else {
-                outcomes.insert(
-                    id.clone(),
-                    (SyncOutcome::Skipped, "rebase failed; Change restored"),
-                );
-            }
+        for id in remaining {
+            outcomes.insert(
+                id,
+                (SyncOutcome::Skipped, "run sync from the Change to rebase"),
+            );
         }
         drop(locks);
 
@@ -810,6 +916,137 @@ impl Git {
             .collect::<Vec<_>>();
 
         Ok(SyncResult { entries })
+    }
+
+    fn sync_change(&self, worktrees: &[Worktree], primary: &Worktree) -> Result<SyncResult> {
+        let primary_branch = primary
+            .branch
+            .as_deref()
+            .context("primary worktree is not on a branch")?;
+        let current = self.current_root()?;
+        let repository = self.repository()?;
+        let (capsule, record) = repository
+            .records()?
+            .into_iter()
+            .find(|(capsule, record)| record.is_active() && capsule.join("workspace") == current)
+            .context("grove sync must be run from the primary worktree or a managed Change")?;
+        let result = |outcome, reason| SyncResult {
+            entries: vec![SyncEntry {
+                id: record.id.clone(),
+                title: record.title.clone(),
+                outcome,
+                reason,
+            }],
+        };
+        if record.parent.as_deref() != Some(primary_branch) {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "created from another parent branch",
+            ));
+        }
+        let Some(worktree) = managed_worktree(worktrees, &current) else {
+            return Ok(result(SyncOutcome::Skipped, "managed worktree is missing"));
+        };
+        if worktree.prunable || !worktree.path.exists() {
+            return Ok(result(SyncOutcome::Skipped, "worktree is missing"));
+        }
+        if worktree.locked {
+            return Ok(result(SyncOutcome::Skipped, "worktree is Git-locked"));
+        }
+        let Some(_lock) = try_lock_change(&capsule)? else {
+            return Ok(result(SyncOutcome::Skipped, "Change is already open"));
+        };
+        let refreshed = self.worktrees()?;
+        let Some(worktree) = managed_worktree(&refreshed, &current) else {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "managed worktree became missing",
+            ));
+        };
+        if worktree.prunable || !worktree.path.exists() || worktree.locked {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "worktree changed during sync preparation",
+            ));
+        }
+        if self.peel_commit_at(&current, "HEAD")? != worktree.head_oid {
+            bail!(
+                "Change '{}' HEAD changed during sync preparation",
+                record.id
+            );
+        }
+        if self.git_operation_in_progress(&current)? {
+            return Ok(result(SyncOutcome::Skipped, "Git operation is in progress"));
+        }
+        if self.is_dirty(&current)? {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "worktree has uncommitted changes",
+            ));
+        }
+        if !self.is_full_commit(&record.base_oid) {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "recorded creation base is invalid",
+            ));
+        }
+        if !self.is_ancestor(&record.base_oid, &primary.head_oid)? {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "creation base is not in primary",
+            ));
+        }
+        if !self.is_ancestor(&record.base_oid, &worktree.head_oid)? {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "Change does not descend from creation base",
+            ));
+        }
+        if self.has_merge_history(&record.base_oid, &worktree.head_oid)? {
+            return Ok(result(SyncOutcome::Skipped, "Change has merge history"));
+        }
+        if self.is_ancestor(&worktree.head_oid, &primary.head_oid)?
+            || self.same_tree(&worktree.head_oid, &primary.head_oid)?
+            || self.merge_adds_no_change(
+                &worktree.head_oid,
+                &primary.head_oid,
+                Some(&record.base_oid),
+            )?
+        {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "Change is integrated into primary; run grove archive",
+            ));
+        }
+        let recorded_branch_is_configured = record
+            .publication_branch
+            .as_deref()
+            .map(|branch| self.branch_has_configured_upstream_at(&current, branch))
+            .transpose()?
+            .unwrap_or(false);
+        let attached_branch_is_configured = worktree
+            .branch
+            .as_deref()
+            .map(|branch| self.branch_has_configured_upstream_at(&current, branch))
+            .transpose()?
+            .unwrap_or(false);
+        if record.published_oid.is_some()
+            || recorded_branch_is_configured
+            || attached_branch_is_configured
+        {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "published history is not rewritten",
+            ));
+        }
+        let merge_base =
+            self.text_at(&current, &["merge-base", "HEAD", primary.head_oid.as_str()])?;
+        let (outcome, reason) = if self.rebase_change(&current, &primary.head_oid, &merge_base)? {
+            (SyncOutcome::Rebased, "onto primary")
+        } else {
+            (SyncOutcome::Skipped, "rebase failed; Change restored")
+        };
+        Ok(result(outcome, reason))
     }
 
     fn has_merge_history(&self, base_oid: &str, tip: &str) -> Result<bool> {
@@ -915,7 +1152,7 @@ impl Git {
                 capsule.restore_active()?;
                 continue;
             }
-            self.validate_target_snapshot(
+            self.validate_recovery_target(
                 &primary,
                 closing.target_ref.as_deref(),
                 closing.target_oid.as_deref(),
@@ -980,6 +1217,9 @@ impl Git {
         }
         if target.locked {
             bail!("worktree is locked: {}", target.path.display());
+        }
+        if self.git_operation_in_progress(&target.path)? {
+            bail!("cannot archive while a Git operation is in progress");
         }
         if !force && self.is_dirty(&target.path)? {
             bail!(
@@ -1108,20 +1348,34 @@ impl Git {
         if worktree.locked {
             bail!("Change '{id}' worktree became Git-locked");
         }
+        if self.git_operation_in_progress(&path)? {
+            bail!("Change '{id}' started a Git operation before archive");
+        }
         let live_oid = self.peel_commit_at(&path, "HEAD")?;
         if worktree.head_oid != prepared.expected_head_oid || live_oid != prepared.expected_head_oid
         {
             bail!("Change '{id}' HEAD changed before archive");
         }
-        self.validate_target(prepared)
-    }
-
-    fn validate_target(&self, prepared: &PreparedArchive) -> Result<()> {
         self.validate_target_snapshot(
             &prepared.primary,
             prepared.target_ref.as_deref(),
             prepared.target_oid.as_deref(),
         )
+    }
+
+    fn validate_recovery_target(
+        &self,
+        cwd: &Path,
+        target_ref: Option<&str>,
+        target_oid: Option<&str>,
+    ) -> Result<()> {
+        if let (Some(reference), Some(expected)) = (target_ref, target_oid) {
+            let live = self.peel_commit_at(cwd, reference)?;
+            if live != expected && !self.is_ancestor(expected, &live)? {
+                bail!("integration target '{reference}' changed after archive removal");
+            }
+        }
+        Ok(())
     }
 
     fn validate_target_snapshot(

@@ -315,15 +315,18 @@ fn bare_navigator_restores_the_plain_picker_and_dispatches_rows() {
     assert!(stderr(&non_tty_archive).contains("interactive Change selection requires a terminal"));
 
     let corrupt = TestRepo::new();
-    let change = corrupt.create_change(None);
+    let healthy = corrupt.create_change(None);
+    corrupt.set_change_title(&healthy, "Healthy Change");
+    let malformed = corrupt.create_change(None);
     fs::write(
-        change.path.parent().unwrap().join("change.json"),
+        malformed.path.parent().unwrap().join("change.json"),
         "not json\n",
     )
     .unwrap();
-    let error = corrupt.grove().assert().failure().get_output().clone();
-    assert!(stderr(&error).contains("invalid change record"));
-    assert!(change.path.exists());
+    let output = corrupt.navigator_without_color_in_pty(corrupt.path(), "Healthy Change", b"\x1b");
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("Healthy Change"));
+    assert!(malformed.path.exists());
 }
 
 #[test]

@@ -48,33 +48,36 @@ Ordinary, detached, and otherwise unmanaged Git worktrees are excluded. On narro
 terminals secondary columns disappear from the right before Change identity is
 truncated.
 
-`sync` is an explicit network operation that must run from the primary worktree
-and requires its current branch to have a configured upstream. It quietly
-fetches exactly the configured merge ref into that upstream-tracking ref, then
-fast-forwards the local primary branch to it; it does not fetch or prune
-unrelated refs and refuses divergent primary history or an unsafe worktree
-update. Among clean active Changes recorded with the primary branch as their
-creation parent, it archives Changes already integrated upstream through the
-same safe archive-before-delete path and rebases eligible linear Changes onto
-the fetched upstream. Rebase rewrites Change commits. Grove conservatively
-skips Changes whose creation base is absent from either fetched upstream or the
-Change tip, Changes with merge history, failed rebases, dirty or busy Changes
-(including Changes with an active Pi process), Git-locked or missing worktrees,
-non-integrated publication branches, and Changes created from another parent
-branch. Sync is a best-effort batch:
-skipped Changes remain untouched, while completed archives and rebases are not
-rolled back if a later operation fails. It reports one ordered outcome and
-reason for every active Change, followed by archived, rebased, and skipped
-totals.
+From the primary worktree, `sync` is an explicit network operation. It fetches
+exactly the current branch's configured merge ref into its upstream-tracking
+ref and fast-forwards the local branch; it does not fetch or prune unrelated
+refs and refuses divergent history or an unsafe update. It archives clean
+Changes already integrated upstream through the safe archive-before-delete
+path. Every non-integrated Change remains untouched and is directed to sync
+from its own workspace.
+
+From a managed Change, `sync` performs no network activity and rebases only that
+clean, unpublished, linear Change onto the current local primary tip. It never
+mutates the primary or sibling Changes, never rewrites published history, and
+exactly restores a Change after a rebase conflict. Dirty, busy, Git-locked,
+missing, integrated, or invalid-lineage Changes are conservatively skipped.
+Both modes report explicit outcomes and totals.
 
 `ship` runs only from the current managed Change. Grove refuses unresolved Git
 operations, untitled Changes, missing push remotes, local-only remotes,
 unsupported hosts, and unavailable code-host access before publication. GitHub
 uses `gh`; GitLab uses `glab`.
 
-Grove creates or reuses the Change's stable `grove/<change-id>` publication
-branch, stages the complete Change, and starts one isolated GPT-5.6 Sol JSON
-worker for structured
+Grove creates publication branches automatically; no user-supplied branch is
+required. The base name is the immutable Change Title converted to deterministic
+lowercase ASCII kebab case. Grove reuses that name or its
+`<title-slug>-<change-id>` form when the Change is already on it. Otherwise it
+uses the base only when that exact branch is absent both locally and on the push
+remote, and uses the Change-ID suffix on collision. A newly selected existing
+branch must point at the exact Change HEAD. A previously recorded publication
+branch may advance only when it is an ancestor of HEAD; Grove never resets
+divergent history. Grove then stages the complete Change and starts one isolated
+GPT-5.6 Sol JSON worker for structured
 commit and pull-request metadata. The worker receives a compact file index,
 statistics, commit subjects, current pull-request metadata, and a bounded
 zero-context patch. It may selectively read files when that context is
@@ -83,7 +86,9 @@ commits without a body, pushes without rewriting published history, and creates
 or conditionally updates the pull request. New publication uses the pull-request title as the
 initial commit subject; later work receives an incremental subject. Grove
 rechecks existing pull-request metadata immediately before replacing it and
-aborts when it observes a concurrent edit. Failures may leave staged work, a
+aborts when it observes a concurrent edit, including a target-branch change.
+An existing pull request's target overrides the host default for comparison and
+publication. Failures may leave staged work, a
 commit, branch, or push in place; rerunning converges from that Git and code-host
 state. On success, stdout contains only the pull-request URL. The Change remains
 active through review.
@@ -144,8 +149,8 @@ within each worker. Treat the prompt according to the provider's privacy terms.
 ## Change identity and storage
 
 Each Change has one immutable Grove-owned 8-character lowercase hexadecimal ID,
-unique within its repository. It names the capsule and its `grove/<change-id>`
-publication branch. Grove
+unique within its repository. It names the capsule and disambiguates a
+publication branch when the Title-derived base is occupied. Grove
 creates `workspace/` as a native Git worktree with detached HEAD and finds it by
 its exact capsule path, not by a branch name. Native detached commits are
 supported. If the user or an agent later creates a branch, Grove may rebase its
@@ -169,9 +174,11 @@ Everything local to a Change lives together:
 
 The repository directory combines its readable name with an 8-character
 hexadecimal digest of the canonical Git common directory; there is no repository
-registry. The minimal `change.json` records identity, title, state, creation base and parent,
-plus archival time and outcome. Detailed recovery facts exist only while the
-record is `closing`. Pi JSONL remains the canonical conversation, usage, and
+registry. The minimal `change.json` records identity, Title, state, creation
+lineage, and—after shipping starts—the reserved publication branch and last
+pushed OID, plus archival time and outcome. Detailed recovery facts exist only
+while the record is `closing`. Malformed capsules remain untouched and do not
+hide healthy Changes. Pi JSONL remains the canonical conversation, usage, and
 tool history.
 
 Grove stores no source snapshot or statistics. Successful archival removes

@@ -46,7 +46,7 @@ requires Node.js, matching Pi's runtime.
 
 ## Conventions
 
-- Use **Change**, **Change ID**, **Title**, and **Pi session** as defined in `README.md`; do not reintroduce a semantic branch name or Grove session identity.
+- Use **Change**, **Change ID**, **Title**, and **Pi session** as defined in `README.md`; automatic Title-derived publication branches are Git refs, not Change identity or user input, and Pi sessions remain separate identities.
 - Treat feature replacements as clean breaks: remove superseded commands, options, code paths, and tests in the same change. Do not add deprecations, aliases, or backward-compatibility surfaces unless explicitly requested.
 - In the navigator, the agent is the obvious primary action. Keep Enter agent-first without styling the selected row differently from the others.
 - Keep `main.rs` thin and deepen `change.rs`, `git.rs`, or `session.rs` around their existing authority.
