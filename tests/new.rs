@@ -59,13 +59,13 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     assert_eq!(repository_name.len(), "repo-12345678".len());
     assert_eq!(repository.parent().unwrap(), grove_root);
     let record = repo.change_record(&capsule);
-    assert_eq!(record["version"], 3);
+    assert!(record.get("version").is_none());
     assert_eq!(record["id"], id);
     assert_eq!(record["state"], "active");
     assert_eq!(record["title"], serde_json::Value::Null);
     assert_eq!(record["base_oid"], original);
     assert_eq!(record["parent"], "main");
-    assert_eq!(record.as_object().unwrap().len(), 7);
+    assert_eq!(record.as_object().unwrap().len(), 6);
     assert!(!repository.join("repository.json").exists());
     assert!(!repo.navigation_exists());
     assert_eq!(
@@ -167,6 +167,11 @@ fn id_capsules_record_bases_rollback_and_repository_isolation() {
     );
     assert_eq!(readable_name.len(), "Project Name-12345678".len());
 
+    let unsafe_path = repo.create_repo("unsafe/\x1b[31mRepo");
+    let output = repo.grove_from(&unsafe_path).arg("new").output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(!stderr(&output).contains('\x1b'), "{output:?}");
+
     let blocked = TestRepo::new();
     fs::write(blocked.home().join(".grove"), "not a directory").unwrap();
     blocked.grove().arg("new").assert().failure();
@@ -208,7 +213,7 @@ fn pi_extensions_link_sessions_and_validate_structured_output() {
 #[test]
 fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     let repo = TestRepo::new();
-    let gate = repo.block_rpc_worker();
+    let gate = repo.block_worker();
     repo.grove()
         .arg("new")
         .env(
@@ -216,7 +221,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
             "Please implement native session title inference",
         )
         .env("GROVE_TEST_TITLE", "Implement Native Session Titles")
-        .env("GROVE_TEST_RPC_BLOCK", &gate)
+        .env("GROVE_TEST_WORKER_BLOCK", &gate)
         .assert()
         .success();
 
@@ -282,14 +287,11 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
     assert!(log.contains("arg=<openai-codex/gpt-5.6-sol>"), "{log}");
     assert!(!repo.navigation_exists());
 
-    repo.release_rpc_worker(&gate);
+    repo.release_worker(&gate);
     repo.wait_for_change_title(&capsule, "Implement Native Session Titles");
     repo.wait_for_session_content(r#""name":"Implement Native Session Titles""#);
     assert!(capsule.join(".activity.lock").is_file());
     assert!(capsule.join(".metadata.lock").is_file());
-    assert!(!repo.home().join(".grove/runtime").exists());
-    assert!(!capsule.join(".lock").exists());
-    assert!(!capsule.join(".record.lock").exists());
     let session_path = repo.pi_session_files().pop().unwrap();
     let session_before = fs::read_to_string(&session_path).unwrap();
     let id = capsule.file_name().unwrap().to_string_lossy();
@@ -299,7 +301,6 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
             .count(),
         1
     );
-    assert!(!session_before.contains(r#""schema":1"#));
     assert!(session_before.contains(&format!(r#""changeId":"{id}""#)));
 
     let resumed = repo.resume_pi_in_pty("Implement Native Session Titles", b"\x1b[B\r");
@@ -311,7 +312,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
 
     let second_title = repo
         .grove_from(&worktree)
-        .args(["__title", "--change", &id, "--session", "second-session"])
+        .args(["__title", "--change", &id])
         .env("GROVE_CHANGE_CAPSULE", &capsule)
         .env("GROVE_TEST_TITLE", "Name A Later Session")
         .write_stdin("A later Pi session has a different purpose")
@@ -332,10 +333,10 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         .grove()
         .arg("new")
         .env("GROVE_TEST_AGENT_PROMPT", "This naming request fails")
-        .env("GROVE_TEST_TITLE_EXIT", "17")
+        .env("GROVE_TEST_WORKER_ERROR", "provider request failed")
         .assert()
         .success();
-    best_effort.wait_for_agent_log("arg=<--system-prompt>");
+    best_effort.wait_for_agent_log("provider request failed");
     let unnamed = best_effort.change_capsules().pop().unwrap();
     assert_eq!(
         best_effort.change_record(&unnamed)["title"],
@@ -347,7 +348,7 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         .count();
     best_effort
         .grove_from(&unnamed.join("workspace"))
-        .args(["__title", "--change", "deadbeef", "--session", "mismatched"])
+        .args(["__title", "--change", "deadbeef"])
         .env("GROVE_CHANGE_CAPSULE", &unnamed)
         .write_stdin("Do not send this prompt")
         .assert()
@@ -360,14 +361,32 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
         workers_before_mismatch,
         "identity mismatch must fail before starting Pi"
     );
+    let record_path = unnamed.join("change.json");
+    let mut versioned = best_effort.change_record(&unnamed);
+    versioned["version"] = 4.into();
+    fs::write(&record_path, serde_json::to_vec_pretty(&versioned).unwrap()).unwrap();
+    let before = fs::read(&record_path).unwrap();
     best_effort
         .grove_from(&unnamed.join("workspace"))
         .args([
             "__title",
             "--change",
             &unnamed.file_name().unwrap().to_string_lossy(),
-            "--session",
-            "malformed",
+            "--apply",
+        ])
+        .env("GROVE_CHANGE_CAPSULE", &unnamed)
+        .write_stdin("Do Not Migrate Records")
+        .assert()
+        .failure();
+    assert_eq!(fs::read(&record_path).unwrap(), before);
+    versioned.as_object_mut().unwrap().remove("version");
+    fs::write(&record_path, serde_json::to_vec_pretty(&versioned).unwrap()).unwrap();
+    best_effort
+        .grove_from(&unnamed.join("workspace"))
+        .args([
+            "__title",
+            "--change",
+            &unnamed.file_name().unwrap().to_string_lossy(),
         ])
         .env("GROVE_CHANGE_CAPSULE", &unnamed)
         .env("GROVE_TEST_TITLE", "Only Two")
@@ -385,11 +404,9 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
             "__title",
             "--change",
             &unnamed.file_name().unwrap().to_string_lossy(),
-            "--session",
-            "recovered",
         ])
         .env("GROVE_CHANGE_CAPSULE", &unnamed)
-        .env("GROVE_TEST_RPC_FAILURES", &retry_count)
+        .env("GROVE_TEST_WORKER_FAILURES", &retry_count)
         .env("GROVE_TEST_RAW_CHANGE", "Recover Session Naming")
         .write_stdin("Retry transient naming failures")
         .assert()
@@ -409,8 +426,6 @@ fn native_pi_create_resume_lock_failure_and_titles_are_one_workflow() {
             "__title",
             "--change",
             &unnamed.file_name().unwrap().to_string_lossy(),
-            "--session",
-            "recovered",
             "--apply",
         ])
         .env("GROVE_CHANGE_CAPSULE", &unnamed)

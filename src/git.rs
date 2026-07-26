@@ -8,8 +8,8 @@ use std::{
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
 use crate::change::{
-    Change, Closing, Creation, Outcome, Record, RepositoryDirectory, lock as lock_change,
-    mark_archived, mark_closing, restore_active, try_lock as try_lock_change,
+    Capsule, Closing, Creation, Outcome, Record, RepositoryDirectory, lock as lock_change,
+    try_lock as try_lock_change,
 };
 use anyhow::{Context, Result, bail};
 
@@ -30,6 +30,7 @@ struct Worktree {
 pub(crate) struct Status {
     pub(crate) added: usize,
     pub(crate) deleted: usize,
+    pub(crate) untracked: usize,
     pub(crate) conflicts: usize,
 }
 
@@ -44,8 +45,12 @@ pub(crate) enum WorktreeState {
 }
 
 pub(crate) struct CurrentChange {
-    pub(crate) path: PathBuf,
+    pub(crate) id: String,
+    pub(crate) workspace: PathBuf,
     pub(crate) title: Option<String>,
+    pub(crate) publication_branch: Option<String>,
+    pub(crate) published_oid: Option<String>,
+    pub(crate) capsule: Capsule,
 }
 
 pub(crate) struct WorktreeView {
@@ -58,18 +63,31 @@ pub(crate) struct WorktreeView {
     pub(crate) current: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SyncOutcome {
+    Archived,
+    Rebased,
+    Skipped,
+}
+
 pub(crate) struct SyncEntry {
     pub(crate) id: String,
     pub(crate) title: Option<String>,
-    pub(crate) outcome: String,
-    pub(crate) reason: String,
+    pub(crate) outcome: SyncOutcome,
+    pub(crate) reason: &'static str,
 }
 
 pub(crate) struct SyncResult {
     pub(crate) entries: Vec<SyncEntry>,
-    pub(crate) archived: usize,
-    pub(crate) rebased: usize,
-    pub(crate) skipped: usize,
+}
+
+impl SyncResult {
+    pub(crate) fn count(&self, outcome: SyncOutcome) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.outcome == outcome)
+            .count()
+    }
 }
 
 pub(crate) struct PushRemote {
@@ -86,9 +104,7 @@ pub(crate) struct ShipSnapshot {
 }
 
 pub(crate) struct PreparedArchive {
-    path: PathBuf,
-    id: String,
-    capsule: PathBuf,
+    capsule: Capsule,
     primary: PathBuf,
     expected_head_oid: String,
     target_oid: Option<String>,
@@ -99,75 +115,53 @@ pub(crate) struct PreparedArchive {
 
 struct BranchBase {
     display: String,
-    divergence_ref: Option<String>,
-    removal_ref: Option<String>,
-    valid: bool,
+    reference: Option<String>,
 }
 
-struct Lineage {
-    base_oid: String,
-    parent: Option<String>,
+fn resolve_creation_base(git: &Git, source: Option<&str>) -> Result<Creation> {
+    let (source, default_base) = match source {
+        Some(source) => (source.to_owned(), false),
+        None => (git.default_branch()?, true),
+    };
+    let base_oid = if default_base {
+        git.peel_commit(&source).with_context(|| {
+            format!(
+                "cannot create a Change from default base '{source}': create an initial commit or pass --from a commit"
+            )
+        })?
+    } else {
+        git.peel_commit(&source)?
+    };
+    let parent = if source == "@" {
+        git.text(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .ok()
+    } else {
+        git.local_branch(&source)?
+    };
+    Ok(Creation { base_oid, parent })
 }
 
-impl Lineage {
-    fn resolve_creation_base(git: &Git, source: Option<&str>) -> Result<Creation> {
-        let (source, default_base) = match source {
-            Some(source) => (source.to_owned(), false),
-            None => (git.default_branch()?, true),
-        };
-        let base_oid = if default_base {
-            git.peel_commit(&source).with_context(|| {
-                format!(
-                    "cannot create a Change from default base '{source}': create an initial commit or pass --from a commit"
-                )
-            })?
-        } else {
-            git.peel_commit(&source)?
-        };
-        let parent = if source == "@" {
-            git.text(&["symbolic-ref", "--quiet", "--short", "HEAD"])
-                .ok()
-        } else {
-            git.local_branch(&source)?
-        };
-        Ok(Creation { base_oid, parent })
+fn resolve_branch_base(git: &Git, record: &Record) -> Result<BranchBase> {
+    if !git.is_full_commit(&record.base_oid) || record.parent.as_deref().is_some_and(str::is_empty)
+    {
+        return Ok(BranchBase {
+            display: "invalid lineage".to_owned(),
+            reference: None,
+        });
     }
-
-    fn from_record(record: &Record) -> Self {
-        Self {
-            base_oid: record.base_oid.clone(),
-            parent: record.parent.clone(),
-        }
+    if let Some(parent) = &record.parent
+        && git.branch_exists(parent)?
+        && git.is_ancestor(&record.base_oid, parent)?
+    {
+        return Ok(BranchBase {
+            display: parent.clone(),
+            reference: Some(parent.clone()),
+        });
     }
-
-    fn base(&self, git: &Git) -> Result<BranchBase> {
-        if !git.is_full_commit(&self.base_oid) || self.parent.as_deref().is_some_and(str::is_empty)
-        {
-            return Ok(BranchBase {
-                display: "invalid lineage".to_owned(),
-                divergence_ref: None,
-                removal_ref: None,
-                valid: false,
-            });
-        }
-        if let Some(parent) = &self.parent
-            && git.branch_exists(parent)?
-            && git.is_ancestor(&self.base_oid, parent)?
-        {
-            return Ok(BranchBase {
-                display: parent.clone(),
-                divergence_ref: Some(parent.clone()),
-                removal_ref: Some(parent.clone()),
-                valid: true,
-            });
-        }
-        Ok(BranchBase {
-            display: abbreviate_oid(&self.base_oid),
-            divergence_ref: Some(self.base_oid.clone()),
-            removal_ref: Some(self.base_oid.clone()),
-            valid: true,
-        })
-    }
+    Ok(BranchBase {
+        display: abbreviate_oid(&record.base_oid),
+        reference: Some(record.base_oid.clone()),
+    })
 }
 
 impl Git {
@@ -175,7 +169,7 @@ impl Git {
         Self::at(&std::env::current_dir()?)
     }
 
-    pub(crate) fn at(cwd: &Path) -> Result<Self> {
+    fn at(cwd: &Path) -> Result<Self> {
         let cwd = cwd.to_owned();
         let git = Self { cwd };
         git.text(&["rev-parse", "--git-dir"])
@@ -194,8 +188,8 @@ impl Git {
             .context("repository has no worktrees")
     }
 
-    pub(crate) fn create_change(&self, from: Option<&str>) -> Result<Change> {
-        let creation = Lineage::resolve_creation_base(self, from)?;
+    pub(crate) fn create_change(&self, from: Option<&str>) -> Result<Capsule> {
+        let creation = resolve_creation_base(self, from)?;
         let reserved = self.repository()?.reserve(creation.clone())?;
         let path = reserved.workspace();
         if let Err(error) = self.worktree_add_detached(&path, &creation.base_oid) {
@@ -222,7 +216,7 @@ impl Git {
         let repository = self.repository()?;
         let mut records = Vec::new();
         for (capsule, record) in repository.records()? {
-            if !record.state.is_active() {
+            if !record.is_active() {
                 continue;
             }
             records.push((record.created_at, capsule, record));
@@ -237,26 +231,31 @@ impl Git {
             .into_iter()
             .map(|(_, capsule, record)| {
                 let expected_path = capsule.join("workspace");
-                let worktree = managed_worktree(&worktrees, &expected_path).with_context(|| {
-                    format!("active Change {} has no expected worktree", record.id)
-                })?;
-
-                let base = Lineage::from_record(&record).base(self)?;
-                let divergence = base
-                    .divergence_ref
-                    .as_deref()
-                    .map(|reference| self.divergence(&worktree.path, reference))
-                    .transpose()?;
-                let state = if worktree.prunable {
-                    WorktreeState::Missing
+                let base = resolve_branch_base(self, &record)?;
+                let worktree = managed_worktree(&worktrees, &expected_path);
+                let present =
+                    worktree.is_some_and(|worktree| !worktree.prunable && worktree.path.exists());
+                let path = worktree
+                    .map(|worktree| worktree.path.clone())
+                    .unwrap_or(expected_path);
+                let divergence = if present {
+                    base.reference
+                        .as_deref()
+                        .map(|reference| self.divergence(&path, reference))
+                        .transpose()?
                 } else {
-                    WorktreeState::Present(self.status(&worktree.path)?)
+                    None
+                };
+                let state = if present {
+                    WorktreeState::Present(self.status(&path)?)
+                } else {
+                    WorktreeState::Missing
                 };
                 Ok(WorktreeView {
                     id: record.id,
                     title: record.title,
-                    current: worktree.path == current,
-                    path: worktree.path.clone(),
+                    current: path == current,
+                    path,
                     base: base.display,
                     divergence,
                     state,
@@ -269,11 +268,19 @@ impl Git {
         self.current_root()
     }
 
+    pub(crate) fn is_managed_change_path(&self, path: &Path) -> Result<bool> {
+        Ok(self
+            .repository()?
+            .records()?
+            .into_iter()
+            .any(|(capsule, _)| capsule.join("workspace") == path))
+    }
+
     pub(crate) fn current_change(&self) -> Result<Option<CurrentChange>> {
         let current = self.current_root()?;
         let repository = self.repository()?;
         for (capsule, record) in repository.records()? {
-            if record.state.is_active() && capsule.join("workspace") == current {
+            if record.is_active() && capsule.join("workspace") == current {
                 let worktrees = self.worktrees()?;
                 let worktree = managed_worktree(&worktrees, &current)
                     .context("current Change has no expected worktree")?;
@@ -281,8 +288,12 @@ impl Git {
                     bail!("current Change worktree is missing");
                 }
                 return Ok(Some(CurrentChange {
-                    path: current,
+                    capsule: Capsule::at(capsule, record.id.clone())?,
+                    id: record.id,
+                    workspace: current,
                     title: record.title,
+                    publication_branch: record.publication_branch,
+                    published_oid: record.published_oid,
                 }));
             }
         }
@@ -335,6 +346,8 @@ impl Git {
         remote: &str,
         branch: &str,
     ) -> Result<String> {
+        self.checked_at(path, &["check-ref-format", "--branch", branch])
+            .with_context(|| format!("code host returned invalid target branch '{branch}'"))?;
         let tracking = format!("refs/remotes/{remote}/{branch}");
         let refspec = format!("+refs/heads/{branch}:{tracking}");
         self.checked_at(
@@ -352,17 +365,90 @@ impl Git {
         Ok(tracking)
     }
 
-    pub(crate) fn remote_branch_exists(
+    pub(crate) fn select_ship_branch(
         &self,
         path: &Path,
         remote: &str,
-        branch: &str,
-    ) -> Result<bool> {
-        let args = ["ls-remote", "--exit-code", "--heads", remote, branch];
+        base: &str,
+        fallback: &str,
+        selected: Option<&str>,
+        published_oid: Option<&str>,
+    ) -> Result<(String, Option<String>)> {
+        if let Some(selected) = selected {
+            if selected != base && selected != fallback {
+                bail!("recorded publication branch '{selected}' does not match Change Title");
+            }
+            if let Some(published_oid) = published_oid
+                && !self.is_ancestor(published_oid, "HEAD")?
+            {
+                bail!("published history is not an ancestor of Change HEAD");
+            }
+            let remote_oid = self.remote_branch_oid(path, remote, selected)?;
+            if let Some(remote_oid) = &remote_oid {
+                let owned = if let Some(published_oid) = published_oid {
+                    self.is_ancestor(published_oid, remote_oid)?
+                        && self.is_ancestor(remote_oid, "HEAD")?
+                } else {
+                    self.branch_exists_at(path, selected)?
+                        && self.branch_has_configured_upstream_at(path, selected)?
+                        && self.peel_commit_at(path, selected)? == *remote_oid
+                };
+                if !owned {
+                    bail!(
+                        "publication branch '{selected}' appeared before this Change published it"
+                    );
+                }
+            }
+            return Ok((selected.to_owned(), remote_oid));
+        }
+
+        let current = self
+            .symbolic_head_at(path)?
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if let Some(current) = current
+            && (current == base || current == fallback)
+        {
+            let remote_oid = self.remote_branch_oid(path, remote, &current)?;
+            if let Some(remote_oid) = &remote_oid
+                && !self.is_ancestor(remote_oid, "HEAD")?
+            {
+                bail!("remote publication branch '{current}' is not an ancestor of Change HEAD");
+            }
+            return Ok((current, remote_oid));
+        }
+        if !self.branch_exists_at(path, base)?
+            && self.remote_branch_oid(path, remote, base)?.is_none()
+        {
+            return Ok((base.to_owned(), None));
+        }
+        if self.branch_exists_at(path, fallback)? {
+            let remote_oid = self.remote_branch_oid(path, remote, fallback)?;
+            if let Some(remote_oid) = &remote_oid
+                && !self.is_ancestor(remote_oid, "HEAD")?
+            {
+                bail!("remote publication branch '{fallback}' is not an ancestor of Change HEAD");
+            }
+            return Ok((fallback.to_owned(), remote_oid));
+        }
+        if self.remote_branch_oid(path, remote, fallback)?.is_some() {
+            bail!("publication branch '{fallback}' already exists on remote '{remote}'");
+        }
+        Ok((fallback.to_owned(), None))
+    }
+
+    fn remote_branch_oid(&self, path: &Path, remote: &str, branch: &str) -> Result<Option<String>> {
+        let reference = format!("refs/heads/{branch}");
+        let args = ["ls-remote", "--exit-code", remote, reference.as_str()];
         let output = self.raw_at(path, &args)?;
         match output.status.code() {
-            Some(0) => Ok(true),
-            Some(2) => Ok(false),
+            Some(0) => String::from_utf8(output.stdout)
+                .context("Git returned a non-UTF-8 remote branch OID")?
+                .split_whitespace()
+                .next()
+                .map(str::to_owned)
+                .map(Some)
+                .context("Git returned an empty remote branch result"),
+            Some(2) => Ok(None),
             _ => {
                 check(output, &args)?;
                 unreachable!()
@@ -378,20 +464,31 @@ impl Git {
         Ok(count != "0")
     }
 
-    pub(crate) fn prepare_ship(&self, path: &Path, branch: &str) -> Result<()> {
+    pub(crate) fn prepare_ship(
+        &self,
+        path: &Path,
+        branch: &str,
+        may_fast_forward_branch: bool,
+    ) -> Result<()> {
         self.validate_resolved_state(path)?;
-        match self
+        let current = self
             .symbolic_head_at(path)?
-            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned))
-        {
-            Some(current) if current != branch => {
-                bail!("Change is already on publication branch '{current}', expected '{branch}'")
-            }
-            Some(_) => {}
-            None if self.branch_exists_at(path, branch)? => {
-                bail!("publication branch '{branch}' already belongs to another Change")
-            }
-            None => {
+            .and_then(|head| head.strip_prefix("refs/heads/").map(str::to_owned));
+        if current.as_deref() != Some(branch) {
+            if self.branch_exists_at(path, branch)? {
+                let reference = format!("refs/heads/{branch}");
+                let branch_oid = self.peel_commit_at(path, &reference)?;
+                let head_oid = self.peel_commit_at(path, "HEAD")?;
+                if branch_oid != head_oid {
+                    if !may_fast_forward_branch || !self.is_ancestor(&branch_oid, &head_oid)? {
+                        bail!(
+                            "publication branch '{branch}' does not match Change HEAD; refusing to reset it"
+                        );
+                    }
+                    self.checked_at(path, &["branch", "--force", branch, &head_oid])?;
+                }
+                self.checked_at(path, &["switch", branch])?;
+            } else {
                 self.checked_at(path, &["switch", "--create", branch])?;
             }
         }
@@ -484,9 +581,8 @@ impl Git {
         remote: &str,
         branch: &str,
         head_oid: &str,
+        expected_remote_oid: Option<&str>,
     ) -> Result<()> {
-        let destination = format!("{head_oid}:refs/heads/{branch}");
-        self.checked_at(path, &["push", remote, &destination])?;
         self.checked_at(
             path,
             &["config", &format!("branch.{branch}.remote"), remote],
@@ -499,6 +595,12 @@ impl Git {
                 &format!("refs/heads/{branch}"),
             ],
         )?;
+        let lease = format!(
+            "--force-with-lease=refs/heads/{branch}:{}",
+            expected_remote_oid.unwrap_or_default()
+        );
+        let destination = format!("{head_oid}:refs/heads/{branch}");
+        self.checked_at(path, &["push", &lease, remote, &destination])?;
         Ok(())
     }
 
@@ -518,6 +620,13 @@ impl Git {
         if self.status(path)?.conflicts > 0 {
             bail!("cannot ship a Change with unresolved conflicts");
         }
+        if self.git_operation_in_progress(path)? {
+            bail!("cannot ship while a Git operation is in progress");
+        }
+        Ok(())
+    }
+
+    fn git_operation_in_progress(&self, path: &Path) -> Result<bool> {
         for marker in [
             "MERGE_HEAD",
             "CHERRY_PICK_HEAD",
@@ -532,17 +641,17 @@ impl Git {
                 path.join(marker)
             };
             if marker.exists() {
-                bail!("cannot ship while a Git operation is in progress");
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     pub(crate) fn sync(&self) -> Result<SyncResult> {
         let worktrees = self.worktrees()?;
         let primary = worktrees.first().context("repository has no worktrees")?;
         if self.current_root()? != primary.path {
-            bail!("grove sync must be run from the primary worktree");
+            return self.sync_change(&worktrees, primary);
         }
         let primary_branch = primary
             .branch
@@ -582,7 +691,7 @@ impl Git {
         let mut records = repository
             .records()?
             .into_iter()
-            .filter(|(_, record)| record.state.is_active())
+            .filter(|(_, record)| record.is_active())
             .map(|(capsule, record)| (record.created_at, capsule, record))
             .collect::<Vec<_>>();
         records.sort_by(|left, right| {
@@ -650,25 +759,30 @@ impl Git {
         let mut candidates = Vec::new();
         for (_, capsule, record) in records {
             if record.parent.as_deref() != Some(primary_branch) {
-                outcomes.insert(record.id, ("skipped", "created from another parent branch"));
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "created from another parent branch"),
+                );
                 continue;
             }
             let expected_path = capsule.join("workspace");
             let Some(worktree) = managed_worktree(&worktrees, &expected_path) else {
-                let reason = unavailable_worktree_reason(&worktrees, &expected_path);
-                outcomes.insert(record.id, ("skipped", reason));
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "managed worktree is missing"),
+                );
                 continue;
             };
             if worktree.prunable || !worktree.path.exists() {
-                outcomes.insert(record.id, ("skipped", "worktree is missing"));
+                outcomes.insert(record.id, (SyncOutcome::Skipped, "worktree is missing"));
                 continue;
             }
             if worktree.locked {
-                outcomes.insert(record.id, ("skipped", "worktree is Git-locked"));
+                outcomes.insert(record.id, (SyncOutcome::Skipped, "worktree is Git-locked"));
                 continue;
             }
             let Some(activity_lock) = try_lock_change(&capsule)? else {
-                outcomes.insert(record.id, ("skipped", "Change is already open"));
+                outcomes.insert(record.id, (SyncOutcome::Skipped, "Change is already open"));
                 continue;
             };
             locks.push(activity_lock);
@@ -679,16 +793,21 @@ impl Git {
         let mut changes = Vec::new();
         for (record, expected_path) in candidates {
             let Some(worktree) = managed_worktree(&refreshed, &expected_path) else {
-                let reason = unavailable_worktree_reason(&refreshed, &expected_path);
-                outcomes.insert(record.id, ("skipped", reason));
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "managed worktree became missing"),
+                );
                 continue;
             };
             if worktree.prunable || !worktree.path.exists() {
-                outcomes.insert(record.id, ("skipped", "worktree became missing"));
+                outcomes.insert(record.id, (SyncOutcome::Skipped, "worktree became missing"));
                 continue;
             }
             if worktree.locked {
-                outcomes.insert(record.id, ("skipped", "worktree became Git-locked"));
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "worktree became Git-locked"),
+                );
                 continue;
             }
             if self.peel_commit_at(&worktree.path, "HEAD")? != worktree.head_oid {
@@ -697,8 +816,18 @@ impl Git {
                     record.id
                 );
             }
+            if self.git_operation_in_progress(&worktree.path)? {
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "Git operation is in progress"),
+                );
+                continue;
+            }
             if self.is_dirty(&worktree.path)? {
-                outcomes.insert(record.id, ("skipped", "worktree has uncommitted changes"));
+                outcomes.insert(
+                    record.id,
+                    (SyncOutcome::Skipped, "worktree has uncommitted changes"),
+                );
                 continue;
             }
             changes.push((
@@ -713,7 +842,10 @@ impl Git {
         let mut remaining = Vec::new();
         for (id, path, head_oid, creation_base_oid) in changes {
             if !self.is_full_commit(&creation_base_oid) {
-                outcomes.insert(id, ("skipped", "recorded creation base is invalid"));
+                outcomes.insert(
+                    id,
+                    (SyncOutcome::Skipped, "recorded creation base is invalid"),
+                );
                 continue;
             }
             if !self
@@ -722,7 +854,10 @@ impl Git {
                     format!("failed to validate recorded creation base OID for change '{id}'")
                 })?
             {
-                outcomes.insert(id, ("skipped", "creation base is not in upstream"));
+                outcomes.insert(
+                    id,
+                    (SyncOutcome::Skipped, "creation base is not in upstream"),
+                );
                 continue;
             }
             if !self
@@ -733,12 +868,15 @@ impl Git {
             {
                 outcomes.insert(
                     id,
-                    ("skipped", "Change does not descend from creation base"),
+                    (
+                        SyncOutcome::Skipped,
+                        "Change does not descend from creation base",
+                    ),
                 );
                 continue;
             }
             if self.has_merge_history(&creation_base_oid, &head_oid)? {
-                outcomes.insert(id, ("skipped", "Change has merge history"));
+                outcomes.insert(id, (SyncOutcome::Skipped, "Change has merge history"));
                 continue;
             }
             if let Some(prepared) =
@@ -746,20 +884,19 @@ impl Git {
             {
                 integrated.push((id, prepared));
             } else {
-                remaining.push((id, path, creation_base_oid));
+                remaining.push(id);
             }
         }
 
         for (id, prepared) in integrated {
             self.finish_archive(prepared)?;
-            outcomes.insert(id, ("archived", "integrated upstream"));
+            outcomes.insert(id, (SyncOutcome::Archived, "integrated upstream"));
         }
-        for (id, path, creation_base_oid) in &remaining {
-            if self.rebase_change(path, &upstream_oid, creation_base_oid)? {
-                outcomes.insert(id.clone(), ("rebased", "rebased onto upstream"));
-            } else {
-                outcomes.insert(id.clone(), ("skipped", "rebase failed; Change restored"));
-            }
+        for id in remaining {
+            outcomes.insert(
+                id,
+                (SyncOutcome::Skipped, "run sync from the Change to rebase"),
+            );
         }
         drop(locks);
 
@@ -772,30 +909,144 @@ impl Git {
                 SyncEntry {
                     id,
                     title,
-                    outcome: outcome.to_owned(),
-                    reason: reason.to_owned(),
+                    outcome,
+                    reason,
                 }
             })
             .collect::<Vec<_>>();
-        let archived = entries
-            .iter()
-            .filter(|entry| entry.outcome == "archived")
-            .count();
-        let rebased = entries
-            .iter()
-            .filter(|entry| entry.outcome == "rebased")
-            .count();
-        let skipped = entries
-            .iter()
-            .filter(|entry| entry.outcome == "skipped")
-            .count();
 
-        Ok(SyncResult {
-            entries,
-            archived,
-            rebased,
-            skipped,
-        })
+        Ok(SyncResult { entries })
+    }
+
+    fn sync_change(&self, worktrees: &[Worktree], primary: &Worktree) -> Result<SyncResult> {
+        let primary_branch = primary
+            .branch
+            .as_deref()
+            .context("primary worktree is not on a branch")?;
+        let current = self.current_root()?;
+        let repository = self.repository()?;
+        let (capsule, record) = repository
+            .records()?
+            .into_iter()
+            .find(|(capsule, record)| record.is_active() && capsule.join("workspace") == current)
+            .context("grove sync must be run from the primary worktree or a managed Change")?;
+        let result = |outcome, reason| SyncResult {
+            entries: vec![SyncEntry {
+                id: record.id.clone(),
+                title: record.title.clone(),
+                outcome,
+                reason,
+            }],
+        };
+        if record.parent.as_deref() != Some(primary_branch) {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "created from another parent branch",
+            ));
+        }
+        let Some(worktree) = managed_worktree(worktrees, &current) else {
+            return Ok(result(SyncOutcome::Skipped, "managed worktree is missing"));
+        };
+        if worktree.prunable || !worktree.path.exists() {
+            return Ok(result(SyncOutcome::Skipped, "worktree is missing"));
+        }
+        if worktree.locked {
+            return Ok(result(SyncOutcome::Skipped, "worktree is Git-locked"));
+        }
+        let Some(_lock) = try_lock_change(&capsule)? else {
+            return Ok(result(SyncOutcome::Skipped, "Change is already open"));
+        };
+        let refreshed = self.worktrees()?;
+        let Some(worktree) = managed_worktree(&refreshed, &current) else {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "managed worktree became missing",
+            ));
+        };
+        if worktree.prunable || !worktree.path.exists() || worktree.locked {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "worktree changed during sync preparation",
+            ));
+        }
+        if self.peel_commit_at(&current, "HEAD")? != worktree.head_oid {
+            bail!(
+                "Change '{}' HEAD changed during sync preparation",
+                record.id
+            );
+        }
+        if self.git_operation_in_progress(&current)? {
+            return Ok(result(SyncOutcome::Skipped, "Git operation is in progress"));
+        }
+        if self.is_dirty(&current)? {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "worktree has uncommitted changes",
+            ));
+        }
+        if !self.is_full_commit(&record.base_oid) {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "recorded creation base is invalid",
+            ));
+        }
+        if !self.is_ancestor(&record.base_oid, &primary.head_oid)? {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "creation base is not in primary",
+            ));
+        }
+        if !self.is_ancestor(&record.base_oid, &worktree.head_oid)? {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "Change does not descend from creation base",
+            ));
+        }
+        if self.has_merge_history(&record.base_oid, &worktree.head_oid)? {
+            return Ok(result(SyncOutcome::Skipped, "Change has merge history"));
+        }
+        if self.is_ancestor(&worktree.head_oid, &primary.head_oid)?
+            || self.same_tree(&worktree.head_oid, &primary.head_oid)?
+            || self.merge_adds_no_change(
+                &worktree.head_oid,
+                &primary.head_oid,
+                Some(&record.base_oid),
+            )?
+        {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "Change is integrated into primary; run grove archive",
+            ));
+        }
+        let recorded_branch_is_configured = record
+            .publication_branch
+            .as_deref()
+            .map(|branch| self.branch_has_configured_upstream_at(&current, branch))
+            .transpose()?
+            .unwrap_or(false);
+        let attached_branch_is_configured = worktree
+            .branch
+            .as_deref()
+            .map(|branch| self.branch_has_configured_upstream_at(&current, branch))
+            .transpose()?
+            .unwrap_or(false);
+        if record.published_oid.is_some()
+            || recorded_branch_is_configured
+            || attached_branch_is_configured
+        {
+            return Ok(result(
+                SyncOutcome::Skipped,
+                "published history is not rewritten",
+            ));
+        }
+        let merge_base =
+            self.text_at(&current, &["merge-base", "HEAD", primary.head_oid.as_str()])?;
+        let (outcome, reason) = if self.rebase_change(&current, &primary.head_oid, &merge_base)? {
+            (SyncOutcome::Rebased, "onto primary")
+        } else {
+            (SyncOutcome::Skipped, "rebase failed; Change restored")
+        };
+        Ok(result(outcome, reason))
     }
 
     fn has_merge_history(&self, base_oid: &str, tip: &str) -> Result<bool> {
@@ -869,37 +1120,72 @@ impl Git {
         let repository = self.repository()?;
         let mut finalized = 0;
         for (capsule, record) in repository.records()? {
-            if !record.state.is_closing() {
+            if !record.is_closing() {
                 continue;
             }
             let _lock = lock_change(&capsule)?;
-            let Some((capsule, record)) = repository.record(&record.id)? else {
+            let Some((capsule_path, record)) = repository.record(&record.id)? else {
                 continue;
             };
-            if !record.state.is_closing() {
+            if !record.is_closing() {
                 continue;
             }
+            let capsule = Capsule::at(capsule_path, record.id.clone())?;
             let closing = record
-                .closing
+                .closing()
                 .context("closing Change has no closing facts")?;
-            let expected_path = capsule.join("workspace");
+            let expected_path = capsule.workspace();
             let current_worktrees = self.worktrees()?;
-            if managed_worktree(&current_worktrees, &expected_path)
-                .is_some_and(|worktree| !worktree.prunable && worktree.path.exists())
+            let worktree = managed_worktree(&current_worktrees, &expected_path);
+            if let Some(worktree) = worktree
+                && !worktree.prunable
+                && worktree.path.exists()
             {
-                restore_active(&capsule, &record.id)?;
+                if worktree.head_oid != closing.tip_oid
+                    || self.peel_commit_at(&expected_path, "HEAD")? != closing.tip_oid
+                {
+                    bail!(
+                        "cannot recover Change '{}': workspace HEAD changed",
+                        record.id
+                    );
+                }
+                capsule.restore_active()?;
                 continue;
             }
-
-            self.validate_target_snapshot(
+            self.validate_recovery_target(
                 &primary,
                 closing.target_ref.as_deref(),
                 closing.target_oid.as_deref(),
             )?;
+            match worktree {
+                Some(worktree)
+                    if worktree.prunable
+                        && !worktree.locked
+                        && !expected_path.exists()
+                        && worktree.head_oid == closing.tip_oid =>
+                {
+                    self.worktree_remove(&expected_path, true)?;
+                }
+                Some(_) => {
+                    bail!(
+                        "cannot recover Change '{}': workspace remains registered with Git",
+                        record.id
+                    );
+                }
+                None if expected_path.exists() => {
+                    bail!(
+                        "cannot recover Change '{}': workspace exists without a Git worktree",
+                        record.id
+                    );
+                }
+                None => {}
+            }
+
             if let Some(branch) = &closing.local_branch {
                 self.cleanup_local_branch(&primary, branch, &closing.tip_oid)?;
             }
-            mark_archived(&capsule, &record.id)
+            capsule
+                .mark_archived()
                 .context("could not finish interrupted archive record")?;
             finalized += 1;
         }
@@ -917,7 +1203,7 @@ impl Git {
             .repository()?
             .record(id)?
             .with_context(|| format!("Change record is missing for '{id}'"))?;
-        if record.id != id || !record.state.is_active() {
+        if record.id != id || !record.is_active() {
             bail!("Change '{id}' is not active");
         }
         let expected_path = capsule.join("workspace");
@@ -932,6 +1218,9 @@ impl Git {
         if target.locked {
             bail!("worktree is locked: {}", target.path.display());
         }
+        if self.git_operation_in_progress(&target.path)? {
+            bail!("cannot archive while a Git operation is in progress");
+        }
         if !force && self.is_dirty(&target.path)? {
             bail!(
                 "worktree has uncommitted changes: {}",
@@ -939,10 +1228,9 @@ impl Git {
             );
         }
 
-        let path = target.path.clone();
         let expected_head_oid = target.head_oid.clone();
-        let base = Lineage::from_record(&record).base(self)?;
-        let target_ref = base.removal_ref.clone();
+        let base = resolve_branch_base(self, &record)?;
+        let target_ref = base.reference.clone();
         let target_oid = target_ref
             .as_deref()
             .map(|reference| self.peel_commit(reference))
@@ -956,9 +1244,7 @@ impl Git {
         }
 
         Ok(PreparedArchive {
-            path,
-            id: id.to_owned(),
-            capsule,
+            capsule: Capsule::at(capsule, id.to_owned())?,
             primary,
             expected_head_oid,
             target_oid,
@@ -986,7 +1272,7 @@ impl Git {
             .repository()?
             .record(id)?
             .with_context(|| format!("Change record is missing for '{id}'"))?;
-        if record.id != id || !record.state.is_active() {
+        if record.id != id || !record.is_active() {
             bail!("Change '{id}' is not active");
         }
         let expected_path = capsule.join("workspace");
@@ -1010,9 +1296,7 @@ impl Git {
             return Ok(None);
         }
         Ok(Some(PreparedArchive {
-            path: path.to_owned(),
-            id: id.to_owned(),
-            capsule,
+            capsule: Capsule::at(capsule, id.to_owned())?,
             primary,
             expected_head_oid: head_oid.to_owned(),
             target_oid: Some(upstream_oid.to_owned()),
@@ -1029,52 +1313,69 @@ impl Git {
 
     pub(crate) fn finish_archive(&self, prepared: PreparedArchive) -> Result<()> {
         self.validate_archive_state(&prepared)?;
-        mark_closing(
-            &prepared.capsule,
-            &prepared.id,
-            Closing {
-                outcome: if prepared.force {
-                    Outcome::Discarded
-                } else {
-                    Outcome::Integrated
-                },
-                tip_oid: prepared.expected_head_oid.clone(),
-                target_oid: prepared.target_oid.clone(),
-                target_ref: prepared.target_ref.clone(),
-                local_branch: prepared.local_branch.clone(),
+        prepared.capsule.mark_closing(Closing {
+            outcome: if prepared.force {
+                Outcome::Discarded
+            } else {
+                Outcome::Integrated
             },
-        )?;
+            tip_oid: prepared.expected_head_oid.clone(),
+            target_oid: prepared.target_oid.clone(),
+            target_ref: prepared.target_ref.clone(),
+            local_branch: prepared.local_branch.clone(),
+        })?;
         self.validate_archive_state(&prepared)?;
-        self.worktree_remove(&prepared.path, prepared.force)?;
+        self.worktree_remove(&prepared.capsule.workspace(), prepared.force)?;
         if let Some(branch) = &prepared.local_branch {
             self.cleanup_local_branch(&prepared.primary, branch, &prepared.expected_head_oid)?;
         }
-        mark_archived(&prepared.capsule, &prepared.id)
+        prepared
+            .capsule
+            .mark_archived()
             .context("Change worktree was removed, but its archive record did not close")?;
         Ok(())
     }
 
     fn validate_archive_state(&self, prepared: &PreparedArchive) -> Result<()> {
         let worktrees = self.worktrees()?;
-        let worktree = managed_worktree(&worktrees, &prepared.path)
-            .with_context(|| format!("Change '{}' expected worktree is gone", prepared.id))?;
+        let path = prepared.capsule.workspace();
+        let id = prepared.capsule.id();
+        let worktree = managed_worktree(&worktrees, &path)
+            .with_context(|| format!("Change '{id}' expected worktree is gone"))?;
         if worktree.prunable || !worktree.path.exists() {
-            bail!("Change '{}' expected worktree is gone", prepared.id);
+            bail!("Change '{id}' expected worktree is gone");
         }
-        let live_oid = self.peel_commit_at(&prepared.path, "HEAD")?;
+        if worktree.locked {
+            bail!("Change '{id}' worktree became Git-locked");
+        }
+        if self.git_operation_in_progress(&path)? {
+            bail!("Change '{id}' started a Git operation before archive");
+        }
+        let live_oid = self.peel_commit_at(&path, "HEAD")?;
         if worktree.head_oid != prepared.expected_head_oid || live_oid != prepared.expected_head_oid
         {
-            bail!("Change '{}' HEAD changed before archive", prepared.id);
+            bail!("Change '{id}' HEAD changed before archive");
         }
-        self.validate_target(prepared)
-    }
-
-    fn validate_target(&self, prepared: &PreparedArchive) -> Result<()> {
         self.validate_target_snapshot(
             &prepared.primary,
             prepared.target_ref.as_deref(),
             prepared.target_oid.as_deref(),
         )
+    }
+
+    fn validate_recovery_target(
+        &self,
+        cwd: &Path,
+        target_ref: Option<&str>,
+        target_oid: Option<&str>,
+    ) -> Result<()> {
+        if let (Some(reference), Some(expected)) = (target_ref, target_oid) {
+            let live = self.peel_commit_at(cwd, reference)?;
+            if live != expected && !self.is_ancestor(expected, &live)? {
+                bail!("integration target '{reference}' changed after archive removal");
+            }
+        }
+        Ok(())
     }
 
     fn validate_target_snapshot(
@@ -1286,21 +1587,14 @@ impl Git {
         }
         let untracked =
             self.output_bytes_at(path, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-        for relative in untracked
+        let untracked = untracked
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
-        {
-            let contents = std::fs::read(path.join(path_from_bytes(relative)?))?;
-            if !contents.contains(&0) {
-                added += contents.iter().filter(|byte| **byte == b'\n').count();
-                if !contents.is_empty() && !contents.ends_with(b"\n") {
-                    added += 1;
-                }
-            }
-        }
+            .count();
         Ok(Status {
             added,
             deleted,
+            untracked,
             conflicts,
         })
     }
@@ -1328,13 +1622,10 @@ impl Git {
     }
 
     fn tip_integrated(&self, tip_oid: &str, base: &BranchBase) -> Result<bool> {
-        if !base.valid {
-            bail!("Change has invalid Grove lineage; use --force to discard it");
-        }
         let comparison = base
-            .removal_ref
+            .reference
             .as_deref()
-            .context("the default branch cannot be archived as a linked worktree")?;
+            .context("Change has invalid Grove lineage; use --force to discard it")?;
         if self.is_ancestor(tip_oid, comparison)? || self.same_tree(tip_oid, comparison)? {
             return Ok(true);
         }
@@ -1351,7 +1642,7 @@ impl Git {
 
     fn worktree_remove(&self, path: &Path, force: bool) -> Result<()> {
         let before = if force {
-            &["worktree", "remove", "--force", "--force"][..]
+            &["worktree", "remove", "--force"][..]
         } else {
             &["worktree", "remove"][..]
         };
@@ -1539,14 +1830,6 @@ fn managed_worktree<'a>(worktrees: &'a [Worktree], expected_path: &Path) -> Opti
     worktrees
         .iter()
         .find(|worktree| worktree.path == expected_path)
-}
-
-fn unavailable_worktree_reason(worktrees: &[Worktree], expected_path: &Path) -> &'static str {
-    if managed_worktree(worktrees, expected_path).is_some() {
-        "worktree is unavailable"
-    } else {
-        "managed worktree is missing"
-    }
 }
 
 fn abbreviate_oid(oid: &str) -> String {

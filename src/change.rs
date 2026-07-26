@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -10,8 +11,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-
-const RECORD_VERSION: u8 = 3;
+use unicode_width::UnicodeWidthChar;
 
 pub(crate) struct RepositoryDirectory {
     path: PathBuf,
@@ -42,15 +42,15 @@ impl RepositoryDirectory {
     }
 }
 
-pub(crate) struct Lock {
+pub(crate) struct ActivityLock {
     _file: File,
 }
 
-pub(crate) fn lock(capsule: &Path) -> Result<Lock> {
-    try_lock(capsule)?.context("change is already open in another Grove process")
+pub(crate) fn lock(capsule: &Path) -> Result<ActivityLock> {
+    try_lock(capsule)?.context("Change is already open in another Grove process")
 }
 
-pub(crate) fn try_lock(capsule: &Path) -> Result<Option<Lock>> {
+pub(crate) fn try_lock(capsule: &Path) -> Result<Option<ActivityLock>> {
     let path = capsule.join(".activity.lock");
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
@@ -60,7 +60,7 @@ pub(crate) fn try_lock(capsule: &Path) -> Result<Option<Lock>> {
         .open(&path)
         .with_context(|| format!("failed to open change lock {}", path.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(Lock { _file: file })),
+        Ok(()) => Ok(Some(ActivityLock { _file: file })),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => Err(error)
             .with_context(|| format!("failed to lock change capsule {}", capsule.display())),
@@ -73,25 +73,7 @@ pub(crate) struct Creation {
     pub(crate) parent: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum State {
-    Active,
-    Closing,
-    Archived,
-}
-
-impl State {
-    pub(crate) fn is_active(&self) -> bool {
-        matches!(self, Self::Active)
-    }
-
-    pub(crate) fn is_closing(&self) -> bool {
-        matches!(self, Self::Closing)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Outcome {
     Integrated,
@@ -108,23 +90,44 @@ pub(crate) struct Closing {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+enum Lifecycle {
+    Active,
+    Closing { closing: Closing },
+    Archived { archived_at: u64, outcome: Outcome },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Record {
-    version: u8,
     pub(crate) id: String,
     pub(crate) title: Option<String>,
-    pub(crate) state: State,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) publication_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) published_oid: Option<String>,
+    #[serde(flatten)]
+    lifecycle: Lifecycle,
     pub(crate) created_at: u64,
     pub(crate) base_oid: String,
     pub(crate) parent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) closing: Option<Closing>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) archived_at: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) outcome: Option<Outcome>,
 }
 
 impl Record {
+    pub(crate) fn is_active(&self) -> bool {
+        matches!(self.lifecycle, Lifecycle::Active)
+    }
+
+    pub(crate) fn is_closing(&self) -> bool {
+        matches!(self.lifecycle, Lifecycle::Closing { .. })
+    }
+
+    pub(crate) fn closing(&self) -> Option<&Closing> {
+        match &self.lifecycle {
+            Lifecycle::Closing { closing } => Some(closing),
+            Lifecycle::Active | Lifecycle::Archived { .. } => None,
+        }
+    }
+
     fn load_all(root: &Path) -> Result<Vec<(PathBuf, Self)>> {
         let entries = match fs::read_dir(root) {
             Ok(entries) => entries,
@@ -146,16 +149,15 @@ impl Record {
                 continue;
             }
             let capsule = entry.path();
-            let Some(record) = Self::load_optional(&capsule.join("change.json"))? else {
-                continue;
+            let record = match Self::load_optional(&capsule.join("change.json")) {
+                Ok(Some(record)) => record,
+                Ok(None) => continue,
+                Err(error) if error.downcast_ref::<std::io::Error>().is_none() => continue,
+                Err(error) => return Err(error),
             };
-            if entry.file_name() != std::ffi::OsStr::new(&record.id) {
-                bail!(
-                    "change record ID does not match capsule {}",
-                    capsule.display()
-                );
+            if entry.file_name() == std::ffi::OsStr::new(&record.id) {
+                records.push((capsule, record));
             }
-            records.push((capsule, record));
         }
         Ok(records)
     }
@@ -169,15 +171,18 @@ impl Record {
                     .with_context(|| format!("failed to read change record {}", path.display()));
             }
         };
-        let record: Self = serde_json::from_slice(&bytes)
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("invalid change record {}", path.display()))?;
-        if record.version != RECORD_VERSION || !valid_id(&record.id) {
+        if value.get("version").is_some() {
             bail!(
-                "unsupported change record {} (version {}, expected {})",
-                path.display(),
-                record.version,
-                RECORD_VERSION
+                "versioned change record requires explicit conversion: {}",
+                path.display()
             );
+        }
+        let record: Self = serde_json::from_value(value)
+            .with_context(|| format!("invalid change record {}", path.display()))?;
+        if !valid_id(&record.id) {
+            bail!("invalid Change ID in record {}", path.display());
         }
         Ok(Some(record))
     }
@@ -209,16 +214,14 @@ impl Reserved {
                 }
             }
             let record = Record {
-                version: RECORD_VERSION,
                 id: id.clone(),
                 title: None,
-                state: State::Active,
+                publication_branch: None,
+                published_oid: None,
+                lifecycle: Lifecycle::Active,
                 created_at,
                 base_oid: creation.base_oid.clone(),
                 parent: creation.parent.clone(),
-                closing: None,
-                archived_at: None,
-                outcome: None,
             };
             if let Err(error) = replace_json(&capsule.join("change.json"), &record) {
                 if let Err(rollback_error) = fs::remove_dir_all(&capsule) {
@@ -237,10 +240,10 @@ impl Reserved {
         self.capsule.join("workspace")
     }
 
-    pub(crate) fn finish(self) -> Change {
-        Change {
+    pub(crate) fn finish(self) -> Capsule {
+        Capsule {
+            path: self.capsule,
             id: self.id,
-            capsule: self.capsule,
         }
     }
 
@@ -258,103 +261,198 @@ impl Reserved {
     }
 }
 
-pub(crate) struct Change {
-    pub(crate) id: String,
-    capsule: PathBuf,
+pub(crate) struct Capsule {
+    path: PathBuf,
+    id: String,
 }
 
-impl Change {
+impl Capsule {
+    pub(crate) fn at(path: PathBuf, id: String) -> Result<Self> {
+        if path.file_name() != Some(std::ffi::OsStr::new(&id)) {
+            bail!("change identity does not match capsule path");
+        }
+        Ok(Self { path, id })
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
     pub(crate) fn workspace(&self) -> PathBuf {
-        self.capsule.join("workspace")
+        self.path.join("workspace")
+    }
+
+    pub(crate) fn validate_identity(&self) -> Result<()> {
+        let path = self.path.join("change.json");
+        let record = Record::load_optional(&path)?
+            .with_context(|| format!("change record is missing from {}", self.path.display()))?;
+        if record.id != self.id {
+            bail!("change identity does not match capsule record");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn initialize_title(&self, title: &str) -> Result<()> {
+        self.update_record(|record| {
+            if record.title.is_none() {
+                record.title = Some(title.to_owned());
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn initialize_publication_branch(&self, branch: &str) -> Result<()> {
+        self.update_record(|record| match record.publication_branch.as_deref() {
+            Some(existing) if existing != branch => {
+                bail!("Change '{}' already publishes from '{existing}'", record.id)
+            }
+            Some(_) => Ok(()),
+            None => {
+                record.publication_branch = Some(branch.to_owned());
+                Ok(())
+            }
+        })
+    }
+
+    pub(crate) fn mark_published(&self, branch: &str, oid: &str) -> Result<()> {
+        self.update_record(|record| {
+            if record.publication_branch.as_deref() != Some(branch) {
+                bail!("Change '{}' publication branch changed", record.id);
+            }
+            record.published_oid = Some(oid.to_owned());
+            Ok(())
+        })
+    }
+
+    pub(crate) fn mark_closing(&self, closing: Closing) -> Result<()> {
+        self.update_record(|record| {
+            if !record.is_active() {
+                bail!("Change '{}' is not active", record.id);
+            }
+            record.lifecycle = Lifecycle::Closing { closing };
+            Ok(())
+        })
+    }
+
+    pub(crate) fn mark_archived(&self) -> Result<()> {
+        self.update_record(|record| {
+            let Lifecycle::Closing { closing } = &record.lifecycle else {
+                bail!("Change '{}' is not closing", record.id);
+            };
+            let archived_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .context("system clock is before the Unix epoch")?
+                .as_secs();
+            record.lifecycle = Lifecycle::Archived {
+                archived_at,
+                outcome: closing.outcome,
+            };
+            Ok(())
+        })
+    }
+
+    pub(crate) fn restore_active(&self) -> Result<()> {
+        self.update_record(|record| {
+            if !record.is_closing() {
+                bail!("Change '{}' is not closing", record.id);
+            }
+            record.lifecycle = Lifecycle::Active;
+            Ok(())
+        })
+    }
+
+    fn update_record(&self, update: impl FnOnce(&mut Record) -> Result<()>) -> Result<()> {
+        let lock_path = self.path.join(".metadata.lock");
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let lock = options.open(&lock_path).with_context(|| {
+            format!("failed to open change record lock {}", lock_path.display())
+        })?;
+        lock.lock()
+            .with_context(|| format!("failed to lock change record {}", self.path.display()))?;
+
+        let path = self.path.join("change.json");
+        let mut record = Record::load_optional(&path)?
+            .with_context(|| format!("change record is missing from {}", self.path.display()))?;
+        if record.id != self.id {
+            bail!("change identity does not match capsule record");
+        }
+        update(&mut record)?;
+        replace_json(&path, &record)
     }
 }
 
-pub(crate) fn validate_identity(capsule: &Path, expected_id: &str) -> Result<()> {
-    let path = capsule.join("change.json");
-    let record = Record::load_optional(&path)?
-        .with_context(|| format!("change record is missing from {}", capsule.display()))?;
-    if record.id != expected_id {
-        bail!("change identity does not match capsule record");
+pub(crate) fn publication_branch_base(title: &str) -> Result<String> {
+    let mut branch = String::new();
+    let mut separator = false;
+    for character in title.chars() {
+        if character.is_ascii_alphanumeric() {
+            if separator && !branch.is_empty() {
+                branch.push('-');
+            }
+            branch.push(character.to_ascii_lowercase());
+            separator = false;
+        } else if !branch.is_empty() {
+            separator = true;
+        }
     }
-    Ok(())
-}
-
-pub(crate) fn initialize_title(capsule: &Path, expected_id: &str, title: &str) -> Result<()> {
-    update_record(capsule, expected_id, |record| {
-        if record.title.is_none() {
-            record.title = Some(title.to_owned());
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn mark_closing(capsule: &Path, expected_id: &str, closing: Closing) -> Result<()> {
-    update_record(capsule, expected_id, |record| {
-        if !matches!(record.state, State::Active) {
-            bail!("change '{}' is not active", record.id);
-        }
-        record.state = State::Closing;
-        record.closing = Some(closing);
-        Ok(())
-    })
-}
-
-pub(crate) fn mark_archived(capsule: &Path, expected_id: &str) -> Result<()> {
-    update_record(capsule, expected_id, |record| {
-        if !matches!(record.state, State::Closing) {
-            bail!("change '{}' is not closing", record.id);
-        }
-        let closed_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .context("system clock is before the Unix epoch")?
-            .as_secs();
-        let closing = record
-            .closing
-            .take()
-            .context("closing change has no closing facts")?;
-        record.state = State::Archived;
-        record.archived_at = Some(closed_at);
-        record.outcome = Some(closing.outcome);
-        Ok(())
-    })
-}
-
-pub(crate) fn restore_active(capsule: &Path, expected_id: &str) -> Result<()> {
-    update_record(capsule, expected_id, |record| {
-        if !matches!(record.state, State::Closing) {
-            bail!("change '{}' is not closing", record.id);
-        }
-        record.state = State::Active;
-        record.closing = None;
-        Ok(())
-    })
-}
-
-fn update_record(
-    capsule: &Path,
-    expected_id: &str,
-    update: impl FnOnce(&mut Record) -> Result<()>,
-) -> Result<()> {
-    let lock_path = capsule.join(".metadata.lock");
-    let mut options = OpenOptions::new();
-    options.create(true).read(true).write(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let lock = options
-        .open(&lock_path)
-        .with_context(|| format!("failed to open change record lock {}", lock_path.display()))?;
-    lock.lock()
-        .with_context(|| format!("failed to lock change record {}", capsule.display()))?;
-
-    let path = capsule.join("change.json");
-    let mut record = Record::load_optional(&path)?
-        .with_context(|| format!("change record is missing from {}", capsule.display()))?;
-    if record.id != expected_id {
-        bail!("change identity does not match capsule record");
+    if branch.is_empty() {
+        bail!("Change Title cannot form an ASCII publication branch");
     }
-    update(&mut record)?;
+    Ok(branch)
+}
 
-    replace_json(&path, &record)
+pub(crate) fn title_labels<'a>(
+    changes: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    reserved_titles: &[&str],
+) -> Vec<String> {
+    let changes = changes
+        .into_iter()
+        .map(|(id, title)| {
+            (
+                id,
+                title.map(display_text).filter(|title| !title.is_empty()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut title_counts = HashMap::new();
+    for title in reserved_titles
+        .iter()
+        .copied()
+        .chain(changes.iter().filter_map(|(_, title)| title.as_deref()))
+    {
+        *title_counts.entry(title.to_owned()).or_insert(0_usize) += 1;
+    }
+    changes
+        .into_iter()
+        .map(|(id, title)| match title {
+            Some(title) if title_counts.get(title.as_str()) == Some(&1) => title,
+            Some(title) => format!("{title} · {id}"),
+            None => format!("Untitled · {id}"),
+        })
+        .collect()
+}
+
+pub(crate) fn display_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| display_safe(*character))
+        .collect()
+}
+
+pub(crate) fn display_safe(character: char) -> bool {
+    !character.is_control()
+        && UnicodeWidthChar::width(character).is_some()
+        && !matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
 }
 
 fn generate_id(root: &Path, nonce: u8) -> Result<String> {
@@ -402,7 +500,6 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
         .with_context(|| format!("failed to finish Grove record {}", path.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync Grove record {}", path.display()))?;
-    sync_parent(path)?;
     Ok(())
 }
 

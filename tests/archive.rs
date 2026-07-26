@@ -1,9 +1,9 @@
 mod support;
 
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use support::{
-    TestRepo, assert_inline_terminal_restored, assert_terminal_restored, stderr, stdout,
+    TestChange, TestRepo, assert_inline_terminal_restored, assert_terminal_restored, stderr, stdout,
 };
 
 #[test]
@@ -105,9 +105,10 @@ fn archive_picker_cancels_or_archives_the_selected_change() {
         repo.set_change_title(change, &format!("Archive Change {}", index + 1));
     }
 
-    let cancelled = repo.archive_in_pty("Archive Change 1", b"\x1b");
+    let cancelled = repo.archive_without_color_in_pty("Archive Change 1", b"\x1b");
     assert!(cancelled.status.success(), "{cancelled:?}");
     assert!(changes.iter().all(|change| change.path.exists()));
+    assert!(!stdout(&cancelled).contains("\x1b[1m"), "{cancelled:?}");
     assert_terminal_restored(&stdout(&cancelled));
 
     let archived = repo.archive_in_short_pty("Archive Change 1", b"\x1b[B\x1b[B\x1b[B\r");
@@ -144,12 +145,173 @@ fn archive_preserves_native_sessions_and_excludes_change() {
     assert_eq!(record["state"], "archived");
     assert_eq!(record["outcome"], "integrated");
     assert!(record["archived_at"].is_number());
-    assert_eq!(record["closing"], serde_json::Value::Null);
-    assert!(!capsule.join("artifacts").exists());
+    assert!(record.get("closing").is_none());
     let navigator = repo.navigator_without_color_in_pty(repo.path(), "Main", b"\x1b");
     assert!(navigator.status.success(), "{navigator:?}");
     assert!(!stdout(&navigator).contains("Archive Finished Change"));
     assert_inline_terminal_restored(&stdout(&navigator));
+}
+
+#[test]
+fn interrupted_recovery_does_not_consume_the_requested_archive() {
+    let repo = TestRepo::new();
+    let interrupted = repo.create_change(None);
+    let interrupted_capsule = interrupt_archive(&repo, &interrupted, true);
+
+    let requested = repo.create_change(None);
+    repo.set_change_title(&requested, "Archive Requested Change");
+    let requested_tip = repo.commit_file(&requested.path, "requested.txt", "requested\n");
+    repo.git(["merge", "--no-ff", "-m", "Merge requested", &requested_tip]);
+
+    let output = repo
+        .grove_from(&requested.path)
+        .arg("archive")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("Finished interrupted archives: 1")
+            && stderr(&output).contains("Archived Archive Requested Change"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(
+        repo.change_record(&interrupted_capsule)["state"],
+        "archived"
+    );
+    assert!(
+        !repo
+            .git(["worktree", "list", "--porcelain"])
+            .contains(&interrupted.path.display().to_string())
+    );
+    assert!(!requested.path.exists());
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let tip = repo.commit_file(&change.path, "integrated.txt", "integrated\n");
+    repo.git(["merge", "--no-ff", "-m", "Integrate Change", &tip]);
+    let target = repo.git(["rev-parse", "main"]);
+    let capsule = mark_closing(&repo, &change);
+    let mut record = repo.change_record(&capsule);
+    record["closing"]["outcome"] = "integrated".into();
+    record["closing"]["target_oid"] = target.into();
+    record["closing"]["target_ref"] = "refs/heads/main".into();
+    fs::write(
+        capsule.join("change.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    repo.git([
+        "worktree",
+        "remove",
+        "--force",
+        change.path.to_str().unwrap(),
+    ]);
+    repo.commit_file(repo.path(), "later.txt", "later\n");
+    repo.grove().arg("archive").assert().success();
+    assert_eq!(repo.change_record(&capsule)["state"], "archived");
+}
+
+#[test]
+fn interrupted_recovery_refuses_ambiguous_workspaces() {
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let capsule = interrupt_archive(&repo, &change, false);
+    fs::create_dir(&change.path).unwrap();
+    fs::write(change.path.join("reappeared.txt"), "do not delete\n").unwrap();
+    let output = repo.grove().arg("archive").output().unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("workspace exists without a Git worktree"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(repo.change_record(&capsule)["state"], "closing");
+    assert_eq!(
+        fs::read_to_string(change.path.join("reappeared.txt")).unwrap(),
+        "do not delete\n"
+    );
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let capsule = mark_closing(&repo, &change);
+    repo.commit_file(&change.path, "changed.txt", "changed\n");
+    let output = repo.grove().arg("archive").output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("workspace HEAD changed"),
+        "{output:?}"
+    );
+    assert_eq!(repo.change_record(&capsule)["state"], "closing");
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let capsule = mark_closing(&repo, &change);
+    let before = fs::read(capsule.join("change.json")).unwrap();
+    let output = repo
+        .grove_from(&change.path)
+        .arg("archive")
+        .env_remove("GROVE_DIRECTIVE_CD_FILE")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("shell integration is not loaded"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read(capsule.join("change.json")).unwrap(), before);
+
+    let repo = TestRepo::new();
+    let change = repo.create_change(None);
+    let capsule = interrupt_archive(&repo, &change, false);
+    let ordinary = repo.home().join("ordinary-archive-worktree");
+    repo.git(["branch", "ordinary-archive"]);
+    repo.git([
+        "worktree",
+        "add",
+        ordinary.to_str().unwrap(),
+        "ordinary-archive",
+    ]);
+    let output = repo.grove_from(&ordinary).arg("archive").output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stderr(&output).contains("not a managed Grove Change"));
+    assert_eq!(repo.change_record(&capsule)["state"], "closing");
+}
+
+fn interrupt_archive(repo: &TestRepo, change: &TestChange, registered: bool) -> PathBuf {
+    let capsule = mark_closing(repo, change);
+    if registered {
+        fs::remove_dir_all(&change.path).unwrap();
+    } else {
+        repo.git([
+            "worktree",
+            "remove",
+            "--force",
+            change.path.to_str().unwrap(),
+        ]);
+    }
+    capsule
+}
+
+fn mark_closing(repo: &TestRepo, change: &TestChange) -> PathBuf {
+    let capsule = change.path.parent().unwrap().to_owned();
+    let mut record = repo.change_record(&capsule);
+    record["state"] = "closing".into();
+    record["closing"] = serde_json::json!({
+        "outcome": "discarded",
+        "tip_oid": repo.change_head(change),
+        "target_oid": null,
+        "target_ref": null,
+        "local_branch": null
+    });
+    fs::write(
+        capsule.join("change.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    capsule
 }
 
 #[test]
@@ -196,6 +358,22 @@ fn force_discards_local_work_but_keeps_git_locked_worktrees_protected() {
     assert!(repo.branch_exists("discarded-change"));
 
     repo.git(["worktree", "unlock", change.path.to_str().unwrap()]);
+    let rebase =
+        PathBuf::from(repo.git_from(&change.path, ["rev-parse", "--git-path", "rebase-merge"]));
+    fs::create_dir_all(&rebase).unwrap();
+    let todo = rebase.join("git-rebase-todo");
+    fs::write(&todo, "break\n").unwrap();
+    let operation = repo
+        .grove_from(&change.path)
+        .args(["archive", "--force"])
+        .output()
+        .unwrap();
+    assert!(!operation.status.success(), "{operation:?}");
+    assert!(stderr(&operation).contains("Git operation is in progress"));
+    assert_eq!(fs::read_to_string(&todo).unwrap(), "break\n");
+    assert!(change.path.exists());
+    fs::remove_dir_all(rebase).unwrap();
+
     repo.grove_from(&change.path)
         .args(["archive", "--force"])
         .assert()
@@ -205,7 +383,6 @@ fn force_discards_local_work_but_keeps_git_locked_worktrees_protected() {
     assert_eq!(record["state"], "archived");
     assert_eq!(record["outcome"], "discarded");
     assert!(record["archived_at"].is_number());
-    assert!(!capsule.join("artifacts").exists());
     assert!(!change.path.exists());
     assert!(!repo.branch_exists("discarded-change"));
 }

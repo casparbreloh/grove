@@ -1,39 +1,35 @@
-use std::{
-    collections::HashMap,
-    io::{IsTerminal, Write},
-};
+use std::io::{IsTerminal, Write};
 
 use anyhow::Result;
 use crossterm::terminal;
 use unicode_width::UnicodeWidthStr;
 
-use crate::{git::Git, navigator::fit_width};
+use crate::{
+    change::title_labels,
+    git::{Git, SyncOutcome},
+    navigator::fit_width,
+};
 
 pub(crate) fn run(git: &Git) -> Result<()> {
     let result = git.sync()?;
-    let mut title_counts = HashMap::new();
-    for entry in &result.entries {
-        if let Some(title) = &entry.title {
-            *title_counts.entry(title.as_str()).or_insert(0_usize) += 1;
-        }
-    }
+    let labels = title_labels(
+        result
+            .entries
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.title.as_deref())),
+        &[],
+    );
     let rows = result
         .entries
         .iter()
-        .map(|entry| {
-            let short_id = &entry.id[..8];
-            let title = match &entry.title {
-                Some(title) if title_counts.get(title.as_str()) == Some(&1) => title.clone(),
-                Some(title) => format!("{title} · {short_id}"),
-                None => format!("Untitled · {short_id}"),
+        .zip(labels)
+        .map(|(entry, title)| {
+            let (marker, outcome) = match entry.outcome {
+                SyncOutcome::Archived => ('-', "archived"),
+                SyncOutcome::Rebased => ('↑', "rebased"),
+                SyncOutcome::Skipped => ('○', "skipped"),
             };
-            let marker = match entry.outcome.as_str() {
-                "archived" => '-',
-                "rebased" => '↑',
-                "skipped" => '○',
-                _ => ' ',
-            };
-            (marker, title, entry.outcome.as_str(), entry.reason.as_str())
+            (marker, title, outcome, entry.reason)
         })
         .collect::<Vec<_>>();
     let title_width = rows
@@ -70,9 +66,9 @@ pub(crate) fn run(git: &Git) -> Result<()> {
         output,
         "✓ Synced {} Changes: {} archived, {} rebased, {} skipped",
         result.entries.len(),
-        result.archived,
-        result.rebased,
-        result.skipped
+        result.count(SyncOutcome::Archived),
+        result.count(SyncOutcome::Rebased),
+        result.count(SyncOutcome::Skipped),
     )?;
     output.flush()?;
     Ok(())
