@@ -9,7 +9,7 @@ use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
 use crate::change::{
     Capsule, Closing, Creation, Outcome, Record, RepositoryDirectory, display_text,
-    lock as lock_change, publication_branch_base, try_lock as try_lock_change,
+    lock as lock_change, publication_branch_base, try_lock as try_lock_change, try_lock_mutation,
 };
 use anyhow::{Context, Result, bail};
 
@@ -64,31 +64,17 @@ pub(crate) struct WorktreeView {
     pub(crate) current: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SyncOutcome {
+#[derive(Clone, Copy)]
+pub(crate) enum SyncAction {
     Archived,
     Rebased,
-    Skipped,
+    ConflictRestored,
 }
 
 pub(crate) struct SyncEntry {
     pub(crate) id: String,
     pub(crate) title: Option<String>,
-    pub(crate) outcome: SyncOutcome,
-    pub(crate) reason: &'static str,
-}
-
-pub(crate) struct SyncResult {
-    pub(crate) entries: Vec<SyncEntry>,
-}
-
-impl SyncResult {
-    pub(crate) fn count(&self, outcome: SyncOutcome) -> usize {
-        self.entries
-            .iter()
-            .filter(|entry| entry.outcome == outcome)
-            .count()
-    }
+    pub(crate) action: Option<SyncAction>,
 }
 
 pub(crate) struct PushRemote {
@@ -845,11 +831,11 @@ impl Git {
         Ok(false)
     }
 
-    pub(crate) fn sync(&self) -> Result<SyncResult> {
+    pub(crate) fn sync(&self) -> Result<Vec<SyncEntry>> {
         let worktrees = self.worktrees()?;
         let primary = worktrees.first().context("repository has no worktrees")?;
         if self.current_root()? != primary.path {
-            return self.sync_change(&worktrees, primary);
+            bail!("grove sync must be run from the primary worktree");
         }
         let primary_branch = primary
             .branch
@@ -952,38 +938,27 @@ impl Git {
             .iter()
             .map(|(_, _, record)| (record.id.clone(), record.title.clone()))
             .collect::<Vec<_>>();
-        let mut outcomes = HashMap::new();
+        let mut actions = HashMap::new();
         let mut locks = Vec::new();
         let mut candidates = Vec::new();
         for (_, capsule, record) in records {
             if record.parent.as_deref() != Some(primary_branch) {
-                outcomes.insert(
-                    record.id,
-                    (SyncOutcome::Skipped, "created from another parent branch"),
-                );
                 continue;
             }
             let expected_path = capsule.join("workspace");
             let Some(worktree) = managed_worktree(&worktrees, &expected_path) else {
-                outcomes.insert(
-                    record.id,
-                    (SyncOutcome::Skipped, "managed worktree is missing"),
-                );
                 continue;
             };
-            if worktree.prunable || !worktree.path.exists() {
-                outcomes.insert(record.id, (SyncOutcome::Skipped, "worktree is missing"));
-                continue;
-            }
-            if worktree.locked {
-                outcomes.insert(record.id, (SyncOutcome::Skipped, "worktree is Git-locked"));
+            if worktree.prunable || !worktree.path.exists() || worktree.locked {
                 continue;
             }
             let Some(activity_lock) = try_lock_change(&capsule)? else {
-                outcomes.insert(record.id, (SyncOutcome::Skipped, "Change is already open"));
                 continue;
             };
-            locks.push(activity_lock);
+            let Some(mutation_lock) = try_lock_mutation(&capsule)? else {
+                continue;
+            };
+            locks.push((activity_lock, mutation_lock));
             candidates.push((record, expected_path));
         }
 
@@ -991,21 +966,9 @@ impl Git {
         let mut changes = Vec::new();
         for (record, expected_path) in candidates {
             let Some(worktree) = managed_worktree(&refreshed, &expected_path) else {
-                outcomes.insert(
-                    record.id,
-                    (SyncOutcome::Skipped, "managed worktree became missing"),
-                );
                 continue;
             };
-            if worktree.prunable || !worktree.path.exists() {
-                outcomes.insert(record.id, (SyncOutcome::Skipped, "worktree became missing"));
-                continue;
-            }
-            if worktree.locked {
-                outcomes.insert(
-                    record.id,
-                    (SyncOutcome::Skipped, "worktree became Git-locked"),
-                );
+            if worktree.prunable || !worktree.path.exists() || worktree.locked {
                 continue;
             }
             if self.peel_commit_at(&worktree.path, "HEAD")? != worktree.head_oid {
@@ -1014,237 +977,122 @@ impl Git {
                     record.id
                 );
             }
-            if self.git_operation_in_progress(&worktree.path)? {
-                outcomes.insert(
-                    record.id,
-                    (SyncOutcome::Skipped, "Git operation is in progress"),
-                );
+            if self.git_operation_in_progress(&worktree.path)? || self.is_dirty(&worktree.path)? {
                 continue;
             }
-            if self.is_dirty(&worktree.path)? {
-                outcomes.insert(
-                    record.id,
-                    (SyncOutcome::Skipped, "worktree has uncommitted changes"),
-                );
-                continue;
-            }
-            changes.push((
-                record.id,
-                worktree.path.clone(),
-                worktree.head_oid.clone(),
-                record.base_oid,
-            ));
+            changes.push((record, worktree));
         }
 
         let mut integrated = Vec::new();
         let mut remaining = Vec::new();
-        for (id, path, head_oid, creation_base_oid) in changes {
-            if !self.is_full_commit(&creation_base_oid) {
-                outcomes.insert(
-                    id,
-                    (SyncOutcome::Skipped, "recorded creation base is invalid"),
-                );
+        for (record, worktree) in changes {
+            let id = &record.id;
+            if !self.is_full_commit(&record.base_oid) {
                 continue;
             }
             if !self
-                .is_ancestor(&creation_base_oid, &upstream_oid)
+                .is_ancestor(&record.base_oid, &upstream_oid)
                 .with_context(|| {
                     format!("failed to validate recorded creation base OID for change '{id}'")
                 })?
             {
-                outcomes.insert(
-                    id,
-                    (SyncOutcome::Skipped, "creation base is not in upstream"),
-                );
                 continue;
             }
             if !self
-                .is_ancestor(&creation_base_oid, &head_oid)
+                .is_ancestor(&record.base_oid, &worktree.head_oid)
                 .with_context(|| {
                     format!("failed to validate recorded creation base topology for Change '{id}'")
                 })?
             {
-                outcomes.insert(
-                    id,
-                    (
-                        SyncOutcome::Skipped,
-                        "Change does not descend from creation base",
-                    ),
-                );
                 continue;
             }
-            if self.has_merge_history(&creation_base_oid, &head_oid)? {
-                outcomes.insert(id, (SyncOutcome::Skipped, "Change has merge history"));
+            if self.has_merge_history(&record.base_oid, &worktree.head_oid)? {
                 continue;
             }
-            if let Some(prepared) =
-                self.prepare_sync_archive(&id, &path, &head_oid, &upstream, &upstream_oid)?
-            {
-                integrated.push((id, prepared));
+            if let Some(prepared) = self.prepare_sync_archive(
+                id,
+                &worktree.path,
+                &worktree.head_oid,
+                &upstream,
+                &upstream_oid,
+            )? {
+                integrated.push((record.id, prepared));
             } else {
-                remaining.push(id);
+                remaining.push((record, worktree));
             }
         }
 
         for (id, prepared) in integrated {
             self.finish_archive(prepared)?;
-            outcomes.insert(id, (SyncOutcome::Archived, "integrated upstream"));
+            actions.insert(id, SyncAction::Archived);
         }
-        for id in remaining {
-            outcomes.insert(
-                id,
-                (SyncOutcome::Skipped, "run sync from the Change to rebase"),
-            );
+        for (record, worktree) in remaining {
+            let Some((capsule, current_record)) = repository.record(&record.id)? else {
+                continue;
+            };
+            let expected_path = capsule.join("workspace");
+            if !current_record.is_active() || expected_path != worktree.path {
+                continue;
+            }
+            let refreshed = self.worktrees()?;
+            let Some(current_worktree) = managed_worktree(&refreshed, &expected_path) else {
+                continue;
+            };
+            if current_worktree.prunable
+                || current_worktree.locked
+                || !current_worktree.path.exists()
+                || current_worktree.head_oid != worktree.head_oid
+                || self.peel_commit_at(&current_worktree.path, "HEAD")? != worktree.head_oid
+                || self.git_operation_in_progress(&current_worktree.path)?
+                || self.is_dirty(&current_worktree.path)?
+            {
+                continue;
+            }
+            let recorded_branch_is_configured = current_record
+                .publication_branch
+                .as_deref()
+                .map(|branch| {
+                    self.branch_has_configured_upstream_at(&current_worktree.path, branch)
+                })
+                .transpose()?
+                .unwrap_or(false);
+            let attached_branch_is_configured = current_worktree
+                .branch
+                .as_deref()
+                .map(|branch| {
+                    self.branch_has_configured_upstream_at(&current_worktree.path, branch)
+                })
+                .transpose()?
+                .unwrap_or(false);
+            if current_record.published_oid.is_some()
+                || recorded_branch_is_configured
+                || attached_branch_is_configured
+                || self.is_ancestor(&upstream_oid, &current_worktree.head_oid)?
+            {
+                continue;
+            }
+            let merge_base = self.text_at(
+                &current_worktree.path,
+                &["merge-base", &current_worktree.head_oid, &upstream_oid],
+            )?;
+            let action =
+                if self.rebase_change(&current_worktree.path, &upstream_oid, &merge_base)? {
+                    SyncAction::Rebased
+                } else {
+                    SyncAction::ConflictRestored
+                };
+            actions.insert(record.id, action);
         }
         drop(locks);
 
-        let entries = identities
+        Ok(identities
             .into_iter()
-            .map(|(id, title)| {
-                let (outcome, reason) = outcomes
-                    .remove(&id)
-                    .expect("every active Change has a sync outcome");
-                SyncEntry {
-                    id,
-                    title,
-                    outcome,
-                    reason,
-                }
+            .map(|(id, title)| SyncEntry {
+                action: actions.remove(&id),
+                id,
+                title,
             })
-            .collect::<Vec<_>>();
-
-        Ok(SyncResult { entries })
-    }
-
-    fn sync_change(&self, worktrees: &[Worktree], primary: &Worktree) -> Result<SyncResult> {
-        let primary_branch = primary
-            .branch
-            .as_deref()
-            .context("primary worktree is not on a branch")?;
-        let current = self.current_root()?;
-        let repository = self.repository()?;
-        let (capsule, record) = repository
-            .records()?
-            .into_iter()
-            .find(|(capsule, record)| record.is_active() && capsule.join("workspace") == current)
-            .context("grove sync must be run from the primary worktree or a managed Change")?;
-        let result = |outcome, reason| SyncResult {
-            entries: vec![SyncEntry {
-                id: record.id.clone(),
-                title: record.title.clone(),
-                outcome,
-                reason,
-            }],
-        };
-        if record.parent.as_deref() != Some(primary_branch) {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "created from another parent branch",
-            ));
-        }
-        let Some(worktree) = managed_worktree(worktrees, &current) else {
-            return Ok(result(SyncOutcome::Skipped, "managed worktree is missing"));
-        };
-        if worktree.prunable || !worktree.path.exists() {
-            return Ok(result(SyncOutcome::Skipped, "worktree is missing"));
-        }
-        if worktree.locked {
-            return Ok(result(SyncOutcome::Skipped, "worktree is Git-locked"));
-        }
-        let Some(_lock) = try_lock_change(&capsule)? else {
-            return Ok(result(SyncOutcome::Skipped, "Change is already open"));
-        };
-        let refreshed = self.worktrees()?;
-        let Some(worktree) = managed_worktree(&refreshed, &current) else {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "managed worktree became missing",
-            ));
-        };
-        if worktree.prunable || !worktree.path.exists() || worktree.locked {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "worktree changed during sync preparation",
-            ));
-        }
-        if self.peel_commit_at(&current, "HEAD")? != worktree.head_oid {
-            bail!(
-                "Change '{}' HEAD changed during sync preparation",
-                record.id
-            );
-        }
-        if self.git_operation_in_progress(&current)? {
-            return Ok(result(SyncOutcome::Skipped, "Git operation is in progress"));
-        }
-        if self.is_dirty(&current)? {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "worktree has uncommitted changes",
-            ));
-        }
-        if !self.is_full_commit(&record.base_oid) {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "recorded creation base is invalid",
-            ));
-        }
-        if !self.is_ancestor(&record.base_oid, &primary.head_oid)? {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "creation base is not in primary",
-            ));
-        }
-        if !self.is_ancestor(&record.base_oid, &worktree.head_oid)? {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "Change does not descend from creation base",
-            ));
-        }
-        if self.has_merge_history(&record.base_oid, &worktree.head_oid)? {
-            return Ok(result(SyncOutcome::Skipped, "Change has merge history"));
-        }
-        if self.is_ancestor(&worktree.head_oid, &primary.head_oid)?
-            || self.same_tree(&worktree.head_oid, &primary.head_oid)?
-            || self.merge_adds_no_change(
-                &worktree.head_oid,
-                &primary.head_oid,
-                Some(&record.base_oid),
-            )?
-        {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "Change is integrated into primary; run grove archive",
-            ));
-        }
-        let recorded_branch_is_configured = record
-            .publication_branch
-            .as_deref()
-            .map(|branch| self.branch_has_configured_upstream_at(&current, branch))
-            .transpose()?
-            .unwrap_or(false);
-        let attached_branch_is_configured = worktree
-            .branch
-            .as_deref()
-            .map(|branch| self.branch_has_configured_upstream_at(&current, branch))
-            .transpose()?
-            .unwrap_or(false);
-        if record.published_oid.is_some()
-            || recorded_branch_is_configured
-            || attached_branch_is_configured
-        {
-            return Ok(result(
-                SyncOutcome::Skipped,
-                "published history is not rewritten",
-            ));
-        }
-        let merge_base =
-            self.text_at(&current, &["merge-base", "HEAD", primary.head_oid.as_str()])?;
-        let (outcome, reason) = if self.rebase_change(&current, &primary.head_oid, &merge_base)? {
-            (SyncOutcome::Rebased, "onto primary")
-        } else {
-            (SyncOutcome::Skipped, "rebase failed; Change restored")
-        };
-        Ok(result(outcome, reason))
+            .collect())
     }
 
     fn has_merge_history(&self, base_oid: &str, tip: &str) -> Result<bool> {

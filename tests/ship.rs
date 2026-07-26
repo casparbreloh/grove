@@ -215,18 +215,7 @@ fn ship_recovers_after_create_failure_and_updates_pull_request_metadata() {
         .output()
         .unwrap();
     assert!(synced.status.success(), "{}", stderr(&synced));
-    assert!(
-        stderr(&synced).contains("run sync from the Change to rebase"),
-        "{}",
-        stderr(&synced)
-    );
-    let targeted = repo.grove_from(&change.path).arg("sync").output().unwrap();
-    assert!(targeted.status.success(), "{}", stderr(&targeted));
-    assert!(
-        stderr(&targeted).contains("published history is not rewritten"),
-        "{}",
-        stderr(&targeted)
-    );
+    assert_eq!(stderr(&synced), "");
     assert_eq!(repo.change_head(&change), detached_tip);
 
     let shipped = repo

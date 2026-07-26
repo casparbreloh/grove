@@ -34,7 +34,7 @@ enum Cmd {
         #[arg(long, value_name = "REF")]
         from: Option<String>,
     },
-    /// Update the primary worktree or rebase the current Change
+    /// Update Main and synchronize every Change
     Sync,
     /// Ship the current Change as a pull request
     ///

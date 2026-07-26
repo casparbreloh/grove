@@ -10,6 +10,7 @@ pub(crate) fn run(git: &Git) -> Result<()> {
     let change = git
         .current_change()?
         .context("current workspace is not a managed Grove Change")?;
+    let _mutation_lock = change.capsule.lock_mutation()?;
     let title = change
         .title
         .as_deref()
