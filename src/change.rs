@@ -83,7 +83,7 @@ impl RepositoryDirectory {
                 continue;
             }
             inspect_private_directory(&path, &name, &mut inspection.findings);
-            for lock in [".activity.lock", ".metadata.lock"] {
+            for lock in [".activity.lock", ".metadata.lock", ".mutation.lock"] {
                 inspect_lock(&path.join(lock), &name, &mut inspection.findings);
             }
             let record_path = path.join("change.json");
@@ -188,12 +188,24 @@ pub(crate) struct ActivityLock {
     _file: File,
 }
 
+pub(crate) struct MutationLock {
+    _file: File,
+}
+
 pub(crate) fn lock(capsule: &Path) -> Result<ActivityLock> {
     try_lock(capsule)?.context("Change is already open in another Grove process")
 }
 
 pub(crate) fn try_lock(capsule: &Path) -> Result<Option<ActivityLock>> {
-    let path = capsule.join(".activity.lock");
+    Ok(try_lock_file(capsule, ".activity.lock")?.map(|file| ActivityLock { _file: file }))
+}
+
+pub(crate) fn try_lock_mutation(capsule: &Path) -> Result<Option<MutationLock>> {
+    Ok(try_lock_file(capsule, ".mutation.lock")?.map(|file| MutationLock { _file: file }))
+}
+
+fn try_lock_file(capsule: &Path, name: &str) -> Result<Option<File>> {
+    let path = capsule.join(name);
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]
@@ -202,7 +214,7 @@ pub(crate) fn try_lock(capsule: &Path) -> Result<Option<ActivityLock>> {
         .open(&path)
         .with_context(|| format!("failed to open change lock {}", path.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(ActivityLock { _file: file })),
+        Ok(()) => Ok(Some(file)),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => Err(error)
             .with_context(|| format!("failed to lock change capsule {}", capsule.display())),
@@ -426,6 +438,10 @@ impl Capsule {
 
     pub(crate) fn workspace(&self) -> PathBuf {
         self.path.join("workspace")
+    }
+
+    pub(crate) fn lock_mutation(&self) -> Result<MutationLock> {
+        try_lock_mutation(&self.path)?.context("Change is being modified by another Grove process")
     }
 
     pub(crate) fn validate_identity(&self) -> Result<()> {

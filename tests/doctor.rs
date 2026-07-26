@@ -38,8 +38,11 @@ fn doctor_reports_local_state_without_changing_it() {
     let archived_record_before = fs::read(archived_capsule.join("change.json")).unwrap();
 
     let metadata_lock = healthy_capsule.join(".metadata.lock");
-    if metadata_lock.exists() {
-        fs::remove_file(&metadata_lock).unwrap();
+    let mutation_lock = healthy_capsule.join(".mutation.lock");
+    for lock in [&metadata_lock, &mutation_lock] {
+        if lock.exists() {
+            fs::remove_file(lock).unwrap();
+        }
     }
     let healthy_record_before = fs::read(healthy_capsule.join("change.json")).unwrap();
     let worktrees_before = repo.git(["worktree", "list", "--porcelain"]);
@@ -59,6 +62,7 @@ fn doctor_reports_local_state_without_changing_it() {
         healthy_record_before
     );
     assert!(!metadata_lock.exists(), "doctor must not create lock files");
+    assert!(!mutation_lock.exists(), "doctor must not create lock files");
     assert_eq!(
         fs::read(archived_capsule.join("change.json")).unwrap(),
         archived_record_before
@@ -146,6 +150,7 @@ fn doctor_reports_local_state_without_changing_it() {
     permissions.set_mode(0o755);
     fs::set_permissions(publication_capsule, permissions).unwrap();
     fs::create_dir(publication_capsule.join(".metadata.lock")).unwrap();
+    fs::create_dir(publication_capsule.join(".mutation.lock")).unwrap();
 
     let records_before = [
         malformed.join("change.json"),
@@ -181,6 +186,7 @@ fn doctor_reports_local_state_without_changing_it() {
         "published commit 'deadbeef' is not available locally",
         "unsafe permissions",
         ".metadata.lock is not a regular file",
+        ".mutation.lock is not a regular file",
     ] {
         assert!(report.contains(expected), "missing {expected:?}:\n{report}");
     }

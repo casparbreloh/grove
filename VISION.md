@@ -40,11 +40,12 @@ The selected branch and last pushed commit are recorded so retries can prove
 ownership. Exact push leases prevent unobserved remote history from being
 replaced.
 
-`grove sync` has two deliberately different meanings. From Main it fetches and
-fast-forwards only Main's configured upstream and archives conservatively proven
-integrated Changes. From a Change it performs no network activity and rebases
-only that unpublished Change onto the current local Main tip. It never rewrites
-published history or aborts a Git operation it did not start.
+`grove sync` is the repository-wide convergence command. From Main it fetches
+and fast-forwards only Main's configured upstream, archives conservatively
+proven integrated Changes, and rebases every other eligible unpublished Change
+onto the updated Main tip. It never rewrites published history or aborts a Git
+operation it did not start. Ordinary untouched Changes stay quiet; restored
+rebase conflicts are reported and make the completed batch unsuccessful.
 
 `grove ship` stages the complete Change, obtains structured commit and
 pull-request metadata from an isolated Pi worker, commits, pushes, and creates or

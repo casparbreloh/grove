@@ -50,20 +50,20 @@ Ordinary, detached, and otherwise unmanaged Git worktrees are excluded. On narro
 terminals secondary columns disappear from the right before Change identity is
 truncated.
 
-From the primary worktree, `sync` is an explicit network operation. It fetches
-exactly the current branch's configured merge ref into its upstream-tracking
-ref and fast-forwards the local branch; it does not fetch or prune unrelated
-refs and refuses divergent history or an unsafe update. It archives clean
-Changes already integrated upstream through the safe archive-before-delete
-path. Every non-integrated Change remains untouched and is directed to sync
-from its own workspace.
+From the primary worktree, `sync` is the single repository-wide synchronization
+operation. It fetches exactly the current branch's configured merge ref into its
+upstream-tracking ref and fast-forwards the local branch; it does not fetch or
+prune unrelated refs and refuses divergent history or an unsafe update. It then
+archives clean Changes already integrated upstream through the safe
+archive-before-delete path and rebases every other eligible, unpublished Change
+onto the updated primary branch.
 
-From a managed Change, `sync` performs no network activity and rebases only that
-clean, unpublished, linear Change onto the current local primary tip. It never
-mutates the primary or sibling Changes, never rewrites published history, and
-exactly restores a Change after a rebase conflict. Dirty, busy, Git-locked,
-missing, integrated, or invalid-lineage Changes are conservatively skipped.
-Both modes report explicit outcomes and totals.
+Published Changes are never rebased. Dirty, busy, Git-locked, missing, or
+invalid-lineage Changes remain untouched and unreported. If a rebase conflicts,
+Grove aborts it, restores the Change exactly, reports the conflict, and continues
+synchronizing the other Changes before exiting unsuccessfully. Normal output
+reports only Changes that were archived or rebased. `sync` must be run from the
+primary worktree.
 
 `ship` runs only from the current managed Change. Grove refuses unresolved Git
 operations, untitled Changes, missing push remotes, local-only remotes,
@@ -133,9 +133,10 @@ automatically. You never need to copy or remember a Pi session ID.
 Grove holds one per-Change advisory activity lock while Pi is open. It prevents
 a second managed Pi, synchronization, or archival from mutating the Change at
 the same time. It does not block an explicit `grove ship`; shipping validates
-and pushes an exact Git snapshot, so it can run from inside Pi. Starting `pi`
-manually is unmanaged: Grove does not install its extension globally or
-discover arbitrary sessions.
+and pushes an exact Git snapshot, so it can run from inside Pi. A separate
+per-Change mutation lock prevents shipping and synchronization from rewriting
+the same Git state concurrently. Starting `pi` manually is unmanaged: Grove
+does not install its extension globally or discover arbitrary sessions.
 
 Pi owns its native session files and session names. Grove's Change-session
 extension appends a small `grove.change` link from each managed Pi session to its
@@ -176,6 +177,7 @@ Everything local to a Change lives together:
       change.json
       .activity.lock
       .metadata.lock
+      .mutation.lock
       workspace/          # active Changes only
       pi/
         <Pi-native session>.jsonl
@@ -196,8 +198,9 @@ Tracking branches, the record, and Pi sessions remain. A registered detached
 worktree keeps commits reachable while active; after archival, unbranched
 source history is intentionally gone.
 
-The two empty lock files have separate purposes: `.activity.lock` excludes a
-second managed Pi and archival while Pi is open; `.metadata.lock` serializes
+The three empty lock files have separate purposes: `.activity.lock` excludes a
+second managed Pi and archival while Pi is open; `.mutation.lock` prevents sync
+and ship from rewriting Git state concurrently; `.metadata.lock` serializes
 atomic `change.json` updates. They contain no persistent state.
 
 Capsules are local-only and private (`0700` directories and `0600` Grove-owned

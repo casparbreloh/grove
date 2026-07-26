@@ -1,11 +1,11 @@
 mod support;
 
-use std::{fs, path::PathBuf};
+use std::{fs, process::Stdio};
 
 use support::{TestRepo, stderr, stdout};
 
 #[test]
-fn primary_sync_fetches_exact_upstream_archives_integrated_and_leaves_other_changes() {
+fn sync_fetches_main_archives_integrated_and_rebases_every_other_change() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();
     repo.git_from(&publisher, ["switch", "-c", "unrelated"]);
@@ -22,7 +22,8 @@ fn primary_sync_fetches_exact_upstream_archives_integrated_and_leaves_other_chan
     let integrated_tip = repo.commit_file(&integrated.path, "integrated.txt", "integrated\n");
     let remaining = repo.create_change(Some("main"));
     repo.set_change_title(&remaining, "Remaining Change");
-    let remaining_tip = repo.commit_file(&remaining.path, "remaining.txt", "remaining\n");
+    repo.commit_file(&remaining.path, "remaining.txt", "remaining\n");
+    let remaining_before = repo.change_head(&remaining);
     let malformed = repo.create_change(Some("main"));
     fs::write(
         malformed.path.parent().unwrap().join("change.json"),
@@ -43,16 +44,10 @@ fn primary_sync_fetches_exact_upstream_archives_integrated_and_leaves_other_chan
 
     let output = repo.grove().arg("sync").output().unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(
-        &output,
-        &[
-            ("Integrated Change", "archived", "integrated upstream"),
-            (
-                "Remaining Change",
-                "skipped",
-                "run sync from the Change to rebase",
-            ),
-        ],
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "Archived Integrated Change\nRebased Remaining Change\n"
     );
     assert_eq!(repo.git(["rev-parse", "main"]), upstream);
     assert_eq!(
@@ -68,133 +63,172 @@ fn primary_sync_fetches_exact_upstream_archives_integrated_and_leaves_other_chan
         repo.change_record(integrated.path.parent().unwrap())["state"],
         "archived"
     );
-    assert_eq!(repo.change_head(&remaining), remaining_tip);
+    assert_ne!(repo.change_head(&remaining), remaining_before);
+    repo.git_from(
+        &remaining.path,
+        ["merge-base", "--is-ancestor", &upstream, "HEAD"],
+    );
     assert_eq!(
         repo.change_record(remaining.path.parent().unwrap())["state"],
         "active"
     );
     assert!(malformed.path.exists());
+
+    let output = repo.grove().arg("sync").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
 }
 
 #[test]
-fn change_sync_rebases_only_that_change_and_never_rewrites_published_history() {
+fn sync_leaves_published_changes_untouched_and_runs_only_from_main() {
     let repo = TestRepo::new();
-    repo.create_local_origin();
-    let change = repo.create_change(Some("main"));
-    repo.set_change_title(&change, "Targeted Rebase");
-    repo.commit_file(&change.path, "change.txt", "change\n");
-    let sibling = repo.create_change(Some("main"));
-    repo.set_change_title(&sibling, "Untouched Sibling");
-    let sibling_tip = repo.commit_file(&sibling.path, "sibling.txt", "sibling\n");
-    let remote_before = repo.git(["rev-parse", "refs/remotes/origin/main"]);
-
-    repo.commit_file(repo.path(), "primary-one.txt", "primary one\n");
-    let first_primary = repo.git(["rev-parse", "main"]);
-    let output = repo.grove_from(&change.path).arg("sync").output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(&output, &[("Targeted Rebase", "rebased", "onto primary")]);
+    let publisher = repo.create_local_origin();
+    let published = repo.create_change(Some("main"));
+    repo.set_change_title(&published, "Shared Title");
+    repo.commit_file(&published.path, "published.txt", "published\n");
+    repo.git_from(&published.path, ["switch", "-c", "published-change"]);
     repo.git_from(
-        &change.path,
-        ["merge-base", "--is-ancestor", &first_primary, "HEAD"],
-    );
-    assert_eq!(repo.change_head(&sibling), sibling_tip);
-    assert_eq!(
-        repo.git(["rev-parse", "refs/remotes/origin/main"]),
-        remote_before
-    );
-
-    repo.commit_file(repo.path(), "primary-two.txt", "primary two\n");
-    let second_primary = repo.git(["rev-parse", "main"]);
-    repo.grove_from(&change.path).arg("sync").assert().success();
-    repo.git_from(
-        &change.path,
-        ["merge-base", "--is-ancestor", &second_primary, "HEAD"],
-    );
-    assert_eq!(repo.change_head(&sibling), sibling_tip);
-
-    repo.git_from(&change.path, ["switch", "-c", "published-change"]);
-    repo.git_from(
-        &change.path,
+        &published.path,
         ["push", "--set-upstream", "origin", "published-change"],
     );
-    let published_tip = repo.change_head(&change);
-    repo.commit_file(repo.path(), "primary-three.txt", "primary three\n");
-    let output = repo.grove_from(&change.path).arg("sync").output().unwrap();
+    let published_tip = repo.change_head(&published);
+
+    let unpublished = repo.create_change(Some("main"));
+    repo.set_change_title(&unpublished, "Shared Title");
+    repo.commit_file(&unpublished.path, "unpublished.txt", "unpublished\n");
+    let unpublished_before = repo.change_head(&unpublished);
+
+    repo.commit_file(&publisher, "upstream.txt", "upstream\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(
-        &output,
-        &[(
-            "Targeted Rebase",
-            "skipped",
-            "published history is not rewritten",
-        )],
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        format!("Rebased Shared Title · {}\n", &unpublished.id[..8])
     );
-    assert_eq!(repo.change_head(&change), published_tip);
+    assert_eq!(repo.change_head(&published), published_tip);
+    assert_ne!(repo.change_head(&unpublished), unpublished_before);
+    repo.git_from(
+        &unpublished.path,
+        ["merge-base", "--is-ancestor", &upstream, "HEAD"],
+    );
+
+    let output = repo
+        .grove_from(&unpublished.path)
+        .arg("sync")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("grove sync must be run from the primary worktree"),
+        "{output:?}"
+    );
 }
 
 #[test]
-fn change_sync_restores_conflicts_and_skips_dirty_or_invalid_changes() {
+fn sync_does_not_race_a_change_being_shipped() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let change = repo.create_change(Some("main"));
+    repo.set_change_title(&change, "Shipping Change");
+    repo.commit_file(&change.path, "change.txt", "change\n");
+    let change_head = repo.change_head(&change);
+    repo.git([
+        "remote",
+        "set-url",
+        "--push",
+        "origin",
+        "git@github.com:example/repo.git",
+    ]);
+
+    let gate = repo.block_worker();
+    let mut command = repo.grove_process_from(&change.path);
+    command
+        .arg("ship")
+        .env("GROVE_TEST_REMOTE_PATH", &publisher)
+        .env("GROVE_TEST_WORKER_BLOCK", &gate)
+        .env(
+            "GROVE_TEST_SHIP_OUTPUT",
+            r#"{"commit":null,"pull_request":{"title":"feat: ship safely","body":"Ships without racing synchronization."}}"#,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command.spawn().unwrap();
+    repo.wait_for_agent_log("prompt=");
+
+    repo.commit_file(&publisher, "upstream.txt", "upstream\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+    let output = repo.grove().arg("sync").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(repo.git(["rev-parse", "main"]), upstream);
+    assert_eq!(repo.change_head(&change), change_head);
+
+    repo.release_worker(&gate);
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+}
+
+#[test]
+fn sync_reports_restored_conflicts_but_continues_rebasing_other_changes() {
     let repo = TestRepo::new();
     repo.commit_file(repo.path(), "shared.txt", "base\n");
-    let change = repo.create_change(Some("main"));
-    repo.set_change_title(&change, "Conflicting Change");
-    fs::write(change.path.join("shared.txt"), "change\n").unwrap();
-    repo.git_from(&change.path, ["add", "shared.txt"]);
-    repo.git_from(&change.path, ["commit", "-m", "change shared file"]);
-    let original_head = repo.change_head(&change);
-    let original_status = repo.git_from(&change.path, ["status", "--porcelain=v1"]);
-    repo.commit_file(repo.path(), "shared.txt", "primary\n");
+    let publisher = repo.create_local_origin();
 
-    let output = repo.grove_from(&change.path).arg("sync").output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(
-        &output,
-        &[(
-            "Conflicting Change",
-            "skipped",
-            "rebase failed; Change restored",
-        )],
-    );
-    assert_eq!(repo.change_head(&change), original_head);
+    let conflicting = repo.create_change(Some("main"));
+    repo.set_change_title(&conflicting, "Conflicting Change");
+    fs::write(conflicting.path.join("shared.txt"), "change\n").unwrap();
+    repo.git_from(&conflicting.path, ["add", "shared.txt"]);
+    repo.git_from(&conflicting.path, ["commit", "-m", "change shared file"]);
+    let conflicting_head = repo.change_head(&conflicting);
+    let conflicting_status = repo.git_from(&conflicting.path, ["status", "--porcelain=v1"]);
+
+    let dirty = repo.create_change(Some("main"));
+    repo.set_change_title(&dirty, "Dirty Change");
+    repo.commit_file(&dirty.path, "committed.txt", "committed\n");
+    fs::write(dirty.path.join("dirty.txt"), "dirty\n").unwrap();
+    let dirty_head = repo.change_head(&dirty);
+
+    let later = repo.create_change(Some("main"));
+    repo.set_change_title(&later, "Later Change");
+    repo.commit_file(&later.path, "later.txt", "later\n");
+    let later_head = repo.change_head(&later);
+
+    repo.commit_file(&publisher, "shared.txt", "primary\n");
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+    let upstream = repo.git_from(&publisher, ["rev-parse", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(stdout(&output), "");
     assert_eq!(
-        repo.git_from(&change.path, ["status", "--porcelain=v1"]),
-        original_status
+        stderr(&output),
+        "Rebased Later Change\nCould not rebase Conflicting Change; restored unchanged\nError: sync encountered 1 rebase conflict\n"
     );
-
-    let rebase =
-        PathBuf::from(repo.git_from(&change.path, ["rev-parse", "--git-path", "rebase-merge"]));
-    fs::create_dir_all(&rebase).unwrap();
-    let todo = rebase.join("git-rebase-todo");
-    fs::write(&todo, "pick preserved\n").unwrap();
-    let output = repo.grove_from(&change.path).arg("sync").output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(
-        &output,
-        &[(
-            "Conflicting Change",
-            "skipped",
-            "Git operation is in progress",
-        )],
+    assert_eq!(repo.change_head(&conflicting), conflicting_head);
+    assert_eq!(
+        repo.git_from(&conflicting.path, ["status", "--porcelain=v1"]),
+        conflicting_status
     );
-    assert_eq!(fs::read_to_string(&todo).unwrap(), "pick preserved\n");
-    fs::remove_dir_all(rebase).unwrap();
-
-    fs::write(change.path.join("dirty.txt"), "dirty\n").unwrap();
-    let output = repo.grove_from(&change.path).arg("sync").output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_sync_report(
-        &output,
-        &[(
-            "Conflicting Change",
-            "skipped",
-            "worktree has uncommitted changes",
-        )],
+    assert_eq!(repo.change_head(&dirty), dirty_head);
+    assert_eq!(
+        fs::read_to_string(dirty.path.join("dirty.txt")).unwrap(),
+        "dirty\n"
     );
-    assert_eq!(repo.change_head(&change), original_head);
+    assert_ne!(repo.change_head(&later), later_head);
+    repo.git_from(
+        &later.path,
+        ["merge-base", "--is-ancestor", &upstream, "HEAD"],
+    );
 }
 
 #[test]
-fn primary_sync_validates_before_mutation() {
+fn sync_validates_main_before_mutation() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();
     repo.commit_file(&publisher, "upstream.txt", "upstream\n");
@@ -230,25 +264,4 @@ fn primary_sync_validates_before_mutation() {
         repo.git(["rev-parse", "refs/remotes/origin/main"]),
         remote_tip
     );
-}
-
-fn assert_sync_report(output: &std::process::Output, expected: &[(&str, &str, &str)]) {
-    assert_eq!(stdout(output), "");
-    let report = stderr(output);
-    for (title, outcome, reason) in expected {
-        let matching = report
-            .lines()
-            .filter(|line| {
-                line.to_ascii_lowercase()
-                    .contains(&title.to_ascii_lowercase())
-                    && line.contains(outcome)
-                    && line.contains(reason)
-            })
-            .count();
-        assert_eq!(
-            matching, 1,
-            "expected one sync row for {title:?}, {outcome:?}, {reason:?}: {report}"
-        );
-    }
-    assert!(report.contains(&format!("✓ Synced {} Changes", expected.len())));
 }
