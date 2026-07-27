@@ -147,6 +147,21 @@ impl TestRepo {
     }
 
     pub fn set_change_title(&self, change: &TestChange, title: &str) {
+        self.update_change_record(change, |record| record["title"] = title.into());
+    }
+
+    pub fn set_change_publication(&self, change: &TestChange, branch: &str, oid: &str) {
+        self.update_change_record(change, |record| {
+            record["publication_branch"] = branch.into();
+            record["published_oid"] = oid.into();
+        });
+    }
+
+    fn update_change_record(
+        &self,
+        change: &TestChange,
+        update: impl FnOnce(&mut serde_json::Value),
+    ) {
         let record_path = change
             .path
             .parent()
@@ -155,7 +170,7 @@ impl TestRepo {
         let mut record: serde_json::Value =
             serde_json::from_slice(&fs::read(&record_path).expect("read change record"))
                 .expect("valid change record");
-        record["title"] = title.into();
+        update(&mut record);
         fs::write(
             record_path,
             serde_json::to_vec_pretty(&record).expect("serialize change record"),

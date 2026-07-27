@@ -41,14 +41,14 @@ ownership. Exact push leases prevent unobserved remote history from being
 replaced.
 
 `grove sync` is the repository-wide convergence command. From Main it fetches
-and fast-forwards Main's configured upstream, inspects that remote's branch
-heads, archives conservatively proven integrated Changes, and rebases every
-other eligible unpublished Change onto the updated Main tip. It also removes
-local branches whose exact tips are merged into Main once no corresponding
-remote branch remains, while preserving branches checked out in any worktree.
-It never rewrites published history or aborts a Git operation it did not start.
-Ordinary untouched Changes stay quiet; restored rebase conflicts are reported
-and make the completed batch unsuccessful.
+and fast-forwards Main's configured upstream, archives conservatively proven
+integrated Changes, and rebases every other eligible unpublished Change onto the
+updated Main tip. When sync archives an integrated Change, it deletes that
+Change's exact unchanged local publication branch while leaving the remote
+branch untouched. Unrelated and advanced branches remain Git-owned and
+untouched. Sync never rewrites published history or aborts a Git operation it
+did not start. Ordinary untouched Changes stay quiet; restored rebase conflicts
+are reported and make the completed batch unsuccessful.
 
 `grove ship` stages the complete Change, obtains structured commit and
 pull-request metadata from an isolated Pi worker, commits, pushes, and creates or
@@ -56,10 +56,11 @@ updates the pull request. Existing pull-request targets and concurrent edits are
 revalidated. Failures may leave honest partial effects; rerunning converges from
 them instead of pretending Git and the provider form one transaction.
 
-Archival uses Git topology and resulting content rather than provider status. It
-preserves tracking branches, honors worktree and activity locks, rejects active
-Git operations, and records only the facts needed to finish an interrupted
-removal safely.
+Archival uses Git topology and resulting content rather than provider status.
+Explicit archival preserves tracking branches; sync archival may delete only
+the exact unchanged publication branch owned by the integrated Change. Both
+honor worktree and activity locks, reject active Git operations, and record only
+the facts needed to finish an interrupted removal safely.
 
 ## Current foundation: make local state legible
 

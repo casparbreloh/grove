@@ -34,7 +34,7 @@ enum GroveCommand {
         #[arg(long, value_name = "REF")]
         from: Option<String>,
     },
-    /// Update Main, clean merged branches, and synchronize every Change
+    /// Update Main and synchronize every Change
     Sync,
     /// Ship the current Change as a pull request
     ///

@@ -214,6 +214,61 @@ fn interrupted_recovery_does_not_consume_the_requested_archive() {
 }
 
 #[test]
+fn interrupted_recovery_preserves_tracking_branch_cleanup_intent() {
+    let repo = TestRepo::new();
+    repo.create_local_origin();
+
+    let published = repo.create_change(None);
+    repo.set_change_title(&published, "Published Change");
+    repo.git_from(&published.path, ["switch", "-c", "published-change"]);
+    let published_tip = repo.commit_file(&published.path, "published.txt", "published\n");
+    repo.git_from(
+        &published.path,
+        ["push", "--set-upstream", "origin", "published-change"],
+    );
+    repo.set_change_publication(&published, "published-change", &published_tip);
+    let published_capsule = mark_closing(&repo, &published);
+    let mut published_record = repo.change_record(&published_capsule);
+    published_record["closing"]["local_branch"] = "published-change".into();
+    published_record["closing"]["delete_tracking_branch"] = true.into();
+    fs::write(
+        published_capsule.join("change.json"),
+        serde_json::to_vec_pretty(&published_record).unwrap(),
+    )
+    .unwrap();
+
+    let preserved = repo.create_change(None);
+    repo.git_from(&preserved.path, ["switch", "-c", "preserved-tracking"]);
+    repo.commit_file(&preserved.path, "preserved.txt", "preserved\n");
+    repo.git_from(
+        &preserved.path,
+        ["push", "--set-upstream", "origin", "preserved-tracking"],
+    );
+    let preserved_capsule = mark_closing(&repo, &preserved);
+    let mut preserved_record = repo.change_record(&preserved_capsule);
+    preserved_record["closing"]["local_branch"] = "preserved-tracking".into();
+    fs::write(
+        preserved_capsule.join("change.json"),
+        serde_json::to_vec_pretty(&preserved_record).unwrap(),
+    )
+    .unwrap();
+
+    for change in [&published, &preserved] {
+        repo.git([
+            "worktree",
+            "remove",
+            "--force",
+            change.path.to_str().unwrap(),
+        ]);
+    }
+    let output = repo.grove().arg("archive").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "✓ Recovered 2 interrupted archives\n");
+    assert!(!repo.branch_exists("published-change"));
+    assert!(repo.branch_exists("preserved-tracking"));
+}
+
+#[test]
 fn interrupted_recovery_refuses_ambiguous_workspaces() {
     let repo = TestRepo::new();
     let change = repo.create_change(None);

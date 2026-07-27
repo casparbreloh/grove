@@ -256,6 +256,12 @@ pub(crate) struct Closing {
     pub(crate) target_oid: Option<String>,
     pub(crate) target_ref: Option<String>,
     pub(crate) local_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) delete_tracking_branch: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -299,6 +305,22 @@ impl Record {
             Lifecycle::Closing { closing } => Some(closing),
             Lifecycle::Active | Lifecycle::Archived { .. } => None,
         }
+    }
+
+    pub(crate) fn owns_published_tip(&self, branch: &str, oid: &str) -> bool {
+        let (Some(title), Some(recorded_branch), Some(published_oid)) = (
+            self.title.as_deref(),
+            self.publication_branch.as_deref(),
+            self.published_oid.as_deref(),
+        ) else {
+            return false;
+        };
+        let Ok(base) = publication_branch_base(title) else {
+            return false;
+        };
+        recorded_branch == branch
+            && published_oid == oid
+            && (branch == base || branch == format!("{base}-{}", self.id))
     }
 
     fn load_all(root: &Path) -> Result<Vec<(PathBuf, Self)>> {
