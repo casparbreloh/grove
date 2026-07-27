@@ -97,6 +97,7 @@ pub(crate) struct PreparedArchive {
     target_oid: Option<String>,
     target_ref: Option<String>,
     local_branch: Option<String>,
+    delete_tracking_branch: bool,
     force: bool,
 }
 
@@ -1196,7 +1197,12 @@ impl Git {
             }
 
             if let Some(branch) = &closing.local_branch {
-                self.cleanup_local_branch(&primary, branch, &closing.tip_oid)?;
+                self.cleanup_local_branch(
+                    &primary,
+                    branch,
+                    &closing.tip_oid,
+                    closing.delete_tracking_branch,
+                )?;
             }
             capsule
                 .mark_archived()
@@ -1264,6 +1270,7 @@ impl Git {
             target_oid,
             target_ref,
             local_branch,
+            delete_tracking_branch: false,
             force,
         })
     }
@@ -1309,6 +1316,10 @@ impl Git {
         if !integrated {
             return Ok(None);
         }
+        let delete_tracking_branch = worktree
+            .branch
+            .as_deref()
+            .is_some_and(|branch| record.owns_published_tip(branch, head_oid));
         Ok(Some(PreparedArchive {
             capsule: Capsule::at(capsule, id.to_owned())?,
             primary,
@@ -1316,11 +1327,15 @@ impl Git {
             target_oid: Some(upstream_oid.to_owned()),
             target_ref: Some(upstream_ref.to_owned()),
             local_branch: match &worktree.branch {
-                Some(branch) if !self.branch_has_configured_upstream(branch)? => {
+                Some(branch)
+                    if delete_tracking_branch
+                        || !self.branch_has_configured_upstream(branch)? =>
+                {
                     Some(branch.clone())
                 }
                 _ => None,
             },
+            delete_tracking_branch,
             force: false,
         }))
     }
@@ -1337,11 +1352,17 @@ impl Git {
             target_oid: prepared.target_oid.clone(),
             target_ref: prepared.target_ref.clone(),
             local_branch: prepared.local_branch.clone(),
+            delete_tracking_branch: prepared.delete_tracking_branch,
         })?;
         self.validate_archive_state(&prepared)?;
         self.worktree_remove(&prepared.capsule.workspace(), prepared.force)?;
         if let Some(branch) = &prepared.local_branch {
-            self.cleanup_local_branch(&prepared.primary, branch, &prepared.expected_head_oid)?;
+            self.cleanup_local_branch(
+                &prepared.primary,
+                branch,
+                &prepared.expected_head_oid,
+                prepared.delete_tracking_branch,
+            )?;
         }
         prepared
             .capsule
@@ -1369,6 +1390,11 @@ impl Git {
         if worktree.head_oid != prepared.expected_head_oid || live_oid != prepared.expected_head_oid
         {
             bail!("Change '{id}' HEAD changed before archive");
+        }
+        if prepared.delete_tracking_branch
+            && worktree.branch.as_deref() != prepared.local_branch.as_deref()
+        {
+            bail!("Change '{id}' publication branch changed before archive");
         }
         self.validate_target_snapshot(
             &prepared.primary,
@@ -1449,9 +1475,15 @@ impl Git {
         Ok(true)
     }
 
-    fn cleanup_local_branch(&self, cwd: &Path, branch: &str, expected: &str) -> Result<()> {
+    fn cleanup_local_branch(
+        &self,
+        cwd: &Path,
+        branch: &str,
+        expected: &str,
+        delete_tracking_branch: bool,
+    ) -> Result<()> {
         if !self.branch_exists_at(cwd, branch)?
-            || self.branch_has_configured_upstream_at(cwd, branch)?
+            || (!delete_tracking_branch && self.branch_has_configured_upstream_at(cwd, branch)?)
             || self
                 .worktrees_at(cwd)?
                 .iter()
@@ -1459,8 +1491,18 @@ impl Git {
         {
             return Ok(());
         }
+        self.delete_local_branch(cwd, branch, expected)
+    }
+
+    fn delete_local_branch(&self, cwd: &Path, branch: &str, expected: &str) -> Result<()> {
         let reference = format!("refs/heads/{branch}");
-        let args = ["update-ref", "-d", reference.as_str(), expected];
+        let args = [
+            "update-ref",
+            "--no-deref",
+            "-d",
+            reference.as_str(),
+            expected,
+        ];
         let output = self.raw_at(cwd, &args)?;
         check(output, &args)
             .with_context(|| format!("local branch '{branch}' changed before cleanup"))?;

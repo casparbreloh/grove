@@ -81,6 +81,66 @@ fn sync_fetches_main_archives_integrated_and_rebases_every_other_change() {
 }
 
 #[test]
+fn sync_deletes_only_the_publication_branch_of_an_integrated_change() {
+    let repo = TestRepo::new();
+    let publisher = repo.create_local_origin();
+    let change = repo.create_change(Some("main"));
+    repo.set_change_title(&change, "Published Change");
+    repo.git_from(&change.path, ["switch", "-c", "published-change"]);
+    let published_tip = repo.commit_file(&change.path, "published.txt", "published\n");
+    repo.git_from(
+        &change.path,
+        ["push", "--set-upstream", "origin", "published-change"],
+    );
+    repo.set_change_publication(&change, "published-change", &published_tip);
+
+    let advanced = repo.create_change(Some("main"));
+    repo.set_change_title(&advanced, "Advanced Publication");
+    repo.git_from(&advanced.path, ["switch", "-c", "advanced-publication"]);
+    let advanced_published_tip = repo.commit_file(&advanced.path, "advanced.txt", "published\n");
+    repo.git_from(
+        &advanced.path,
+        ["push", "--set-upstream", "origin", "advanced-publication"],
+    );
+    repo.set_change_publication(&advanced, "advanced-publication", &advanced_published_tip);
+    let advanced_tip = repo.commit_file(&advanced.path, "later.txt", "not pushed\n");
+    repo.git(["branch", "unmanaged-merged", "main"]);
+
+    for tip in [&published_tip, &advanced_tip] {
+        repo.git_from(&publisher, ["fetch", repo.path().to_str().unwrap(), tip]);
+        repo.git_from(
+            &publisher,
+            [
+                "merge",
+                "--no-ff",
+                "-m",
+                "Integrate publication",
+                "FETCH_HEAD",
+            ],
+        );
+    }
+    repo.git_from(&publisher, ["push", "origin", "main"]);
+
+    let output = repo.grove().arg("sync").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "✓ Archived Advanced Publication\n✓ Archived Published Change\n"
+    );
+    assert!(!repo.branch_exists("published-change"));
+    assert!(repo.branch_exists("advanced-publication"));
+    assert_eq!(
+        repo.git_from(
+            &publisher,
+            ["ls-remote", "origin", "refs/heads/published-change"],
+        ),
+        format!("{published_tip}\trefs/heads/published-change")
+    );
+    assert!(repo.branch_exists("unmanaged-merged"));
+}
+
+#[test]
 fn sync_leaves_published_changes_untouched_and_runs_only_from_main() {
     let repo = TestRepo::new();
     let publisher = repo.create_local_origin();

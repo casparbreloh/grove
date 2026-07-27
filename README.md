@@ -56,7 +56,10 @@ upstream-tracking ref and fast-forwards the local branch; it does not fetch or
 prune unrelated refs and refuses divergent history or an unsafe update. It then
 archives clean Changes already integrated upstream through the safe
 archive-before-delete path and rebases every other eligible, unpublished Change
-onto the updated primary branch.
+onto the updated primary branch. When this automatic archival removes a Change
+whose attached publication branch still points at its exact last-pushed OID,
+`sync` deletes that local branch even when it has an upstream. The remote branch
+is untouched. Advanced and unrelated local branches are preserved.
 
 Published Changes are never rebased. Dirty, busy, Git-locked, missing, or
 invalid-lineage Changes remain untouched and unreported. If a rebase conflicts,
@@ -167,9 +170,11 @@ publication branch when the Title-derived base is occupied. Grove
 creates `workspace/` as a native Git worktree with detached HEAD and finds it by
 its exact capsule path, not by a branch name. Native detached commits are
 supported. If the user or an agent later creates a branch, Grove may rebase its
-checked-out commits during explicit `sync`. Archival deletes that local branch
-only when it has no configured upstream; a tracking branch is preserved. The
-human Title and Pi session IDs remain separate identities.
+checked-out commits during explicit `sync`. Explicit archival deletes that local
+branch only when it has no configured upstream; a tracking branch is preserved.
+Automatic sync archival also deletes the exact unchanged publication branch
+owned by the Change. The human Title and Pi session IDs remain separate
+identities.
 
 Everything local to a Change lives together:
 
@@ -197,9 +202,12 @@ tool history.
 
 Grove stores no source snapshot or statistics. Successful archival removes
 `workspace/` and any attached local branch without a configured upstream.
-Tracking branches, the record, and Pi sessions remain. A registered detached
-worktree keeps commits reachable while active; after archival, unbranched
-source history is intentionally gone.
+Explicit archival preserves tracking branches. Automatic archival during
+`sync` deletes the exact unchanged local publication branch owned by that
+Change, while leaving its remote branch untouched. Unrelated branches, the
+record, and Pi sessions remain. A registered detached worktree keeps commits
+reachable while active; after archival, unbranched source history is
+intentionally gone.
 
 The three empty lock files have separate purposes: `.activity.lock` excludes a
 second managed Pi and archival while Pi is open; `.mutation.lock` prevents sync
