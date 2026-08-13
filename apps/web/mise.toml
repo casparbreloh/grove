@@ -1,0 +1,3 @@
+[tasks]
+build = "aube exec vite build"
+dev = "aube exec vite dev"

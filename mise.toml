@@ -1,0 +1,23 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ["apps/*", "packages/*"]
+
+[settings]
+experimental = true
+
+[tools]
+aube = "1"
+node = "26"
+
+[deps.aube]
+auto = true
+
+[tasks]
+build = { depends = [{ task = "//...:build", optional = true }] }
+check = { depends = ["build", "format-check", "lint", "typecheck"] }
+dev = { depends = [{ task = "//...:dev", optional = true }] }
+format = "aube exec oxfmt --write ."
+format-check = "aube exec oxfmt --check ."
+lint = "aube exec oxlint ."
+typecheck = "aube exec tsc -b"

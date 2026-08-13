@@ -1,0 +1,9 @@
+{
+  "name": "grove",
+  "private": true,
+  "devDependencies": {
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
+  }
+}
