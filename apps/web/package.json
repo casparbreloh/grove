@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@grove/ui": "workspace:*",
+    "@base-ui/react": "catalog:",
+    "@fontsource-variable/inter": "catalog:",
     "@hugeicons/core-free-icons": "catalog:",
     "@hugeicons/react": "catalog:",
     "@tailwindcss/vite": "catalog:",
@@ -12,9 +13,14 @@
     "@tanstack/react-router-devtools": "catalog:",
     "@tanstack/react-start": "catalog:",
     "@tanstack/router-plugin": "catalog:",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "tailwindcss": "catalog:"
+    "shadcn": "catalog:",
+    "tailwind-merge": "catalog:",
+    "tailwindcss": "catalog:",
+    "tw-animate-css": "catalog:"
   },
   "devDependencies": {
     "@tanstack/devtools-vite": "catalog:",

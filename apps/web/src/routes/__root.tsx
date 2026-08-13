@@ -1,6 +1,6 @@
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 
-import appCss from "@grove/ui/index.css?url";
+import appCss from "../styles/index.css?url";
 
 import { ThemeProvider } from "../components/theme-provider";
 

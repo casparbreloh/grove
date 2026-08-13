@@ -1,8 +1,8 @@
-import { ArrowLeft01Icon, ArrowRight01Icon, LayoutLeftIcon } from "@hugeicons/core-free-icons";
+import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { Button } from "@grove/ui/components/button";
-import { SidebarInset, SidebarProvider, useSidebar } from "@grove/ui/components/sidebar";
+import { Button } from "@/components/ui/button";
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 
 import { AppSidebar } from "../../components/app-sidebar";
 
@@ -10,11 +10,11 @@ export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
   return (
-    <SidebarProvider className="flex-col overflow-hidden bg-sidebar [&_[data-slot=sidebar-container]]:duration-150 [&_[data-slot=sidebar-gap]]:duration-150">
+    <SidebarProvider className="flex-col overflow-hidden bg-sidebar">
       <DesktopHeader />
       <div className="flex min-h-0 flex-1">
         <AppSidebar />
-        <SidebarInset className="min-w-0 md:peer-data-[variant=inset]:mt-0">
+        <SidebarInset className="min-w-0">
           <div className="flex min-h-0 flex-1 flex-col">
             <Outlet />
           </div>
@@ -25,7 +25,7 @@ function AppLayout() {
 }
 
 function DesktopHeader() {
-  const { open, toggleSidebar } = useSidebar();
+  const { open } = useSidebar();
 
   return (
     <header
@@ -33,9 +33,7 @@ function DesktopHeader() {
       style={{ gridTemplateColumns: `${open ? "var(--sidebar-width)" : "6.5rem"} minmax(0, 1fr)` }}
     >
       <div className="flex items-center justify-between px-2">
-        <Button aria-label="Toggle sidebar" onClick={toggleSidebar} size="icon" variant="ghost">
-          <HugeiconsIcon icon={LayoutLeftIcon} strokeWidth={2} />
-        </Button>
+        <SidebarTrigger />
         <div className="flex items-center gap-1">
           <Button
             aria-label="Go back"

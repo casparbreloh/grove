@@ -10,6 +10,5 @@
     "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src", "vite.config.ts"],
-  "references": [{ "path": "../../packages/ui" }]
+  "include": ["src", "vite.config.ts"]
 }
