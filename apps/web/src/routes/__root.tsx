@@ -2,6 +2,8 @@ import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 
 import appCss from "@grove/ui/index.css?url";
 
+import { ThemeProvider } from "../components/theme-provider";
+
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -34,12 +36,14 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
-        {children}
+        <ThemeProvider defaultTheme="system" storageKey="theme">
+          {children}
+        </ThemeProvider>
         <Scripts />
       </body>
     </html>

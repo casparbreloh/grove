@@ -2,7 +2,7 @@ import { LayoutLeftIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { Button } from "@grove/ui/components/button";
-import { SidebarProvider, useSidebar } from "@grove/ui/components/sidebar";
+import { SidebarInset, SidebarProvider, useSidebar } from "@grove/ui/components/sidebar";
 
 import { AppSidebar } from "../../components/app-sidebar";
 
@@ -12,14 +12,14 @@ function AppLayout() {
   return (
     <SidebarProvider>
       <AppSidebar />
-      <main className="flex min-h-svh min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center px-4">
+      <SidebarInset className="min-w-0">
+        <header className="flex h-12 shrink-0 items-center px-4">
           <SidebarToggle />
         </header>
         <div className="flex min-h-0 flex-1 flex-col">
           <Outlet />
         </div>
-      </main>
+      </SidebarInset>
     </SidebarProvider>
   );
 }
@@ -28,7 +28,13 @@ function SidebarToggle() {
   const { toggleSidebar } = useSidebar();
 
   return (
-    <Button aria-label="Toggle sidebar" onClick={toggleSidebar} size="icon-sm" variant="ghost">
+    <Button
+      aria-label="Toggle sidebar"
+      className="hover:bg-accent hover:text-accent-foreground active:bg-accent active:text-accent-foreground dark:hover:bg-accent"
+      onClick={toggleSidebar}
+      size="icon-sm"
+      variant="ghost"
+    >
       <HugeiconsIcon icon={LayoutLeftIcon} strokeWidth={2} />
     </Button>
   );

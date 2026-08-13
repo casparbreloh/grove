@@ -1,5 +1,5 @@
 import { Sidebar } from "@grove/ui/components/sidebar";
 
 export function AppSidebar() {
-  return <Sidebar />;
+  return <Sidebar variant="inset" />;
 }
