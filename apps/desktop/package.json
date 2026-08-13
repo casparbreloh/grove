@@ -1,0 +1,8 @@
+{
+  "name": "@grove/desktop",
+  "private": true,
+  "main": "electron/main.cjs",
+  "devDependencies": {
+    "electron": "catalog:"
+  }
+}

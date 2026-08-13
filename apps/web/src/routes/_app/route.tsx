@@ -29,10 +29,12 @@ function DesktopHeader() {
 
   return (
     <header
-      className="grid h-10 shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
-      style={{ gridTemplateColumns: `${open ? "var(--sidebar-width)" : "6.5rem"} minmax(0, 1fr)` }}
+      className="desktop-header grid h-10 shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
+      style={{
+        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "var(--desktop-header-controls-width, 6.5rem)"} minmax(0, 1fr)`,
+      }}
     >
-      <div className="flex items-center justify-between px-2">
+      <div className="desktop-header-sidebar-controls flex items-center gap-1 px-2">
         <SidebarTrigger />
         <div className="flex items-center gap-1">
           <Button
