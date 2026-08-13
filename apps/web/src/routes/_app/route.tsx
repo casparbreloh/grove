@@ -1,4 +1,4 @@
-import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft02Icon, ArrowRight02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,7 @@ function DesktopHeader() {
             size="icon"
             variant="ghost"
           >
-            <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
+            <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
           </Button>
           <Button
             aria-label="Go forward"
@@ -49,7 +49,7 @@ function DesktopHeader() {
             size="icon"
             variant="ghost"
           >
-            <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />
+            <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
         </div>
       </div>
