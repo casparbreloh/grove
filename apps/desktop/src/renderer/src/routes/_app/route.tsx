@@ -31,7 +31,7 @@ function DesktopHeader() {
     <header
       className="desktop-header grid h-10 shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
       style={{
-        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "var(--desktop-header-controls-width, 6.5rem)"} minmax(0, 1fr)`,
+        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "var(--desktop-header-controls-width)"} minmax(0, 1fr)`,
       }}
     >
       <div className="desktop-header-sidebar-controls flex items-center gap-1 px-2">

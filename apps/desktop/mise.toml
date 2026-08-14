@@ -1,3 +1,3 @@
 [tasks]
-# Root `mise run dev` starts apps/web alongside this task. This waits for Vite before Electron opens.
-dev = "until curl --silent --fail http://localhost:5173 >/dev/null; do sleep 0.2; done; aube exec electron ."
+build = "aube exec electron-vite build"
+dev = "aube exec electron-vite dev"

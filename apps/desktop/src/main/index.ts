@@ -1,0 +1,92 @@
+import { app, BrowserWindow, shell } from "electron";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const isMac = process.platform === "darwin";
+
+let mainWindow: BrowserWindow | undefined;
+
+function rendererUrl() {
+  return (
+    process.env.ELECTRON_RENDERER_URL ??
+    pathToFileURL(path.join(__dirname, "../renderer/index.html")).toString()
+  );
+}
+
+function isRendererUrl(url: string) {
+  const expectedUrl = rendererUrl();
+  if (!process.env.ELECTRON_RENDERER_URL) return url === expectedUrl;
+  return new URL(url).origin === new URL(expectedUrl).origin;
+}
+
+function openExternal(url: string) {
+  const protocol = new URL(url).protocol;
+  if (protocol === "https:" || protocol === "http:" || protocol === "mailto:")
+    void shell.openExternal(url);
+}
+
+function createWindow() {
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 840,
+    minWidth: 960,
+    minHeight: 640,
+    show: false,
+    backgroundColor: "#171717",
+    titleBarStyle: isMac ? "hiddenInset" : "hidden",
+    titleBarOverlay: true,
+    ...(isMac
+      ? {
+          trafficLightPosition: { x: 12, y: 13 },
+          vibrancy: "sidebar" as const,
+          visualEffectState: "followWindow" as const,
+        }
+      : {}),
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/index.mjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  window.once("ready-to-show", () => window.show());
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternal(url);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!isRendererUrl(url)) {
+      event.preventDefault();
+      openExternal(url);
+    }
+  });
+
+  void window.loadURL(rendererUrl());
+
+  mainWindow = window;
+  window.on("closed", () => {
+    mainWindow = undefined;
+  });
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+
+  app.whenReady().then(() => {
+    createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});

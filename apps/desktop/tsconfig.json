@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "node", "electron-vite/node"],
+    "paths": {
+      "@/*": ["./src/renderer/src/*"]
+    },
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": [
+    "src",
+    "vite.renderer.config.ts",
+    "electron.vite.config.ts",
+    "electron-builder.config.ts"
+  ]
+}

@@ -1,0 +1,33 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@import "./theme.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@source "../**/*.{ts,tsx}";
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.desktop-header {
+  --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
+  --desktop-header-controls-width: 6.5rem;
+  width: min(calc(100% - var(--desktop-header-safe-area-left)), env(titlebar-area-width, 100%));
+  margin-left: var(--desktop-header-safe-area-left);
+  -webkit-app-region: drag;
+}
+
+.desktop-header button,
+.desktop-header a {
+  -webkit-app-region: no-drag;
+}

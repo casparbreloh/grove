@@ -1,5 +1,7 @@
 node_modules/
 dist/
+out/
+release/
 .tsbuild/
 *.tsbuildinfo
 .DS_Store
