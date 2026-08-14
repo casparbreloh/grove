@@ -18,6 +18,9 @@ catalogs:
     "@hugeicons/react":
       specifier: 1.1.9
       version: 1.1.9
+    "@shadcn/react":
+      specifier: 0.3.0
+      version: 0.3.0
     "@tailwindcss/vite":
       specifier: 4.3.3
       version: 4.3.3
@@ -118,6 +121,9 @@ importers:
       "@hugeicons/react":
         specifier: "catalog:"
         version: 1.1.9(react@19.2.8)
+      "@shadcn/react":
+        specifier: "catalog:"
+        version: 0.3.0(@types/react@19.2.18)(react@19.2.8)
       "@tanstack/react-router":
         specifier: "catalog:"
         version: 1.170.27(react@19.2.8)(react-dom@19.2.8(react@19.2.8))
@@ -1687,6 +1693,20 @@ packages:
       {
         integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==,
       }
+
+  "@shadcn/react@0.3.0":
+    resolution:
+      {
+        integrity: sha512-iKN0NuYe850VDHlxEfvppFrpa7CMV3zArTHusXlaSmeFeQhohGbIqclv6WwPTs/44I8EkXQpcuRt6sXEVKkWqQ==,
+      }
+    peerDependencies:
+      "@types/react": ">=19"
+      react: ">=19"
+    peerDependenciesMeta:
+      "@types/react":
+        optional: true
+      react:
+        optional: true
 
   "@sindresorhus/is@4.6.0":
     resolution:
@@ -6754,6 +6774,11 @@ snapshots:
   "@rolldown/pluginutils@1.0.1": {}
 
   "@sec-ant/readable-stream@0.4.1": {}
+
+  "@shadcn/react@0.3.0(@types/react@19.2.18)(react@19.2.8)":
+    dependencies:
+      "@types/react": 19.2.18
+      react: 19.2.8
 
   "@sindresorhus/is@4.6.0": {}
 
