@@ -14,9 +14,26 @@
     @apply border-border outline-ring/50;
   }
 
+  html {
+    overscroll-behavior: none;
+  }
+
   body {
     @apply bg-background text-foreground;
   }
+}
+
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-scroll-viewport {
+  scrollbar-gutter: auto;
+  overscroll-behavior-y: none;
 }
 
 .desktop-header {
