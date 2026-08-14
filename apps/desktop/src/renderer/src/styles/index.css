@@ -22,9 +22,12 @@
 .desktop-header {
   --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
   --desktop-header-controls-width: 6.5rem;
-  width: min(calc(100% - var(--desktop-header-safe-area-left)), env(titlebar-area-width, 100%));
-  margin-left: var(--desktop-header-safe-area-left);
+  --desktop-header-new-tab-width: 2rem;
   -webkit-app-region: drag;
+}
+
+.desktop-header-sidebar-controls {
+  padding-left: calc(var(--desktop-header-safe-area-left) + 0.5rem);
 }
 
 .desktop-header button,

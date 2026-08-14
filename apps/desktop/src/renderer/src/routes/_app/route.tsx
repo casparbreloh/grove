@@ -1,4 +1,4 @@
-import { ArrowLeft02Icon, ArrowRight02Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft02Icon, ArrowRight02Icon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,7 @@ function DesktopHeader() {
     <header
       className="desktop-header grid h-10 shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
       style={{
-        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "var(--desktop-header-controls-width)"} minmax(0, 1fr)`,
+        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "calc(var(--desktop-header-controls-width) + var(--desktop-header-new-tab-width) + var(--desktop-header-safe-area-left))"} minmax(0, 1fr)`,
       }}
     >
       <div className="desktop-header-sidebar-controls flex items-center gap-1 px-2">
@@ -54,6 +54,11 @@ function DesktopHeader() {
             <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
         </div>
+        {!open && (
+          <Button aria-label="New tab" size="icon" variant="ghost">
+            <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
+          </Button>
+        )}
       </div>
       <nav aria-label="Tabs" className="flex min-w-0 items-center gap-1 overflow-hidden">
         <Button className="w-36 justify-start" variant="secondary">
