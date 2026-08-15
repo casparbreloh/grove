@@ -27,15 +27,6 @@
   scrollbar-width: none;
 }
 
-*::-webkit-scrollbar {
-  display: none;
-}
-
-.chat-scroll-viewport {
-  scrollbar-gutter: auto;
-  overscroll-behavior-y: none;
-}
-
 .desktop-header {
   --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
   --desktop-header-controls-width: 6.5rem;
