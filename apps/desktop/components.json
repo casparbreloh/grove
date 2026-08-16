@@ -19,5 +19,8 @@
   },
   "rtl": false,
   "menuColor": "default",
-  "menuAccent": "subtle"
+  "menuAccent": "subtle",
+  "registries": {
+    "@assistant-ui": "https://r.assistant-ui.com/styles/{style}/{name}.json"
+  }
 }

@@ -8,6 +8,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @source "../**/*.{ts,tsx}";
+@source "../../../../node_modules/streamdown/dist/*.js";
+@source "../../../../node_modules/@streamdown/code/dist/*.js";
 
 @layer base {
   * {
@@ -25,6 +27,10 @@
 
 * {
   scrollbar-width: none;
+}
+
+.chat-viewport[data-top-anchor-released] [data-aui-top-anchor-reserve] {
+  display: none !important;
 }
 
 .desktop-header {
