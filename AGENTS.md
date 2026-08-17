@@ -1,34 +1,39 @@
 # Grove development guide
 
-## Priorities
+Read `VISION.md` before product or architecture work. It is the source of truth for vocabulary, product semantics, Agent/Environment boundaries, and delivery order; do not duplicate or redefine them here.
 
-Ship the smallest clear change. This is a fast-moving product, not an enterprise system: handle real failure modes, but do not add speculative abstractions, configuration, flags, or edge-case machinery.
+## Working principles
 
-Prefer native Electron and platform APIs when they make the product simpler. Extract a module only for a real boundary or a second caller.
+- Ship the smallest clear vertical slice. Do not prebuild speculative providers, protocols, storage backends, configuration, or extension systems.
+- Preserve Agent and Environment as Grove's only pluggable product boundaries. Use **adapter** only for translating an external protocol such as ACP.
+- Keep Git optional and subordinate. Do not make Task or change semantics depend on branches, worktrees, commits, or staged versus unstaged state.
+- Prefer Electron, operating-system, and platform-native APIs. Add a dependency only when it materially reduces code or risk and has a credible maintenance path.
+- Keep the renderer a projection of Grove-owned durable state.
 
-## Architecture
+## Repository boundaries
 
-- `apps/desktop/src/main` owns Electron, filesystem access, process spawning, persistence, credentials, agent adapters, and IPC handlers.
-- `apps/desktop/src/preload` exposes a narrow, typed API to the renderer. Never expose generic IPC or Node/Electron APIs.
-- `apps/desktop/src/renderer` is unprivileged UI. It must not import Node or Electron APIs.
-- Keep provider-specific types inside their adapter. Grove consumes normalized sessions, events, tool calls, approvals, errors, and cancellation.
-- Preserve Electron's security defaults: context isolation, sandboxing, and no Node integration. Validate IPC inputs in main.
-- Treat plugins as trusted local executable code unless a real isolation model exists. Do not add plugin discovery or installation casually.
+- `apps/desktop/src/main` owns Electron, persistence, credentials, agents, environments, filesystem/process access, and validated IPC handlers.
+- `apps/desktop/src/preload` exposes a narrow typed Grove API. Never expose generic IPC, RPC, Electron, Node, shell, SSH, or filesystem access.
+- `apps/desktop/src/renderer` is unprivileged and must not import Node or Electron APIs.
+- Put serializable Grove contracts in shared modules. Keep Pi, ACP, assistant-ui, Electron, transport, and platform-native types at their boundaries.
+- Preserve context isolation, renderer sandboxing, and no Node integration. Validate every renderer input in main and every network payload at its receiver.
 
 ## Implementation
 
 - Follow nearby TypeScript and UI patterns. Prefer inferred types; do not use `any`.
-- Keep contracts and UI states symmetric: start/stop, enable/disable, approve/deny, loading/success/failure.
-- Use native dialogs, menus, notifications, and OS storage where appropriate.
-- Do not log secrets, credentials, or full private transcripts.
-- Do not add Effect yet. Reconsider it only when concrete main-process lifecycle, cancellation, resource-scoping, or concurrency complexity warrants it; keep it out of renderer state.
+- Use runtime validation at untrusted boundaries and discriminated unions for finite states.
+- Inject dependencies; mock only external APIs, time, randomness, and system boundaries.
+- Keep credentials out of Task state, transfers, logs, and transcripts.
+- Treat plugins, hooks, executable skills, and Agent extensions as trusted code until a real isolation model exists.
+- Do not add Effect yet. Reconsider only for concrete lifecycle, cancellation, resource-scoping, or concurrency complexity, and keep it out of renderer state.
+- Do not edit generated files such as `routeTree.gen.ts`.
 
 ## Verification
 
-Run the narrowest relevant check after a change. The normal full check is:
+Run the narrowest relevant check. The normal full check is:
 
 ```sh
 mise run check
 ```
 
-Do not edit generated files such as `routeTree.gen.ts`. Never kill processes by name or pattern; only stop processes you started and can identify.
+Never kill processes by name or pattern; stop only processes you started and can identify.
