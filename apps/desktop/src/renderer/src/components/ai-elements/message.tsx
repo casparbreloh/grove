@@ -4,7 +4,7 @@ import {
   MessagePrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { MarkdownText } from "@/components/ai-elements/markdown-text";
 import { cn } from "@/lib/utils";
 
 type MessageProps = {

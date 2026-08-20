@@ -21,7 +21,9 @@ A Task cannot acquire a second authoritative Environment. Initial movement expli
 
 ## Experience
 
-The sidebar switches Workspaces and presents durable Tasks under their Projects. Opening a Task restores its Sessions and relevant device-local layout. A Task may have multiple independent Sessions for alternate approaches or parallel reasoning while all Sessions see the same current Task files.
+The sidebar switches Workspaces and presents durable Tasks as its primary rows. Device-local views may show all Tasks flat, group them by Project, or scope them to one Project; Projects remain structural context rather than competing sidebar resources. Flat Task rows retain visible Project context. Opening a Task restores its Sessions and relevant device-local layout. A Task may have multiple independent Sessions for alternate approaches or parallel reasoning while all Sessions see the same current Task files.
+
+A new-Task draft selects its Project and starting state above the composer. The same control can register a Project through its Environment. Project selection locks when Grove accepts the Task; an existing Task cannot be reparented by changing composer context. Starting a new Session keeps the current Task, Project, Environment, and files.
 
 Core tab kinds include agent, terminal, diff, file, browser, and pull request. Persist serializable descriptors with a `tabId` distinct from the viewed resource ID. Closing a tab hides a view; it does not cancel a Turn, stop a terminal, delete a Session, or delete a Task. Unknown tab kinds restore as recoverable unavailable views.
 

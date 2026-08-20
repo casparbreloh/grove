@@ -15,9 +15,10 @@ auto = true
 
 [tasks]
 build = { depends = [{ task = "//...:build", optional = true }] }
-check = { depends = ["build", "format-check", "lint", "typecheck"] }
+check = { depends = ["format-check", "lint", "test", "typecheck"] }
 desktop = { depends = [{ task = "//apps/desktop:dev" }] }
 format = "aube exec oxfmt --write ."
 format-check = "aube exec oxfmt --check ."
 lint = "aube exec oxlint ."
-typecheck = "aube exec tsc -b"
+test = { depends = [{ task = "//...:test", optional = true }] }
+typecheck = { depends = ["build"], run = "aube exec tsc -b" }

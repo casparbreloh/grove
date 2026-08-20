@@ -1,7 +1,6 @@
 import { app, BrowserWindow, shell } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { registerChatIpc } from "./chat-ipc";
 
 const isMac = process.platform === "darwin";
 
@@ -44,7 +43,6 @@ function createWindow() {
         }
       : {}),
     webPreferences: {
-      preload: path.join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -62,21 +60,14 @@ function createWindow() {
       openExternal(url);
     }
   });
-  window.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
-    if (isMainFrame && !isSameDocument) chatIpcRegistration.reset();
-  });
-  window.webContents.on("render-process-gone", () => chatIpcRegistration.reset());
 
   void window.loadURL(rendererUrl());
 
   mainWindow = window;
   window.on("closed", () => {
-    chatIpcRegistration.reset();
     mainWindow = undefined;
   });
 }
-
-const chatIpcRegistration = registerChatIpc({ isRendererUrl });
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

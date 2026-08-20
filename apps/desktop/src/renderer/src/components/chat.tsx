@@ -2,94 +2,27 @@ import {
   AssistantRuntimeProvider,
   AuiIf,
   ThreadPrimitive,
-  type ChatModelAdapter,
   useAuiEvent,
   useLocalRuntime,
 } from "@assistant-ui/react";
+import { Add01Icon, ArrowDown01Icon, Cancel01Icon, Folder01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useRef, useState } from "react";
-import type { ChatEvent } from "../../../shared/chat-ipc";
-import { Composer } from "@/components/assistant-ui/composer";
-import { Message } from "@/components/assistant-ui/message";
-
-const modelAdapter: ChatModelAdapter = {
-  async *run({ messages, abortSignal }) {
-    const userMessage = messages.findLast((message) => message.role === "user");
-    const prompt = userMessage?.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n\n")
-      .trim();
-    if (!prompt) throw new Error("A message is required");
-
-    const events: ChatEvent[] = [];
-    let text = "";
-    let aborted = abortSignal.aborted;
-    let cancellation: Promise<void> | undefined;
-    let settled = false;
-    let failure: unknown;
-    let wake: (() => void) | undefined;
-
-    const notify = () => {
-      wake?.();
-      wake = undefined;
-    };
-    const unsubscribe = window.grove.chat.onEvent((event) => {
-      events.push(event);
-      notify();
-    });
-    const cancel = () => {
-      aborted = true;
-      notify();
-      cancellation ??= window.grove.chat.cancel();
-    };
-
-    abortSignal.addEventListener("abort", cancel, { once: true });
-    if (aborted) {
-      unsubscribe();
-      abortSignal.removeEventListener("abort", cancel);
-      return;
-    }
-
-    const sending = window.grove.chat
-      .send(prompt)
-      .catch((error: unknown) => {
-        failure = error;
-      })
-      .finally(() => {
-        settled = true;
-        notify();
-      });
-
-    try {
-      while (!aborted && (!settled || events.length > 0)) {
-        if (events.length === 0) {
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-          });
-          continue;
-        }
-
-        const event = events.shift();
-        if (!event) continue;
-
-        text += event.delta;
-        yield { content: [{ type: "text", text }] };
-      }
-
-      if (!aborted) {
-        await sending;
-        if (failure) throw failure;
-      }
-    } finally {
-      unsubscribe();
-      abortSignal.removeEventListener("abort", cancel);
-      await cancellation;
-    }
-  },
-};
+import { Composer } from "@/components/ai-elements/composer";
+import { Message } from "@/components/ai-elements/message";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { createMockProject, selectMockDraftProject, useMockGrove } from "@/lib/mock-grove";
+import { mockChatModel } from "@/lib/mock-chat-model";
 
 export function Chat() {
-  const runtime = useLocalRuntime(modelAdapter);
+  const runtime = useLocalRuntime(mockChatModel);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -99,10 +32,18 @@ export function Chat() {
 }
 
 function ChatViewport() {
+  const { projects, draftProjectId } = useMockGrove();
+  const selectedProject = projects.find(({ id }) => id === draftProjectId);
   const lastScrollTop = useRef(0);
   const userScrollIntent = useRef(false);
   const [reserveReleased, setReserveReleased] = useState(false);
+  const [showNoProject, setShowNoProject] = useState(Boolean(draftProjectId));
   const [topPadding, setTopPadding] = useState(false);
+
+  const handleNewProject = () => {
+    const name = window.prompt("Project name");
+    if (name?.trim()) createMockProject(name);
+  };
 
   useAuiEvent("thread.runStart", () => {
     userScrollIntent.current = false;
@@ -172,7 +113,58 @@ function ChatViewport() {
           </div>
 
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-gradient-to-t from-background via-background to-transparent pb-6 pt-8">
-            <Composer />
+            <AuiIf condition={(state) => state.thread.messages.length === 0}>
+              <div className="mx-4 flex h-10 items-center rounded-t-2xl border border-b-0 bg-card px-2 text-muted-foreground shadow-xs">
+                <DropdownMenu
+                  onOpenChange={(open) => {
+                    if (open) setShowNoProject(Boolean(draftProjectId));
+                  }}
+                >
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        aria-label="Choose project"
+                        className={
+                          selectedProject
+                            ? "max-w-52 justify-start text-foreground"
+                            : "max-w-52 justify-start text-muted-foreground"
+                        }
+                        variant="ghost"
+                      />
+                    }
+                  >
+                    <HugeiconsIcon data-icon="inline-start" icon={Folder01Icon} strokeWidth={2} />
+                    <span className="truncate">{selectedProject?.name ?? "Choose project"}</span>
+                    <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-56" side="top">
+                    {projects.map((project) => (
+                      <DropdownMenuItem
+                        key={project.id}
+                        onClick={() => selectMockDraftProject(project.id)}
+                      >
+                        <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
+                        {project.name}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleNewProject}>
+                      <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                      New project
+                    </DropdownMenuItem>
+                    {showNoProject && (
+                      <DropdownMenuItem onClick={() => selectMockDraftProject(undefined)}>
+                        <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+                        No project
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </AuiIf>
+            <div className="-mt-px">
+              <Composer />
+            </div>
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>

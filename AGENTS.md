@@ -27,6 +27,8 @@ Read `VISION.md` before product or architecture work. It is the source of truth 
 - Treat plugins, hooks, executable skills, and Agent extensions as trusted code until a real isolation model exists.
 - Do not add Effect yet. Reconsider only for concrete lifecycle, cancellation, resource-scoping, or concurrency complexity, and keep it out of renderer state.
 - Do not edit generated files such as `routeTree.gen.ts`.
+- Keep Assistant UI components in `apps/desktop/src/renderer/src/components/ai-elements`. Do not configure its registry in `components.json`; from `apps/desktop`, install explicitly with `npx assistant-ui@latest add <component> --path src/renderer/src/components/ai-elements`, and review transitive shadcn primitives so they remain in `components/ui`.
+- During the frontend-first phase, keep product data and behavior in explicitly named renderer mock modules. Do not add preload, IPC, persistence, Agent, Environment, filesystem, process, or backend service implementations.
 
 ## Verification
 
