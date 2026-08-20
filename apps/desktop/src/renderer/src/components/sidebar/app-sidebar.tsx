@@ -1,9 +1,7 @@
 import {
-  ArchiveIcon,
   ArrowDown01Icon,
   Compass01Icon,
   FilterMailIcon,
-  Folder01Icon,
   PencilEdit02Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
@@ -27,8 +25,8 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { Project, Task } from "@/lib/grove";
 import { filterMockTasksByProject, selectMockWorkspace, useMockGrove } from "@/lib/mock-grove";
+import { TaskItem } from "./task-item";
 
 const allProjectsValue = "all-projects";
 
@@ -42,9 +40,7 @@ export function AppSidebar() {
       <SidebarHeader className="h-8 flex-row items-center justify-between gap-0 p-0 pr-2">
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={
-              <Button className="min-w-0 px-2 text-sm" size="lg" type="button" variant="ghost" />
-            }
+            render={<Button className="min-w-0 text-sm" size="lg" type="button" variant="ghost" />}
           >
             <span className="truncate">{activeWorkspace?.name ?? "Grove"}</span>
             <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
@@ -123,49 +119,14 @@ export function AppSidebar() {
             </DropdownMenu>
           </div>
           <SidebarGroupContent>
-            <TaskMenu projectById={projectById} tasks={tasks} />
+            <SidebarMenu>
+              {tasks.map((task) => (
+                <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
+              ))}
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
     </Sidebar>
-  );
-}
-
-function TaskMenu({
-  projectById,
-  tasks,
-}: {
-  projectById: ReadonlyMap<string, Project>;
-  tasks: readonly Task[];
-}) {
-  return (
-    <SidebarMenu>
-      {tasks.map((task) => (
-        <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
-      ))}
-    </SidebarMenu>
-  );
-}
-
-function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton className="h-auto flex-col items-stretch gap-1 py-2 group-hover/menu-item:bg-sidebar-accent group-hover/menu-item:text-sidebar-accent-foreground">
-        <span className="truncate">{task.title}</span>
-        <div className="flex min-w-0 items-center gap-1 text-[0.6875rem] text-muted-foreground">
-          <HugeiconsIcon className="size-3!" icon={Folder01Icon} strokeWidth={2} />
-          <span className="truncate">{project?.name}</span>
-        </div>
-      </SidebarMenuButton>
-      <Button
-        aria-label={`Archive ${task.title}`}
-        className="pointer-events-none absolute right-0 bottom-0.5 text-muted-foreground opacity-0 group-hover/menu-item:pointer-events-auto group-hover/menu-item:opacity-100 hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100"
-        size="icon"
-        type="button"
-        variant="ghost"
-      >
-        <HugeiconsIcon className="size-3.5" icon={ArchiveIcon} strokeWidth={2} />
-      </Button>
-    </SidebarMenuItem>
   );
 }

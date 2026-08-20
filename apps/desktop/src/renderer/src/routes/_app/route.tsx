@@ -1,10 +1,9 @@
 import { ArrowLeft02Icon, ArrowRight02Icon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
-
-import { AppSidebar } from "../../components/app-sidebar";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
