@@ -145,6 +145,12 @@ importers:
       "@tanstack/react-router":
         specifier: "catalog:"
         version: 1.170.27(react@19.2.8)(react-dom@19.2.8(react@19.2.8))
+      "@wterm/dom":
+        specifier: 0.3.4
+        version: 0.3.4
+      "@wterm/react":
+        specifier: 0.3.4
+        version: 0.3.4(@wterm/dom@0.3.4)(react@19.2.8)(react-dom@19.2.8(react@19.2.8))
       class-variance-authority:
         specifier: "catalog:"
         version: 0.7.1
@@ -3575,6 +3581,28 @@ packages:
         optional: true
       babel-plugin-react-compiler:
         optional: true
+
+  "@wterm/core@0.3.4":
+    resolution:
+      {
+        integrity: sha512-GZoAxybV6FY+o2L4VcZupipkcNKM4Dv4UGekRvuohDJ9oSAzwGgw4J8UGZlXllDLV0pKg3pmIGoukMat6EQ/pQ==,
+      }
+
+  "@wterm/dom@0.3.4":
+    resolution:
+      {
+        integrity: sha512-4TYaCJpAo9B3CMsCuApS65X7nExbMZ7QjcLbJCI0132hzccQ2EdG8NX2I2AELbGbDIeWNcDYD3ReqVtbEcQwqA==,
+      }
+
+  "@wterm/react@0.3.4":
+    resolution:
+      {
+        integrity: sha512-/DwzDyvLp2x6wOc5Ng49GRTy46gfhdVfqlYTnZNh4y3DJBb82/f2JKpxKJtQkI3m6HL7VQqwgAnysIX+DavugQ==,
+      }
+    peerDependencies:
+      "@wterm/dom": 0.3.4
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   "@xmldom/xmldom@0.8.14":
     resolution:
@@ -10727,6 +10755,18 @@ snapshots:
     dependencies:
       "@rolldown/pluginutils": 1.0.1
       vite: 8.2.1(@types/node@22.20.1)(jiti@2.7.0)(yaml@2.9.0)
+
+  "@wterm/core@0.3.4": {}
+
+  "@wterm/dom@0.3.4":
+    dependencies:
+      "@wterm/core": 0.3.4
+
+  "@wterm/react@0.3.4(@wterm/dom@0.3.4)(react@19.2.8)(react-dom@19.2.8(react@19.2.8))":
+    dependencies:
+      "@wterm/dom": 0.3.4
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
 
   "@xmldom/xmldom@0.8.14": {}
 

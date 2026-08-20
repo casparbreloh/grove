@@ -2,7 +2,7 @@ import { ArchiveIcon, Folder01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
-import type { Project, Task } from "@/lib/grove";
+import type { Project, Task } from "@/lib/mock";
 
 export function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
   return (

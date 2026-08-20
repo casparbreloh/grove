@@ -25,7 +25,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { filterMockTasksByProject, selectMockWorkspace, useMockGrove } from "@/lib/mock-grove";
+import { filterMockTasksByProject, selectMockWorkspace, useMockGrove } from "@/lib/mock";
 import { TaskItem } from "./task-item";
 
 const allProjectsValue = "all-projects";

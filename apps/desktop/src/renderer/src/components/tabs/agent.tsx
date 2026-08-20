@@ -18,10 +18,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { createMockProject, selectMockDraftProject, useMockGrove } from "@/lib/mock-grove";
-import { mockChatModel } from "@/lib/mock-chat-model";
+import { createMockProject, mockChatModel, selectMockDraftProject, useMockGrove } from "@/lib/mock";
 
-export function Chat() {
+export function Agent() {
   const runtime = useLocalRuntime(mockChatModel);
 
   return (
