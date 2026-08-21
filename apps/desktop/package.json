@@ -10,6 +10,8 @@
     "@fontsource-variable/inter": "catalog:",
     "@hugeicons/core-free-icons": "catalog:",
     "@hugeicons/react": "catalog:",
+    "@pierre/diffs": "1.2.0",
+    "@pierre/trees": "1.0.0-beta.6",
     "@streamdown/code": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@wterm/dom": "0.3.4",
