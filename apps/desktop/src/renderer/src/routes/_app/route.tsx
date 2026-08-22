@@ -19,7 +19,7 @@ export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
   return (
-    <SidebarProvider className="h-svh flex-col overflow-hidden bg-sidebar">
+    <SidebarProvider className="desktop-shell h-svh flex-col overflow-hidden bg-sidebar">
       <DesktopHeader />
       <div className="flex min-h-0 flex-1">
         <AppSidebar />
@@ -39,7 +39,7 @@ function DesktopHeader() {
 
   return (
     <header
-      className="desktop-header grid h-10 shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
+      className="desktop-header grid h-(--desktop-header-height) shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
       style={{
         gridTemplateColumns: `${open ? "var(--sidebar-width)" : "calc(var(--desktop-header-controls-width) + var(--desktop-header-new-tab-width) + var(--desktop-header-safe-area-left))"} minmax(0, 1fr)`,
       }}
@@ -68,7 +68,7 @@ function DesktopHeader() {
       </div>
       <nav
         aria-label="Tabs"
-        className="flex min-w-0 items-center gap-1 overflow-x-auto"
+        className="flex h-full min-w-0 items-center gap-1 overflow-x-auto"
         role="tablist"
       >
         {tabs.map((tab) => (
@@ -117,11 +117,11 @@ function TabItem({
   canClose: boolean;
 }) {
   return (
-    <div className="group/tab relative w-36 shrink-0">
+    <div className="group/tab relative flex h-7 w-36 shrink-0 items-center">
       <Button
         aria-selected={isActive}
         className={cn(
-          "w-full justify-start truncate group-hover/tab:pr-7",
+          "h-full w-full justify-start truncate group-hover/tab:pr-7",
           isActive
             ? "bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] group-hover/tab:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]"
             : "group-hover/tab:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
@@ -135,7 +135,7 @@ function TabItem({
       {canClose && (
         <Button
           aria-label={`Close ${tab.title}`}
-          className="pointer-events-none absolute top-0 right-0 text-muted-foreground opacity-0 group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-transparent"
+          className="pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-muted-foreground opacity-0 group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-transparent"
           onClick={() => closeMockTab(tab.tabId)}
           size="icon"
           type="button"

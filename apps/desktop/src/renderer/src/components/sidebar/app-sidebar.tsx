@@ -1,10 +1,4 @@
-import {
-  ArrowDown01Icon,
-  Compass01Icon,
-  FilterMailIcon,
-  PencilEdit02Icon,
-  Search01Icon,
-} from "@hugeicons/core-free-icons";
+import { Compass01Icon, FilterMailIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@/components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@/components/ui/menu";
@@ -14,49 +8,25 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { filterMockTasksByProject, selectMockWorkspace, useMockGrove } from "@/lib/mock";
+import { filterMockTasksByProject, useMockGrove } from "@/lib/mock";
 import { TaskItem } from "./task-item";
 
 const allProjectsValue = "all-projects";
 
 export function AppSidebar() {
-  const { activeWorkspaceId, workspaces, projects, tasks, taskProjectFilterId } = useMockGrove();
-  const activeWorkspace = workspaces.find(({ id }) => id === activeWorkspaceId);
+  const { projects, tasks, taskProjectFilterId } = useMockGrove();
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <Sidebar className="top-10 h-[calc(100svh-2.5rem)]" collapsible="offcanvas" variant="inset">
-      <SidebarHeader className="h-8 flex-row items-center justify-between gap-0 p-0 pr-2">
-        <Menu>
-          <MenuTrigger
-            render={<Button className="min-w-0 text-sm" type="button" variant="ghost" />}
-          >
-            <span className="truncate">{activeWorkspace?.name ?? "Grove"}</span>
-            <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
-          </MenuTrigger>
-          <MenuPopup align="start" className="w-52">
-            <MenuRadioGroup
-              onValueChange={(value) => selectMockWorkspace(value)}
-              value={activeWorkspaceId}
-            >
-              {workspaces.map((workspace) => (
-                <MenuRadioItem key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuPopup>
-        </Menu>
-        <Button aria-label="Search" size="icon" type="button" variant="ghost">
-          <HugeiconsIcon icon={Search01Icon} strokeWidth={2} />
-        </Button>
-      </SidebarHeader>
-
+    <Sidebar
+      className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]"
+      collapsible="offcanvas"
+      variant="inset"
+    >
       <SidebarContent>
         <SidebarGroup className="pl-0">
           <SidebarGroupContent>
