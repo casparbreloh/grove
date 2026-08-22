@@ -10,14 +10,17 @@ const allProjectsValue = "all-projects";
 const sidebarNavigationButtonClassName =
   "h-7 w-full justify-start gap-1.5 rounded-md px-2 text-xs font-normal text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
-export function AppSidebar() {
+export function AppSidebar({ open }: { open: boolean }) {
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <SidebarPanel className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]">
+    <SidebarPanel
+      className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]"
+      open={open}
+    >
       <SidebarScrollArea>
-        <nav aria-label="Primary" className="px-2 py-1 pl-0">
+        <nav aria-label="Primary" className="px-2 py-1">
           <ul className="flex min-w-0 flex-col gap-px">
             <li>
               <Button className={sidebarNavigationButtonClassName} variant="ghost">
@@ -36,7 +39,7 @@ export function AppSidebar() {
 
         <section
           aria-labelledby="tasks-heading"
-          className="relative flex min-w-0 flex-col px-2 py-1 pl-0"
+          className="relative flex min-w-0 flex-col px-2 py-1"
         >
           <div className="flex items-center">
             <h2

@@ -5,57 +5,19 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Sheet,
-  SheetDescription,
-  SheetHeader,
-  SheetPopup,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
 
 const SIDEBAR_WIDTH = "14rem";
-const SIDEBAR_WIDTH_MOBILE = "16rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
-type SidebarShellContextValue = {
-  isMobile: boolean;
+type SidebarVisibility = {
   open: boolean;
-  openMobile: boolean;
-  setOpenMobile: React.Dispatch<React.SetStateAction<boolean>>;
   toggleSidebar: () => void;
 };
 
-const SidebarShellContext = React.createContext<SidebarShellContextValue | null>(null);
-
-export function useSidebarShell(): SidebarShellContextValue {
-  const context = React.useContext(SidebarShellContext);
-  if (!context) {
-    throw new Error("useSidebarShell must be used within SidebarShellProvider.");
-  }
-
-  return context;
-}
-
-export function SidebarShellProvider({
-  className,
-  style,
-  children,
-  ...props
-}: React.ComponentProps<"div">): React.ReactElement {
-  const isMobile = useMediaQuery("max-md");
+export function useSidebarVisibility(): SidebarVisibility {
   const [open, setOpen] = React.useState(true);
-  const [openMobile, setOpenMobile] = React.useState(false);
-
-  const toggleSidebar = React.useCallback(() => {
-    if (isMobile) {
-      setOpenMobile((currentOpen) => !currentOpen);
-      return;
-    }
-
-    setOpen((currentOpen) => !currentOpen);
-  }, [isMobile]);
+  const toggleSidebar = React.useCallback(() => setOpen((currentOpen) => !currentOpen), []);
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -69,53 +31,34 @@ export function SidebarShellProvider({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [toggleSidebar]);
 
-  const contextValue = React.useMemo<SidebarShellContextValue>(
-    () => ({ isMobile, open, openMobile, setOpenMobile, toggleSidebar }),
-    [isMobile, open, openMobile, toggleSidebar],
-  );
+  return { open, toggleSidebar };
+}
 
+export function SidebarShell({
+  className,
+  style,
+  children,
+  ...props
+}: React.ComponentProps<"div">): React.ReactElement {
   return (
-    <SidebarShellContext.Provider value={contextValue}>
-      <div
-        className={cn("group/sidebar-shell flex min-h-svh w-full bg-sidebar", className)}
-        style={{ "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties}
-        {...props}
-      >
-        {children}
-      </div>
-    </SidebarShellContext.Provider>
+    <div
+      className={cn("group/sidebar-shell flex min-h-svh w-full bg-sidebar", className)}
+      style={{ "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties}
+      {...props}
+    >
+      {children}
+    </div>
   );
 }
 
 export function SidebarPanel({
+  open,
   className,
   children,
-}: Pick<React.ComponentProps<"aside">, "children" | "className">): React.ReactElement {
-  const { isMobile, open, openMobile, setOpenMobile } = useSidebarShell();
-
-  if (isMobile) {
-    return (
-      <Sheet onOpenChange={setOpenMobile} open={openMobile}>
-        <SheetPopup
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          side="left"
-          style={{ "--sidebar-width": SIDEBAR_WIDTH_MOBILE } as React.CSSProperties}
-        >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the Grove sidebar.</SheetDescription>
-          </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetPopup>
-      </Sheet>
-    );
-  }
-
+  ...props
+}: React.ComponentProps<"aside"> & { open: boolean }): React.ReactElement {
   return (
-    <div
-      className="peer hidden text-sidebar-foreground md:block"
-      data-state={open ? "expanded" : "collapsed"}
-    >
+    <div className="peer text-sidebar-foreground" data-state={open ? "expanded" : "collapsed"}>
       <div
         className={cn(
           "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
@@ -124,10 +67,11 @@ export function SidebarPanel({
       />
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left] duration-200 ease-linear md:flex",
+          "fixed inset-y-0 left-0 z-10 flex h-svh w-(--sidebar-width) transition-[left] duration-200 ease-linear",
           !open && "left-[calc(var(--sidebar-width)*-1)]",
           className,
         )}
+        {...props}
       >
         <div className="flex h-full w-full flex-col bg-sidebar">{children}</div>
       </aside>
@@ -136,20 +80,17 @@ export function SidebarPanel({
 }
 
 export function SidebarToggle({
+  onToggle,
   className,
-  onClick,
   ...props
-}: React.ComponentProps<typeof Button>): React.ReactElement {
-  const { toggleSidebar } = useSidebarShell();
-
+}: Omit<React.ComponentProps<typeof Button>, "onClick"> & {
+  onToggle: () => void;
+}): React.ReactElement {
   return (
     <Button
       aria-label="Toggle sidebar"
       className={cn("size-7", className)}
-      onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(event);
-        toggleSidebar();
-      }}
+      onClick={onToggle}
       size="icon"
       variant="ghost"
       {...props}
@@ -166,7 +107,7 @@ export function SidebarInset({
   return (
     <main
       className={cn(
-        "relative flex w-full flex-1 flex-col bg-background md:me-2 md:mb-2 md:rounded-xl md:shadow-sm/5 md:peer-data-[state=collapsed]:ms-2",
+        "relative me-2 mb-2 flex w-full flex-1 flex-col rounded-xl bg-background shadow-sm/5 peer-data-[state=collapsed]:ms-2",
         className,
       )}
       {...props}

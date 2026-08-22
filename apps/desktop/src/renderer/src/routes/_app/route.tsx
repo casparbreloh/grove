@@ -10,9 +10,9 @@ import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import {
   SidebarInset,
-  SidebarShellProvider,
+  SidebarShell,
   SidebarToggle,
-  useSidebarShell,
+  useSidebarVisibility,
 } from "@/components/sidebar/sidebar-shell";
 import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
@@ -24,34 +24,41 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
+  const { open: sidebarOpen, toggleSidebar } = useSidebarVisibility();
+
   return (
-    <SidebarShellProvider className="desktop-shell h-svh flex-col overflow-hidden">
-      <DesktopHeader />
+    <SidebarShell className="desktop-shell h-svh flex-col overflow-hidden">
+      <DesktopHeader onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
       <div className="flex min-h-0 flex-1">
-        <AppSidebar />
+        <AppSidebar open={sidebarOpen} />
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col">
             <Outlet />
           </div>
         </SidebarInset>
       </div>
-    </SidebarShellProvider>
+    </SidebarShell>
   );
 }
 
-function DesktopHeader() {
-  const { open } = useSidebarShell();
+function DesktopHeader({
+  sidebarOpen,
+  onToggleSidebar,
+}: {
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+}) {
   const { activeTabId, tabs } = useMockGrove();
 
   return (
     <header
       className="desktop-header grid h-(--desktop-header-height) shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
       style={{
-        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "max-content"} minmax(0, 1fr)`,
+        gridTemplateColumns: `${sidebarOpen ? "var(--sidebar-width)" : "var(--desktop-header-collapsed-sidebar-width)"} minmax(0, 1fr)`,
       }}
     >
       <div className="desktop-header-sidebar-controls flex items-center gap-1 pr-1">
-        <SidebarToggle />
+        <SidebarToggle onToggle={onToggleSidebar} />
         <div className="flex items-center gap-1">
           <Button
             aria-label="Go back"
@@ -70,7 +77,7 @@ function DesktopHeader() {
             <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
         </div>
-        {!open && <NewTabMenu icon={PencilEdit02Icon} />}
+        {!sidebarOpen && <NewTabMenu icon={PencilEdit02Icon} />}
       </div>
       <nav
         aria-label="Tabs"

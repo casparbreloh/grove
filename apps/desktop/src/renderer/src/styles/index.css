@@ -96,6 +96,7 @@
 
 .desktop-header {
   --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
+  --desktop-header-collapsed-sidebar-width: calc(var(--desktop-header-safe-area-left) + 8.5rem);
   -webkit-app-region: drag;
 }
 
