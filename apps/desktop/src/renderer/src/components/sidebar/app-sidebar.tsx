@@ -8,7 +8,7 @@ import { TaskItem } from "./task-item";
 
 const allProjectsValue = "all-projects";
 const sidebarNavigationButtonClassName =
-  "h-7 w-full justify-start gap-1.5 rounded-md px-2 text-xs font-normal text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+  "h-7 w-full justify-start gap-1.5 rounded-md px-2 text-xs font-normal text-foreground hover:bg-sidebar-hover hover:text-foreground";
 
 export function AppSidebar({ open }: { open: boolean }) {
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
@@ -43,7 +43,7 @@ export function AppSidebar({ open }: { open: boolean }) {
         >
           <div className="flex items-center">
             <h2
-              className="flex h-7 min-w-0 flex-1 items-center px-2 font-medium text-[11px] text-sidebar-foreground"
+              className="flex h-7 min-w-0 flex-1 items-center px-2 font-medium text-[11px] text-muted-foreground"
               id="tasks-heading"
             >
               Tasks

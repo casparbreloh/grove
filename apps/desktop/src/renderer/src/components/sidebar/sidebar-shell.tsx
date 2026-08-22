@@ -42,7 +42,7 @@ export function SidebarShell({
 }: React.ComponentProps<"div">): React.ReactElement {
   return (
     <div
-      className={cn("group/sidebar-shell flex min-h-svh w-full bg-sidebar", className)}
+      className={cn("group/sidebar-shell flex min-h-svh w-full bg-transparent", className)}
       style={{ "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties}
       {...props}
     >
@@ -58,7 +58,7 @@ export function SidebarPanel({
   ...props
 }: React.ComponentProps<"aside"> & { open: boolean }): React.ReactElement {
   return (
-    <div className="peer text-sidebar-foreground" data-state={open ? "expanded" : "collapsed"}>
+    <div className="peer text-foreground" data-state={open ? "expanded" : "collapsed"}>
       <div
         className={cn(
           "relative w-(--sidebar-width) bg-transparent transition-[width] duration-150 ease-linear",
@@ -73,7 +73,7 @@ export function SidebarPanel({
         )}
         {...props}
       >
-        <div className="flex h-full w-full flex-col bg-sidebar">{children}</div>
+        <div className="flex h-full w-full flex-col bg-transparent">{children}</div>
       </aside>
     </div>
   );

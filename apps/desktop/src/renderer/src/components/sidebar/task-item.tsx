@@ -7,7 +7,7 @@ export function TaskItem({ project, task }: { project: Project | undefined; task
   return (
     <li className="group/task-item relative">
       <Button
-        className="h-auto! w-full flex-col items-stretch gap-0.5 overflow-hidden rounded-md px-2 py-1.5 text-left text-xs font-normal text-sidebar-foreground group-hover/task-item:bg-sidebar-accent group-hover/task-item:text-sidebar-accent-foreground"
+        className="h-auto! w-full flex-col items-stretch gap-0.5 overflow-hidden rounded-md px-2 py-1.5 text-left text-xs font-normal text-foreground hover:bg-sidebar-hover hover:text-foreground group-hover/task-item:bg-sidebar-hover group-hover/task-item:text-foreground"
         variant="ghost"
       >
         <span className="truncate">{task.title}</span>

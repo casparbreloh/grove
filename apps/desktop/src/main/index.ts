@@ -1,10 +1,14 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const isMac = process.platform === "darwin";
 
 let mainWindow: BrowserWindow | undefined;
+
+function opaqueWindowBackground() {
+  return nativeTheme.shouldUseDarkColors ? "#171717" : "#ffffff";
+}
 
 function rendererUrl() {
   return (
@@ -26,20 +30,25 @@ function openExternal(url: string) {
 }
 
 function createWindow() {
+  const useSidebarVibrancy = isMac && !nativeTheme.prefersReducedTransparency;
   const window = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 960,
     minHeight: 640,
     show: false,
-    backgroundColor: "#171717",
+    ...(!useSidebarVibrancy ? { backgroundColor: opaqueWindowBackground() } : {}),
     titleBarStyle: isMac ? "hiddenInset" : "hidden",
     titleBarOverlay: true,
     ...(isMac
       ? {
           trafficLightPosition: { x: 12, y: 13 },
-          vibrancy: "sidebar" as const,
-          visualEffectState: "followWindow" as const,
+          ...(useSidebarVibrancy
+            ? {
+                vibrancy: "sidebar" as const,
+                visualEffectState: "followWindow" as const,
+              }
+            : {}),
         }
       : {}),
     webPreferences: {
@@ -61,10 +70,31 @@ function createWindow() {
     }
   });
 
+  const updateWindowMaterial = () => {
+    if (window.isDestroyed()) return;
+
+    if (!isMac) {
+      window.setBackgroundColor(opaqueWindowBackground());
+      return;
+    }
+
+    if (nativeTheme.prefersReducedTransparency) {
+      window.setVibrancy(null);
+      window.setBackgroundColor(opaqueWindowBackground());
+      return;
+    }
+
+    window.setVibrancy("sidebar");
+    window.setBackgroundColor("#00000000");
+  };
+
+  nativeTheme.on("updated", updateWindowMaterial);
+
   void window.loadURL(rendererUrl());
 
   mainWindow = window;
   window.on("closed", () => {
+    nativeTheme.off("updated", updateWindowMaterial);
     mainWindow = undefined;
   });
 }
