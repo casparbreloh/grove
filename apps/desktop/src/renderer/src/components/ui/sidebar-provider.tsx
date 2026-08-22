@@ -31,7 +31,7 @@ function SidebarProvider({ className, style, children, ...props }: React.Compone
     <SidebarContext.Provider value={contextValue}>
       <div
         className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar has-data-[variant=inset]:backdrop-blur-2xl has-data-[variant=inset]:backdrop-saturate-150",
+          "group/sidebar-wrapper relative isolate flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar has-data-[variant=inset]:before:pointer-events-none has-data-[variant=inset]:before:absolute has-data-[variant=inset]:before:inset-0 has-data-[variant=inset]:before:-z-1 has-data-[variant=inset]:before:backdrop-blur-2xl has-data-[variant=inset]:before:backdrop-saturate-150",
           className,
         )}
         data-slot="sidebar-wrapper"
