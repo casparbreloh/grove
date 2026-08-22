@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarTrigger, sidebarControlClassName } from "@/components/ui/sidebar";
 import { useSidebar } from "@/components/ui/sidebar-context";
 import { SidebarProvider } from "@/components/ui/sidebar-provider";
 import type { GroveTab } from "@/lib/mock";
@@ -65,17 +65,19 @@ function DesktopHeader() {
         <div className="flex items-center gap-1">
           <Button
             aria-label="Go back"
+            className={sidebarControlClassName}
             onClick={() => window.history.back()}
             size="icon"
-            variant="sidebar"
+            variant="ghost"
           >
             <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
           </Button>
           <Button
             aria-label="Go forward"
+            className={sidebarControlClassName}
             onClick={() => window.history.forward()}
             size="icon"
-            variant="sidebar"
+            variant="ghost"
           >
             <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
@@ -106,7 +108,13 @@ function NewTabMenu({ icon = Add01Icon }: { icon?: typeof Add01Icon }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button aria-label="New tab" size="icon" type="button" variant="sidebar">
+          <Button
+            aria-label="New tab"
+            className={sidebarControlClassName}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
             <HugeiconsIcon icon={icon} strokeWidth={2} />
           </Button>
         }

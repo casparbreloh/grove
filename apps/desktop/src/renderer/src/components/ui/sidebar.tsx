@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar-context";
 import { cn } from "@/lib/utils";
 
+const sidebarControlClassName =
+  "hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent dark:hover:bg-sidebar-accent";
+
 function Sidebar({
   variant = "sidebar",
   className,
@@ -57,7 +60,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
 
   return (
     <Button
-      className={className}
+      className={cn(sidebarControlClassName, className)}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       onClick={(event) => {
@@ -65,7 +68,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
         toggleSidebar();
       }}
       size="icon"
-      variant="sidebar"
+      variant="ghost"
       {...props}
     >
       <HugeiconsIcon icon={PanelLeftIcon} strokeWidth={2} />
@@ -199,4 +202,5 @@ export {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarTrigger,
+  sidebarControlClassName,
 };

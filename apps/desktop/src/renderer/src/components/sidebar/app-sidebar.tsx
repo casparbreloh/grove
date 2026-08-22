@@ -17,6 +17,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  sidebarControlClassName,
 } from "@/components/ui/sidebar";
 import { filterMockTasksByProject, useMockGrove } from "@/lib/mock";
 import { TaskItem } from "./task-item";
@@ -65,9 +66,10 @@ export function AppSidebar() {
                 render={
                   <Button
                     aria-label="Filter tasks by project"
+                    className={sidebarControlClassName}
                     size="icon"
                     type="button"
-                    variant="sidebar"
+                    variant="ghost"
                   />
                 }
               >
