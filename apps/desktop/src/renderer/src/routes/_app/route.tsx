@@ -67,7 +67,7 @@ function DesktopHeader() {
             aria-label="Go back"
             onClick={() => window.history.back()}
             size="icon"
-            variant="ghost"
+            variant="sidebar"
           >
             <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
           </Button>
@@ -75,7 +75,7 @@ function DesktopHeader() {
             aria-label="Go forward"
             onClick={() => window.history.forward()}
             size="icon"
-            variant="ghost"
+            variant="sidebar"
           >
             <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
@@ -106,7 +106,7 @@ function NewTabMenu({ icon = Add01Icon }: { icon?: typeof Add01Icon }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button aria-label="New tab" size="icon" type="button" variant="ghost">
+          <Button aria-label="New tab" size="icon" type="button" variant="sidebar">
             <HugeiconsIcon icon={icon} strokeWidth={2} />
           </Button>
         }

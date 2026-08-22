@@ -67,7 +67,7 @@ export function AppSidebar() {
                     aria-label="Filter tasks by project"
                     size="icon"
                     type="button"
-                    variant="ghost"
+                    variant="sidebar"
                   />
                 }
               >

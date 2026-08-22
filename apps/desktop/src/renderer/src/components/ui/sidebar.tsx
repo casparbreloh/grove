@@ -65,7 +65,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
         toggleSidebar();
       }}
       size="icon"
-      variant="ghost"
+      variant="sidebar"
       {...props}
     >
       <HugeiconsIcon icon={PanelLeftIcon} strokeWidth={2} />
