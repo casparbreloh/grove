@@ -49,7 +49,7 @@ export function AppSidebar() {
 
         <SidebarGroup className="pl-0">
           <div className="flex items-center">
-            <SidebarGroupLabel className="min-w-0 flex-1">Tasks</SidebarGroupLabel>
+            <SidebarGroupLabel className="min-w-0 flex-1 text-[11px]">Tasks</SidebarGroupLabel>
             <Menu>
               <MenuTrigger
                 render={
