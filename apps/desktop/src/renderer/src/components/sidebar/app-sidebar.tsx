@@ -61,7 +61,7 @@ export function AppSidebar({ open }: { open: boolean }) {
               >
                 <HugeiconsIcon icon={FilterMailIcon} strokeWidth={2} />
               </MenuTrigger>
-              <MenuPopup align="start" className="w-52" side="right">
+              <MenuPopup align="end" className="w-52" side="bottom">
                 <MenuRadioGroup
                   onValueChange={(value) =>
                     filterMockTasksByProject(value === allProjectsValue ? undefined : value)
