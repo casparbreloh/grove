@@ -11,13 +11,7 @@ import { useRef, useState } from "react";
 import { Composer } from "@/components/ai-elements/composer";
 import { Message } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { createMockProject, mockChatModel, selectMockDraftProject, useMockGrove } from "@/lib/mock";
 
 export function Agent() {
@@ -114,12 +108,12 @@ function ChatViewport() {
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-gradient-to-t from-background via-background to-transparent pb-6 pt-8">
             <AuiIf condition={(state) => state.thread.messages.length === 0}>
               <div className="mx-4 flex h-10 items-center rounded-t-2xl border border-b-0 bg-card px-2 text-muted-foreground shadow-xs">
-                <DropdownMenu
+                <Menu
                   onOpenChange={(open) => {
                     if (open) setShowNoProject(Boolean(draftProjectId));
                   }}
                 >
-                  <DropdownMenuTrigger
+                  <MenuTrigger
                     render={
                       <Button
                         aria-label="Choose project"
@@ -135,30 +129,27 @@ function ChatViewport() {
                     <HugeiconsIcon data-icon="inline-start" icon={Folder01Icon} strokeWidth={2} />
                     <span className="truncate">{selectedProject?.name ?? "Choose project"}</span>
                     <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-56" side="top">
+                  </MenuTrigger>
+                  <MenuPopup align="start" className="w-56" side="top">
                     {projects.map((project) => (
-                      <DropdownMenuItem
-                        key={project.id}
-                        onClick={() => selectMockDraftProject(project.id)}
-                      >
+                      <MenuItem key={project.id} onClick={() => selectMockDraftProject(project.id)}>
                         <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
                         {project.name}
-                      </DropdownMenuItem>
+                      </MenuItem>
                     ))}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleNewProject}>
+                    <MenuSeparator />
+                    <MenuItem onClick={handleNewProject}>
                       <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
                       New project
-                    </DropdownMenuItem>
+                    </MenuItem>
                     {showNoProject && (
-                      <DropdownMenuItem onClick={() => selectMockDraftProject(undefined)}>
+                      <MenuItem onClick={() => selectMockDraftProject(undefined)}>
                         <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
                         No project
-                      </DropdownMenuItem>
+                      </MenuItem>
                     )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                  </MenuPopup>
+                </Menu>
               </div>
             </AuiIf>
             <div className="-mt-px">

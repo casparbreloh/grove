@@ -7,13 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@/components/ui/menu";
 import {
   Sidebar,
   SidebarContent,
@@ -36,28 +30,28 @@ export function AppSidebar() {
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <Sidebar className="top-10 h-[calc(100svh-2.5rem)]" variant="inset">
+    <Sidebar className="top-10 h-[calc(100svh-2.5rem)]" collapsible="offcanvas" variant="inset">
       <SidebarHeader className="h-8 flex-row items-center justify-between gap-0 p-0 pr-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button className="min-w-0 text-sm" size="lg" type="button" variant="ghost" />}
+        <Menu>
+          <MenuTrigger
+            render={<Button className="min-w-0 text-sm" type="button" variant="ghost" />}
           >
             <span className="truncate">{activeWorkspace?.name ?? "Grove"}</span>
             <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-52">
-            <DropdownMenuRadioGroup
+          </MenuTrigger>
+          <MenuPopup align="start" className="w-52">
+            <MenuRadioGroup
               onValueChange={(value) => selectMockWorkspace(value)}
               value={activeWorkspaceId}
             >
               {workspaces.map((workspace) => (
-                <DropdownMenuRadioItem key={workspace.id} value={workspace.id}>
+                <MenuRadioItem key={workspace.id} value={workspace.id}>
                   {workspace.name}
-                </DropdownMenuRadioItem>
+                </MenuRadioItem>
               ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </MenuRadioGroup>
+          </MenuPopup>
+        </Menu>
         <Button aria-label="Search" size="icon" type="button" variant="ghost">
           <HugeiconsIcon icon={Search01Icon} strokeWidth={2} />
         </Button>
@@ -86,8 +80,8 @@ export function AppSidebar() {
         <SidebarGroup className="pl-0">
           <div className="flex items-center">
             <SidebarGroupLabel className="min-w-0 flex-1">Tasks</SidebarGroupLabel>
-            <DropdownMenu>
-              <DropdownMenuTrigger
+            <Menu>
+              <MenuTrigger
                 render={
                   <Button
                     aria-label="Filter tasks by project"
@@ -98,25 +92,23 @@ export function AppSidebar() {
                 }
               >
                 <HugeiconsIcon icon={FilterMailIcon} strokeWidth={2} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuRadioGroup
+              </MenuTrigger>
+              <MenuPopup align="end" className="w-52">
+                <MenuRadioGroup
                   onValueChange={(value) =>
                     filterMockTasksByProject(value === allProjectsValue ? undefined : value)
                   }
                   value={taskProjectFilterId ?? allProjectsValue}
                 >
-                  <DropdownMenuRadioItem value={allProjectsValue}>
-                    All projects
-                  </DropdownMenuRadioItem>
+                  <MenuRadioItem value={allProjectsValue}>All projects</MenuRadioItem>
                   {projects.map((project) => (
-                    <DropdownMenuRadioItem key={project.id} value={project.id}>
+                    <MenuRadioItem key={project.id} value={project.id}>
                       {project.name}
-                    </DropdownMenuRadioItem>
+                    </MenuRadioItem>
                   ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </MenuRadioGroup>
+              </MenuPopup>
+            </Menu>
           </div>
           <SidebarGroupContent>
             <SidebarMenu>

@@ -1,7 +1,6 @@
 import { ArchiveIcon, Folder01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Button } from "@/components/ui/button";
-import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
+import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import type { Project, Task } from "@/lib/mock";
 
 export function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
@@ -14,16 +13,14 @@ export function TaskItem({ project, task }: { project: Project | undefined; task
           <span className="truncate">{project?.name}</span>
         </div>
       </SidebarMenuButton>
-      <Button
+      <SidebarMenuAction
         aria-label={`Archive ${task.title}`}
-        className="pointer-events-none absolute right-0 bottom-0.5 text-muted-foreground opacity-0 group-hover/menu-item:pointer-events-auto group-hover/menu-item:opacity-100 hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100"
-        data-sidebar="menu-action"
-        size="icon"
+        className="top-auto right-1 bottom-1 text-muted-foreground hover:text-foreground"
+        showOnHover
         type="button"
-        variant="ghost"
       >
         <HugeiconsIcon icon={ArchiveIcon} strokeWidth={2} />
-      </Button>
+      </SidebarMenuAction>
     </SidebarMenuItem>
   );
 }

@@ -134,7 +134,7 @@ export function Diff({ diffId }: { diffId: string }) {
       </nav>
       <div className="min-h-0 space-y-4 overflow-auto">
         {Object.entries(changes).map(([path, change]) => (
-          <Card className="gap-0 py-0" id={`diff-${path}`} key={path}>
+          <Card className="overflow-hidden" id={`diff-${path}`} key={path}>
             <MultiFileDiff
               newFile={change.newFile}
               oldFile={change.oldFile}

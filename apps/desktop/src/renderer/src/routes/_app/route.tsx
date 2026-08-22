@@ -9,12 +9,7 @@ import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import type { GroveTab } from "@/lib/mock";
 import { closeMockTab, selectMockTab, useMockGrove } from "@/lib/mock";
@@ -92,23 +87,23 @@ function DesktopHeader() {
 
 function NewTabMenu() {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <Menu>
+      <MenuTrigger
         render={
           <Button aria-label="New tab" size="icon" type="button" variant="ghost">
             <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
           </Button>
         }
       />
-      <DropdownMenuContent align="start">
+      <MenuPopup align="start">
         {tabRegistry.map((registration) => (
-          <DropdownMenuItem key={registration.kind} onClick={registration.create}>
+          <MenuItem key={registration.kind} onClick={registration.create}>
             <HugeiconsIcon icon={registration.icon} strokeWidth={2} />
             {registration.label}
-          </DropdownMenuItem>
+          </MenuItem>
         ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </MenuPopup>
+    </Menu>
   );
 }
 
