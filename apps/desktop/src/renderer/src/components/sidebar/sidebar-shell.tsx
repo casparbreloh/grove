@@ -61,13 +61,13 @@ export function SidebarPanel({
     <div className="peer text-sidebar-foreground" data-state={open ? "expanded" : "collapsed"}>
       <div
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-150 ease-linear",
           !open && "w-0",
         )}
       />
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-10 flex h-svh w-(--sidebar-width) transition-[left] duration-200 ease-linear",
+          "fixed inset-y-0 left-0 z-10 flex h-svh w-(--sidebar-width) transition-[left] duration-150 ease-linear",
           !open && "left-[calc(var(--sidebar-width)*-1)]",
           className,
         )}
