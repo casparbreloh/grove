@@ -134,7 +134,7 @@ function TabItem({
       <Button
         aria-selected={isActive}
         className={cn(
-          "h-full w-full justify-start truncate group-hover/tab:pr-7",
+          "h-full w-full justify-start truncate focus-visible:ring-inset focus-visible:ring-offset-0 group-hover/tab:pr-7",
           isActive
             ? "bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] group-hover/tab:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]"
             : "group-hover/tab:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",

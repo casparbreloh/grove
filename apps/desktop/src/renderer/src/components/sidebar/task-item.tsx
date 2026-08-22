@@ -18,7 +18,7 @@ export function TaskItem({ project, task }: { project: Project | undefined; task
       </Button>
       <Button
         aria-label={`Archive ${task.title}`}
-        className="pointer-events-none absolute right-1.5 bottom-1 h-5 gap-1 px-1 text-[11px]! text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/task-item:pointer-events-auto group-hover/task-item:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-transparent"
+        className="pointer-events-none absolute right-1.5 bottom-1 h-5 gap-1 px-1 text-[11px]! text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/task-item:pointer-events-auto group-hover/task-item:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-transparent"
         size="xs"
         variant="ghost"
       >
