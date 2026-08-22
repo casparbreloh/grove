@@ -42,7 +42,7 @@ export function SidebarShell({
 }: React.ComponentProps<"div">): React.ReactElement {
   return (
     <div
-      className={cn("group/sidebar-shell flex min-h-svh w-full bg-transparent", className)}
+      className={cn("group/sidebar-shell flex min-h-svh w-full bg-sidebar-glass", className)}
       style={{ "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties}
       {...props}
     >

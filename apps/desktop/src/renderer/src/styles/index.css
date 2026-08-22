@@ -16,6 +16,7 @@
   --font-heading: var(--font-sans);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --font-sans: "Inter Variable", sans-serif;
+  --color-sidebar-glass: var(--sidebar-glass);
   --color-sidebar-hover: var(--sidebar-hover);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
