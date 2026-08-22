@@ -96,8 +96,6 @@
 
 .desktop-header {
   --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
-  --desktop-header-controls-width: 6.5rem;
-  --desktop-header-new-tab-width: 1.75rem;
   -webkit-app-region: drag;
 }
 

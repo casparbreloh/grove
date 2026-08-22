@@ -8,10 +8,15 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import {
+  SidebarInset,
+  SidebarShellProvider,
+  SidebarToggle,
+  useSidebarShell,
+} from "@/components/sidebar/sidebar-shell";
 import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
-import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import type { GroveTab } from "@/lib/mock";
 import { closeMockTab, selectMockTab, useMockGrove } from "@/lib/mock";
 import { cn } from "@/lib/utils";
@@ -20,7 +25,7 @@ export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
   return (
-    <SidebarProvider className="desktop-shell h-svh flex-col overflow-hidden bg-sidebar">
+    <SidebarShellProvider className="desktop-shell h-svh flex-col overflow-hidden">
       <DesktopHeader />
       <div className="flex min-h-0 flex-1">
         <AppSidebar />
@@ -30,23 +35,23 @@ function AppLayout() {
           </div>
         </SidebarInset>
       </div>
-    </SidebarProvider>
+    </SidebarShellProvider>
   );
 }
 
 function DesktopHeader() {
-  const { open } = useSidebar();
+  const { open } = useSidebarShell();
   const { activeTabId, tabs } = useMockGrove();
 
   return (
     <header
       className="desktop-header grid h-(--desktop-header-height) shrink-0 bg-sidebar transition-[grid-template-columns] duration-150 ease-linear"
       style={{
-        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "calc(var(--desktop-header-controls-width) + var(--desktop-header-new-tab-width) + var(--desktop-header-safe-area-left))"} minmax(0, 1fr)`,
+        gridTemplateColumns: `${open ? "var(--sidebar-width)" : "max-content"} minmax(0, 1fr)`,
       }}
     >
-      <div className="desktop-header-sidebar-controls flex items-center gap-1 px-2">
-        <SidebarTrigger />
+      <div className="desktop-header-sidebar-controls flex items-center gap-1 pr-1">
+        <SidebarToggle />
         <div className="flex items-center gap-1">
           <Button
             aria-label="Go back"
