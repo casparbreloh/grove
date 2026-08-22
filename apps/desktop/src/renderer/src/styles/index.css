@@ -1,66 +1,15 @@
 @import "tailwindcss";
-@import "./theme.css";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 @import "@wterm/react/css";
+@import "./theme.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @source "../**/*.{ts,tsx}";
 @source "../../../../node_modules/streamdown/dist/*.js";
 @source "../../../../node_modules/@streamdown/code/dist/*.js";
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-heading: var(--font-sans);
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  --font-sans: "Inter Variable", sans-serif;
-  --color-sidebar-glass: var(--sidebar-glass);
-  --color-sidebar-hover: var(--sidebar-hover);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-info: var(--info);
-  --color-info-foreground: var(--info-foreground);
-  --color-success: var(--success);
-  --color-success-foreground: var(--success-foreground);
-  --color-warning: var(--warning);
-  --color-warning-foreground: var(--warning-foreground);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-code: var(--code);
-  --color-code-foreground: var(--code-foreground);
-  --color-code-highlight: var(--code-highlight);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --animate-skeleton: skeleton 2s -1s infinite linear;
-
-  @keyframes skeleton {
-    to {
-      background-position: -200% 0;
-    }
-  }
-}
 
 @layer base {
   * {
@@ -73,6 +22,10 @@
 
   body {
     @apply bg-transparent text-foreground;
+  }
+
+  html {
+    @apply font-sans;
   }
 }
 

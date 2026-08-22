@@ -21,6 +21,7 @@
     "next-themes": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "shadcn": "catalog:",
     "streamdown": "catalog:",
     "tailwind-merge": "catalog:",
     "tailwindcss": "catalog:",

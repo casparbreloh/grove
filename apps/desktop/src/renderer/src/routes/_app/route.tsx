@@ -8,15 +8,17 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
-import {
-  SidebarInset,
-  SidebarShell,
-  SidebarToggle,
-  useSidebarVisibility,
-} from "@/components/sidebar/sidebar-shell";
 import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { useSidebar } from "@/components/ui/sidebar-context";
+import { SidebarProvider } from "@/components/ui/sidebar-provider";
 import type { GroveTab } from "@/lib/mock";
 import { closeMockTab, selectMockTab, useMockGrove } from "@/lib/mock";
 import { cn } from "@/lib/utils";
@@ -24,41 +26,42 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
-  const { open: sidebarOpen, toggleSidebar } = useSidebarVisibility();
-
   return (
-    <SidebarShell className="desktop-shell h-svh flex-col overflow-hidden">
-      <DesktopHeader onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
+    <SidebarProvider className="desktop-shell h-svh flex-col overflow-hidden">
+      <AppFrame />
+    </SidebarProvider>
+  );
+}
+
+function AppFrame() {
+  return (
+    <>
+      <DesktopHeader />
       <div className="flex min-h-0 flex-1">
-        <AppSidebar open={sidebarOpen} />
+        <AppSidebar />
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col">
             <Outlet />
           </div>
         </SidebarInset>
       </div>
-    </SidebarShell>
+    </>
   );
 }
 
-function DesktopHeader({
-  sidebarOpen,
-  onToggleSidebar,
-}: {
-  sidebarOpen: boolean;
-  onToggleSidebar: () => void;
-}) {
+function DesktopHeader() {
+  const { open: sidebarOpen } = useSidebar();
   const { activeTabId, tabs } = useMockGrove();
 
   return (
     <header
-      className="desktop-header grid h-(--desktop-header-height) shrink-0 bg-transparent transition-[grid-template-columns] duration-150 ease-linear"
+      className="desktop-header grid h-(--desktop-header-height) shrink-0 bg-sidebar backdrop-blur-2xl backdrop-saturate-150 transition-[grid-template-columns] duration-150 ease-linear"
       style={{
         gridTemplateColumns: `${sidebarOpen ? "var(--sidebar-width)" : "var(--desktop-header-collapsed-sidebar-width)"} minmax(0, 1fr)`,
       }}
     >
       <div className="desktop-header-sidebar-controls flex items-center gap-1 pr-1">
-        <SidebarToggle onToggle={onToggleSidebar} />
+        <SidebarTrigger />
         <div className="flex items-center gap-1">
           <Button
             aria-label="Go back"
@@ -100,23 +103,23 @@ function DesktopHeader({
 
 function NewTabMenu({ icon = Add01Icon }: { icon?: typeof Add01Icon }) {
   return (
-    <Menu>
-      <MenuTrigger
+    <DropdownMenu>
+      <DropdownMenuTrigger
         render={
           <Button aria-label="New tab" size="icon" type="button" variant="ghost">
             <HugeiconsIcon icon={icon} strokeWidth={2} />
           </Button>
         }
       />
-      <MenuPopup align="start">
+      <DropdownMenuContent align="start">
         {tabRegistry.map((registration) => (
-          <MenuItem key={registration.kind} onClick={registration.create}>
+          <DropdownMenuItem key={registration.kind} onClick={registration.create}>
             <HugeiconsIcon icon={registration.icon} strokeWidth={2} />
             {registration.label}
-          </MenuItem>
+          </DropdownMenuItem>
         ))}
-      </MenuPopup>
-    </Menu>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

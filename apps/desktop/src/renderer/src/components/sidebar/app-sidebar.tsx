@@ -1,55 +1,70 @@
 import { Compass01Icon, FilterMailIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@/components/ui/button";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@/components/ui/menu";
-import { SidebarPanel, SidebarScrollArea } from "@/components/sidebar/sidebar-shell";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
 import { filterMockTasksByProject, useMockGrove } from "@/lib/mock";
 import { TaskItem } from "./task-item";
 
 const allProjectsValue = "all-projects";
-const sidebarNavigationButtonClassName =
-  "h-7 w-full justify-start gap-1.5 rounded-md px-2 text-xs font-normal text-foreground hover:bg-sidebar-hover hover:text-foreground";
 
-export function AppSidebar({ open }: { open: boolean }) {
+export function AppSidebar() {
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <SidebarPanel
-      className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]"
-      open={open}
-    >
-      <SidebarScrollArea>
-        <nav aria-label="Primary" className="px-2 py-1">
-          <ul className="flex min-w-0 flex-col gap-px">
-            <li>
-              <Button className={sidebarNavigationButtonClassName} variant="ghost">
-                <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
-                <span>New Task</span>
-              </Button>
-            </li>
-            <li>
-              <Button className={sidebarNavigationButtonClassName} variant="ghost">
-                <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
-                <span>Explore</span>
-              </Button>
-            </li>
-          </ul>
-        </nav>
+    <Sidebar className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]">
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu aria-label="Primary">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className="justify-start gap-1.5 px-2 font-normal text-foreground"
+                  size="sm"
+                >
+                  <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
+                  <span>New Task</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className="justify-start gap-1.5 px-2 font-normal text-foreground"
+                  size="sm"
+                >
+                  <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
+                  <span>Explore</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
-        <section
-          aria-labelledby="tasks-heading"
-          className="relative flex min-w-0 flex-col px-2 py-1"
-        >
+        <SidebarGroup aria-labelledby="tasks-heading">
           <div className="flex items-center">
-            <h2
-              className="flex h-7 min-w-0 flex-1 items-center px-2 font-medium text-[11px] text-muted-foreground"
+            <SidebarGroupLabel
+              className="min-w-0 flex-1 font-medium text-[11px]"
               id="tasks-heading"
             >
               Tasks
-            </h2>
-            <Menu>
-              <MenuTrigger
+            </SidebarGroupLabel>
+            <DropdownMenu>
+              <DropdownMenuTrigger
                 render={
                   <Button
                     aria-label="Filter tasks by project"
@@ -60,31 +75,35 @@ export function AppSidebar({ open }: { open: boolean }) {
                 }
               >
                 <HugeiconsIcon icon={FilterMailIcon} strokeWidth={2} />
-              </MenuTrigger>
-              <MenuPopup align="start" className="w-52" side="bottom">
-                <MenuRadioGroup
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52" side="bottom">
+                <DropdownMenuRadioGroup
                   onValueChange={(value) =>
                     filterMockTasksByProject(value === allProjectsValue ? undefined : value)
                   }
                   value={taskProjectFilterId ?? allProjectsValue}
                 >
-                  <MenuRadioItem value={allProjectsValue}>All projects</MenuRadioItem>
+                  <DropdownMenuRadioItem value={allProjectsValue}>
+                    All projects
+                  </DropdownMenuRadioItem>
                   {projects.map((project) => (
-                    <MenuRadioItem key={project.id} value={project.id}>
+                    <DropdownMenuRadioItem key={project.id} value={project.id}>
                       {project.name}
-                    </MenuRadioItem>
+                    </DropdownMenuRadioItem>
                   ))}
-                </MenuRadioGroup>
-              </MenuPopup>
-            </Menu>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <ul className="flex min-w-0 flex-col gap-px text-xs">
-            {tasks.map((task) => (
-              <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
-            ))}
-          </ul>
-        </section>
-      </SidebarScrollArea>
-    </SidebarPanel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {tasks.map((task) => (
+                <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
   );
 }
