@@ -3,6 +3,7 @@ import {
   ArrowLeft02Icon,
   ArrowRight02Icon,
   Cancel01Icon,
+  PencilEdit02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
@@ -64,7 +65,7 @@ function DesktopHeader() {
             <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
         </div>
-        {!open && <NewTabMenu />}
+        {!open && <NewTabMenu icon={PencilEdit02Icon} />}
       </div>
       <nav
         aria-label="Tabs"
@@ -85,13 +86,13 @@ function DesktopHeader() {
   );
 }
 
-function NewTabMenu() {
+function NewTabMenu({ icon = Add01Icon }: { icon?: typeof Add01Icon }) {
   return (
     <Menu>
       <MenuTrigger
         render={
           <Button aria-label="New tab" size="icon" type="button" variant="ghost">
-            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            <HugeiconsIcon icon={icon} strokeWidth={2} />
           </Button>
         }
       />
