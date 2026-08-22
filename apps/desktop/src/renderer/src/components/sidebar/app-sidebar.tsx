@@ -28,25 +28,22 @@ export function AppSidebar() {
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <Sidebar className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]">
+    <Sidebar
+      className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]"
+      variant="inset"
+    >
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu aria-label="Primary">
               <SidebarMenuItem>
-                <SidebarMenuButton
-                  className="justify-start gap-1.5 px-2 font-normal text-foreground"
-                  size="sm"
-                >
+                <SidebarMenuButton size="sm">
                   <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
                   <span>New Task</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton
-                  className="justify-start gap-1.5 px-2 font-normal text-foreground"
-                  size="sm"
-                >
+                <SidebarMenuButton size="sm">
                   <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
                   <span>Explore</span>
                 </SidebarMenuButton>

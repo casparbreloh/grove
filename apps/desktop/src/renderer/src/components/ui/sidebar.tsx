@@ -8,7 +8,14 @@ import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar-context";
 import { cn } from "@/lib/utils";
 
-function Sidebar({ className, children, ...props }: React.ComponentProps<"aside">) {
+function Sidebar({
+  variant = "sidebar",
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"aside"> & {
+  variant?: "sidebar" | "inset";
+}) {
   const { state } = useSidebar();
 
   return (
@@ -17,6 +24,7 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<"aside"
       data-collapsible={state === "collapsed" ? "offcanvas" : ""}
       data-slot="sidebar"
       data-state={state}
+      data-variant={variant}
     >
       <div
         className="relative w-(--sidebar-width) bg-transparent transition-[width] duration-150 ease-linear group-data-[collapsible=offcanvas]:w-0"
@@ -33,7 +41,7 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<"aside"
         {...props}
       >
         <div
-          className="relative isolate flex size-full flex-col bg-sidebar before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:backdrop-blur-2xl before:backdrop-saturate-150"
+          className="flex size-full flex-col bg-sidebar group-data-[variant=inset]:bg-transparent"
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
         >
@@ -70,7 +78,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
       className={cn(
-        "relative me-2 mb-2 flex w-full flex-1 flex-col rounded-xl bg-background shadow-sm peer-data-[state=collapsed]:ms-2",
+        "relative flex w-full flex-1 flex-col bg-background peer-data-[variant=inset]:me-2 peer-data-[variant=inset]:mb-2 peer-data-[variant=inset]:rounded-xl peer-data-[variant=inset]:shadow-sm peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-2",
         className,
       )}
       data-slot="sidebar-inset"

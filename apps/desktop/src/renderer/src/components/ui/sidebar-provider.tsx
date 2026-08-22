@@ -30,7 +30,10 @@ function SidebarProvider({ className, style, children, ...props }: React.Compone
   return (
     <SidebarContext.Provider value={contextValue}>
       <div
-        className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
+        className={cn(
+          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar has-data-[variant=inset]:backdrop-blur-2xl has-data-[variant=inset]:backdrop-saturate-150",
+          className,
+        )}
         data-slot="sidebar-wrapper"
         style={{ "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties}
         {...props}

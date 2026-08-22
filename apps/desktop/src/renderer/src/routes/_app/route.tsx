@@ -55,7 +55,7 @@ function DesktopHeader() {
 
   return (
     <header
-      className="desktop-header grid h-(--desktop-header-height) shrink-0 bg-sidebar backdrop-blur-2xl backdrop-saturate-150 transition-[grid-template-columns] duration-150 ease-linear"
+      className="desktop-header grid h-(--desktop-header-height) shrink-0 transition-[grid-template-columns] duration-150 ease-linear"
       style={{
         gridTemplateColumns: `${sidebarOpen ? "var(--sidebar-width)" : "var(--desktop-header-collapsed-sidebar-width)"} minmax(0, 1fr)`,
       }}
