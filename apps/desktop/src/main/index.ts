@@ -7,7 +7,7 @@ const isMac = process.platform === "darwin";
 let mainWindow: BrowserWindow | undefined;
 
 function opaqueWindowBackground() {
-  return nativeTheme.shouldUseDarkColors ? "#171717" : "#ffffff";
+  return nativeTheme.shouldUseDarkColors ? "#121212" : "#ffffff";
 }
 
 function rendererUrl() {

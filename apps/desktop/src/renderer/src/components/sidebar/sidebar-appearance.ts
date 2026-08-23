@@ -33,7 +33,7 @@ const sidebarAppearanceOptions = [
 
 type SidebarAppearance = (typeof sidebarAppearanceOptions)[number]["value"];
 
-const defaultSidebarAppearance: SidebarAppearance = "glass-neutral";
+const defaultSidebarAppearance: SidebarAppearance = "glass-ocean";
 
 export { defaultSidebarAppearance, sidebarAppearanceOptions };
 export type { SidebarAppearance };
