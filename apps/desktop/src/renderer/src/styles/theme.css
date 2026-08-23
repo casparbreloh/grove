@@ -83,10 +83,7 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar-opaque: oklch(0.97 0 0);
-  --sidebar-glass-coverage: 70%;
-  --sidebar-tint: color-mix(in oklab, oklch(0.72 0.08 235) 16%, var(--popover));
-  --sidebar: color-mix(in oklab, var(--sidebar-tint) var(--sidebar-glass-coverage), transparent);
+  --sidebar: oklch(0.955 0.013 235 / 70%);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -130,8 +127,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar-opaque: oklch(0.16 0 0);
-  --sidebar-tint: color-mix(in oklab, oklch(0.5 0.08 235) 18%, var(--popover));
+  --sidebar: oklch(0.262 0.014 235 / 70%);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -146,6 +142,10 @@
 
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --sidebar: var(--sidebar-opaque);
+    --sidebar: oklch(0.955 0.013 235);
+  }
+
+  .dark {
+    --sidebar: oklch(0.262 0.014 235);
   }
 }

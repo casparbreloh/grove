@@ -45,17 +45,17 @@
 
 .desktop-shell {
   --desktop-header-height: 2.5rem;
-  --sidebar-backdrop-filter: blur(40px) saturate(1.5);
 }
 
 .desktop-shell::before {
-  -webkit-backdrop-filter: var(--sidebar-backdrop-filter);
-  backdrop-filter: var(--sidebar-backdrop-filter);
+  -webkit-backdrop-filter: blur(40px) saturate(1.5);
+  backdrop-filter: blur(40px) saturate(1.5);
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .desktop-shell {
-    --sidebar-backdrop-filter: none;
+  .desktop-shell::before {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 

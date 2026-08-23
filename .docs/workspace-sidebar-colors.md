@@ -1,25 +1,24 @@
 # Workspace sidebar colors
 
-Workspace colors are quiet identity cues, not full themes. They tint the opaque
-shadcn popover surface first, then the result receives the same 70% glass coverage
-as the neutral sidebar. Text, controls, borders, and hover states continue to use
-the shared semantic tokens.
+Workspace colors are quiet identity cues, not full themes. These are resolved
+sidebar surface values with a shared 70% alpha. Text, controls, borders, and hover
+states continue to use the shared semantic tokens.
 
 Ocean is Grove's temporary default. The remaining colors are candidates for
 future workspace identities and remain documentation-only until Workspaces own
 their appearance.
 
-| Color | Light tint             | Dark tint              | Mix       |
-| ----- | ---------------------- | ---------------------- | --------- |
-| Ocean | `oklch(0.72 0.08 235)` | `oklch(0.50 0.08 235)` | 16% / 18% |
-| Iris  | `oklch(0.72 0.08 275)` | `oklch(0.49 0.08 275)` | 16% / 18% |
-| Plum  | `oklch(0.72 0.09 310)` | `oklch(0.48 0.09 310)` | 16% / 18% |
-| Rose  | `oklch(0.72 0.08 20)`  | `oklch(0.50 0.08 20)`  | 16% / 18% |
-| Amber | `oklch(0.76 0.08 85)`  | `oklch(0.54 0.08 85)`  | 16% / 18% |
-| Moss  | `oklch(0.72 0.07 150)` | `oklch(0.50 0.07 150)` | 16% / 18% |
-| Teal  | `oklch(0.72 0.07 190)` | `oklch(0.50 0.07 190)` | 16% / 18% |
+| Color | Light surface                  | Dark surface                   |
+| ----- | ------------------------------ | ------------------------------ |
+| Ocean | `oklch(0.955 0.013 235 / 70%)` | `oklch(0.262 0.014 235 / 70%)` |
+| Iris  | `oklch(0.955 0.013 275 / 70%)` | `oklch(0.260 0.014 275 / 70%)` |
+| Plum  | `oklch(0.955 0.014 310 / 70%)` | `oklch(0.259 0.016 310 / 70%)` |
+| Rose  | `oklch(0.955 0.013 20 / 70%)`  | `oklch(0.262 0.014 20 / 70%)`  |
+| Amber | `oklch(0.962 0.013 85 / 70%)`  | `oklch(0.269 0.014 85 / 70%)`  |
+| Moss  | `oklch(0.955 0.011 150 / 70%)` | `oklch(0.262 0.013 150 / 70%)` |
+| Teal  | `oklch(0.955 0.011 190 / 70%)` | `oklch(0.262 0.013 190 / 70%)` |
 
-The light and dark anchors deliberately keep chroma between 0.07 and 0.09. That
-range remains recognizable through the translucent surface without competing with
-content. Keep the final glass coverage at `--sidebar-glass-coverage`; changing a
-workspace color should only require changing its tint anchor.
+The low final chroma remains recognizable through the translucent surface without
+competing with content. When Workspace appearance becomes real state, its theming
+layer should resolve the one semantic `--sidebar` output rather than adding a CSS
+token for every color.
