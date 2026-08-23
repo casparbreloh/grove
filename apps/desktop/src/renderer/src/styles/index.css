@@ -47,15 +47,15 @@
   --desktop-header-height: 2.5rem;
 }
 
-.desktop-shell::before {
-  -webkit-backdrop-filter: blur(40px) saturate(1.5);
-  backdrop-filter: blur(40px) saturate(1.5);
+.desktop-main-canvas {
+  --background: color-mix(in oklch, var(--background-base) 90%, transparent);
+
+  background: transparent;
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .desktop-shell::before {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+  .desktop-main-canvas {
+    --background: var(--background-base);
   }
 }
 
