@@ -1,4 +1,4 @@
-import { BubbleChatIcon, TerminalIcon } from "@hugeicons/core-free-icons";
+import { ChatIcon, TerminalIcon } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
@@ -40,7 +40,7 @@ export const tabRegistry = [
   defineTab({
     kind: "chat",
     label: "Chat",
-    icon: BubbleChatIcon,
+    icon: ChatIcon,
     create: createMockChatTab,
     render: () => <Chat />,
   }),
@@ -78,16 +78,12 @@ function TabPicker({ tabId }: { tabId: string }) {
       <div className="flex w-full max-w-2xl flex-col gap-2">
         {tabRegistry.map((registration) => (
           <Button
-            className="h-12 w-full justify-start gap-3 px-4 text-sm font-normal"
             key={registration.kind}
             onClick={() => registration.create(tabId)}
+            size="lg"
             variant="secondary"
           >
-            <HugeiconsIcon
-              className="text-muted-foreground"
-              icon={registration.icon}
-              strokeWidth={2}
-            />
+            <HugeiconsIcon icon={registration.icon} />
             {registration.label}
           </Button>
         ))}
