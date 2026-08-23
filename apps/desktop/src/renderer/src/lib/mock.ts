@@ -18,14 +18,7 @@ export type TerminalTab = {
   title: string;
 };
 
-export type NewTab = {
-  tabId: string;
-  kind: "new";
-  title: string;
-};
-
-export type CreatableGroveTab = ChatTab | TerminalTab;
-export type GroveTab = CreatableGroveTab | NewTab;
+export type GroveTab = ChatTab | TerminalTab;
 
 export type GroveViewState = {
   workspaces: readonly Workspace[];
@@ -94,7 +87,6 @@ let taskProjectFilterId: string | undefined;
 let nextProject = 1;
 let nextChat = 2;
 let nextTerminal = 2;
-let nextTabPicker = 1;
 let tabs: readonly GroveTab[] = [
   { tabId: "tab_chat", kind: "chat", sessionId: "session_mock", title: "Chat" },
   { tabId: "tab_terminal_1", kind: "terminal", terminalId: "terminal_1", title: "Terminal" },
@@ -147,17 +139,13 @@ export function selectMockTab(tabId: string) {
   emitChange();
 }
 
-function addOrReplaceMockTab(tab: GroveTab, replaceTabId?: string) {
-  const replaceIndex = replaceTabId ? tabs.findIndex(({ tabId }) => tabId === replaceTabId) : -1;
-  tabs =
-    replaceIndex === -1
-      ? [...tabs, tab]
-      : tabs.map((currentTab, index) => (index === replaceIndex ? tab : currentTab));
+function addMockTab(tab: GroveTab) {
+  tabs = [...tabs, tab];
   activeTabId = tab.tabId;
   emitChange();
 }
 
-export function createMockChatTab(replaceTabId?: string) {
+export function createMockChatTab() {
   const chatNumber = nextChat++;
   const tab: GroveTab = {
     tabId: `tab_chat_${chatNumber}`,
@@ -165,10 +153,10 @@ export function createMockChatTab(replaceTabId?: string) {
     sessionId: `session_${chatNumber}`,
     title: `Chat ${chatNumber}`,
   };
-  addOrReplaceMockTab(tab, replaceTabId);
+  addMockTab(tab);
 }
 
-export function createMockTerminalTab(replaceTabId?: string) {
+export function createMockTerminalTab() {
   const terminalNumber = nextTerminal++;
   const tab: GroveTab = {
     tabId: `tab_terminal_${terminalNumber}`,
@@ -176,17 +164,7 @@ export function createMockTerminalTab(replaceTabId?: string) {
     terminalId: `terminal_${terminalNumber}`,
     title: terminalNumber === 1 ? "Terminal" : `Terminal ${terminalNumber}`,
   };
-  addOrReplaceMockTab(tab, replaceTabId);
-}
-
-export function createMockTabPicker() {
-  const pickerNumber = nextTabPicker++;
-  const tab: GroveTab = {
-    tabId: `tab_new_${pickerNumber}`,
-    kind: "new",
-    title: "New tab",
-  };
-  addOrReplaceMockTab(tab);
+  addMockTab(tab);
 }
 
 export function closeMockTab(tabId: string) {
