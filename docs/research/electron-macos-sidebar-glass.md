@@ -6,16 +6,19 @@ Status: implementation guidance for a temporary renderer switcher, not a product
 
 ## Conclusion
 
-Grove can compare six useful sidebar treatment families without adding a native bridge. The
-temporary selector has eight concrete entries because the Workspace treatment is sampled in
-three hues:
+Grove initially compared six useful sidebar treatment families without adding a native bridge.
+After the first visual pass, the temporary selector was narrowed to six concrete entries:
 
-1. two opaque grayscale surfaces;
-2. two apparent strengths of Electron's native macOS sidebar vibrancy;
+1. one softly separated opaque grayscale surface;
+2. one standard native treatment midway between the initial airy and muted covers;
 3. the current shadcn-like neutral glass surface;
 4. that same surface with restrained Plum, Ocean, and Moss Workspace color touches.
 
-The two native options must be described honestly as the **same native sidebar material with different renderer tint overlays**. Electron exposes no sidebar-vibrancy intensity control. This experiment can keep the existing native backdrop enabled and change only the CSS surface above it; opaque variants simply cover it. That avoids temporary renderer-to-main IPC and preserves Grove's renderer boundary.
+The native option must be described honestly as the native sidebar material with a neutral
+renderer tint overlay. Electron exposes no sidebar-vibrancy intensity control. This experiment
+can keep the existing native backdrop enabled and change only the CSS surface above it; the
+opaque variant simply covers it. That avoids temporary renderer-to-main IPC and preserves
+Grove's renderer boundary.
 
 This effect is native macOS vibrancy, but it is not macOS Tahoe's true Liquid Glass sidebar. Electron 43.4.0 creates a legacy `NSVisualEffectView`; Tahoe's native sidebar glass comes from an AppKit `NSSplitViewController` configured with sidebar behavior. Apple explicitly says that an old `NSVisualEffectView` sidebar material prevents the new glass from showing through. [Apple, “Build an AppKit app with the new design”](https://developer.apple.com/videos/play/wwdc2025/310/?time=205)
 
@@ -109,14 +112,12 @@ No first-party Arc or Dia source found here publishes blur radii, opacity values
 
 Keep the existing main inset surface unchanged for the experiment. Put a `data-sidebar-appearance` value on the desktop shell and make all six options resolve the same small set of sidebar tokens. The header's leading region and the sidebar must consume the same surface token so they remain one visual plane.
 
-| ID                | Switcher label    | Mechanism                                              | Suggested starting surface                                                                     | What it tests                                                        |
-| ----------------- | ----------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `opaque-soft`     | Gray · soft       | Opaque CSS                                             | Light `oklch(0.97 0 0)`; dark `oklch(0.18 0 0)`                                                | Small separation from the main inset without wallpaper variability   |
-| `opaque-deep`     | Gray · deep       | Opaque CSS                                             | Light `oklch(0.94 0 0)`; dark `oklch(0.16 0 0)`                                                | Stronger, conventional navigation hierarchy                          |
-| `native-airy`     | Native · airy     | Electron `sidebar` plus CSS tint                       | `color-mix(in oklch, var(--popover) 20%, transparent)`                                         | Maximum desktop contribution that remains practical for sidebar text |
-| `native-muted`    | Native · muted    | Same Electron material plus stronger CSS tint          | `color-mix(in oklch, var(--popover) 50%, transparent)`                                         | More stable contrast with less wallpaper color                       |
-| `glass-neutral`   | Glass · neutral   | Same native substrate plus shadcn-like neutral surface | Current 70% popover/30% transparent surface                                                    | The current restrained “translucent preset” feeling                  |
-| `glass-workspace` | Glass · Workspace | Neutral glass plus a low-chroma Workspace wash         | Start from neutral glass, mix only 8–12% of a low-chroma Workspace color into its neutral tint | Arc-like identity with Dia-like restraint                            |
+| ID                | Switcher label    | Mechanism                                              | Suggested starting surface                                                 | What it tests                                                          |
+| ----------------- | ----------------- | ------------------------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `opaque-soft`     | Gray · soft       | Opaque CSS                                             | Light `oklch(0.97 0 0)`; dark `oklch(0.18 0 0)`                            | Small separation from the main inset without wallpaper variability     |
+| `native-standard` | Native · standard | Electron `sidebar` plus CSS tint                       | `color-mix(in oklch, var(--popover) 35%, transparent)`                     | A balanced midpoint between wallpaper contribution and stable contrast |
+| `glass-neutral`   | Glass · neutral   | Same native substrate plus shadcn-like neutral surface | Current 70% popover/30% transparent surface                                | The current restrained “translucent preset” feeling                    |
+| `glass-workspace` | Glass · Workspace | Tinted shadcn-like glass                               | Tint the opaque popover, then apply the same 70% coverage as neutral glass | Arc-like identity with Dia-like restraint                              |
 
 The implementation expands `glass-workspace` into Plum, Ocean, and Moss entries so the
 experiment can judge whether the treatment works across hues, rather than accidentally choosing
@@ -129,7 +130,8 @@ These values are starting points for side-by-side visual testing, not platform c
 - keep hover/selected deltas based on neutral white or black alpha so interaction strength remains perceptually consistent across colors;
 - do not use tint as the only Workspace identifier; retain text or an icon because both Apple and Electron expose “differentiate without color” accessibility preferences. [Apple HIG, Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility/), [Electron `nativeTheme.shouldDifferentiateWithoutColor`](https://www.electronjs.org/docs/latest/api/native-theme#nativethemeshoulddifferentiatewithoutcolor-macos-readonly)
 
-The 20%, 50%, and 70% sequence makes one variable easy to judge. It must not be called three vibrancy intensities in code or UI; it is one native material under three tint-cover strengths.
+The initial 20% and 50% native covers established the useful range; the current 35% cover is its
+midpoint. It is a renderer tint over one native material, not a separate vibrancy intensity.
 
 ## Switcher implementation guidance
 
@@ -139,7 +141,7 @@ For this temporary comparison:
 2. Keep the content inset opaque. Only the sidebar and its continuous header region should use the experimental surface.
 3. Place a compact temporary switcher in the trailing desktop header. Hold its state in the renderer and set `data-sidebar-appearance` on the shell. Do not persist it yet.
 4. Do not add IPC only to toggle the experiment. Opaque modes can cover the native material, and all translucent modes share the same native substrate.
-5. On non-macOS platforms, fall back from the two native options to their nearest opaque neutral treatments; do not claim native macOS vibrancy there.
+5. On non-macOS platforms, fall back from the native option to the opaque neutral treatment; do not claim native macOS vibrancy there.
 6. Treat the reinstalled non-translucent shadcn dropdown/popover components as a separate decision. Popups should use the preset's ordinary opaque `popover` surface, not inherit sidebar glass.
 
 This experiment should remain one shallow presentation module: a finite appearance ID, the temporary control, and theme-token mappings. It should not become a new design-system primitive or a durable Workspace setting until a winning treatment is selected.
@@ -151,7 +153,7 @@ Apple says that when Reduce Transparency is enabled, apps should avoid semitrans
 When reduced transparency is active:
 
 - the main process should keep removing vibrancy and restoring an opaque window background, as Grove already does;
-- every selected translucent variant should resolve to `opaque-soft` or `opaque-deep` in CSS;
+- every selected translucent variant should resolve to `opaque-soft` in CSS;
 - the switcher may keep the person's selected experimental ID, but it should visually indicate that the OS accessibility fallback is active if the distinction matters during testing.
 
 Electron's `nativeTheme.updated` event is only documented as firing when something in the underlying native theme changes and says this normally means dark appearance, high contrast, or inverted colors. It does not explicitly promise a notification for Reduce Transparency. Grove's existing listener re-checks `prefersReducedTransparency`, which is the narrowest public-Electron approach, but the macOS toggle must be tested manually. A native bridge could instead observe Apple's documented `accessibilityDisplayOptionsDidChangeNotification` if the Electron event does not fire. [Electron `nativeTheme.updated`](https://www.electronjs.org/docs/latest/api/native-theme#event-updated), [Apple `accessibilityDisplayOptionsDidChangeNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/accessibilitydisplayoptionsdidchangenotification)

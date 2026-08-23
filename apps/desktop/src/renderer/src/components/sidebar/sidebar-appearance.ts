@@ -5,19 +5,9 @@ const sidebarAppearanceOptions = [
     swatch: "oklch(0.18 0 0)",
   },
   {
-    value: "opaque-deep",
-    label: "Solid · Deep",
-    swatch: "oklch(0.16 0 0)",
-  },
-  {
-    value: "native-airy",
-    label: "Native · Airy",
-    swatch: "oklch(0.52 0 0)",
-  },
-  {
-    value: "native-muted",
-    label: "Native · Muted",
-    swatch: "oklch(0.3 0 0)",
+    value: "native-standard",
+    label: "Native · Standard",
+    swatch: "oklch(0.4 0 0)",
   },
   {
     value: "glass-neutral",

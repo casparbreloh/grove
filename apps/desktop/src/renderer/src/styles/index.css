@@ -58,18 +58,8 @@
   --sidebar-backdrop-filter: none;
 }
 
-.desktop-shell[data-sidebar-appearance="opaque-deep"] {
-  --sidebar: var(--sidebar-opaque-deep);
-  --sidebar-backdrop-filter: none;
-}
-
-.desktop-shell[data-sidebar-appearance="native-airy"] {
-  --sidebar: var(--sidebar-native-airy);
-  --sidebar-backdrop-filter: none;
-}
-
-.desktop-shell[data-sidebar-appearance="native-muted"] {
-  --sidebar: var(--sidebar-native-muted);
+.desktop-shell[data-sidebar-appearance="native-standard"] {
+  --sidebar: var(--sidebar-native-standard);
   --sidebar-backdrop-filter: none;
 }
 
