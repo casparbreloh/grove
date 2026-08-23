@@ -83,33 +83,10 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar-opaque-soft: oklch(0.97 0 0);
-  --sidebar-native-standard: oklch(1 0 0 / 35%);
+  --sidebar-opaque: oklch(0.97 0 0);
   --sidebar-glass-coverage: 70%;
-  --sidebar-glass-neutral: color-mix(
-    in oklab,
-    var(--popover) var(--sidebar-glass-coverage),
-    transparent
-  );
-  --sidebar-glass-plum-base: color-mix(in oklab, oklch(0.72 0.09 310) 16%, var(--popover));
-  --sidebar-glass-ocean-base: color-mix(in oklab, oklch(0.72 0.08 235) 16%, var(--popover));
-  --sidebar-glass-moss-base: color-mix(in oklab, oklch(0.72 0.07 150) 16%, var(--popover));
-  --sidebar-glass-plum: color-mix(
-    in oklab,
-    var(--sidebar-glass-plum-base) var(--sidebar-glass-coverage),
-    transparent
-  );
-  --sidebar-glass-ocean: color-mix(
-    in oklab,
-    var(--sidebar-glass-ocean-base) var(--sidebar-glass-coverage),
-    transparent
-  );
-  --sidebar-glass-moss: color-mix(
-    in oklab,
-    var(--sidebar-glass-moss-base) var(--sidebar-glass-coverage),
-    transparent
-  );
-  --sidebar: var(--sidebar-glass-neutral);
+  --sidebar-tint: color-mix(in oklab, oklch(0.72 0.08 235) 16%, var(--popover));
+  --sidebar: color-mix(in oklab, var(--sidebar-tint) var(--sidebar-glass-coverage), transparent);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -153,12 +130,8 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar-opaque-soft: oklch(0.16 0 0);
-  --sidebar-native-standard: oklch(0.21 0 0 / 35%);
-  --sidebar-glass-plum-base: color-mix(in oklab, oklch(0.48 0.09 310) 18%, var(--popover));
-  --sidebar-glass-ocean-base: color-mix(in oklab, oklch(0.5 0.08 235) 18%, var(--popover));
-  --sidebar-glass-moss-base: color-mix(in oklab, oklch(0.5 0.07 150) 18%, var(--popover));
-  --sidebar: var(--sidebar-glass-neutral);
+  --sidebar-opaque: oklch(0.16 0 0);
+  --sidebar-tint: color-mix(in oklab, oklch(0.5 0.08 235) 18%, var(--popover));
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -173,10 +146,6 @@
 
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --sidebar-native-standard: var(--sidebar-opaque-soft);
-    --sidebar-glass-neutral: var(--sidebar-opaque-soft);
-    --sidebar-glass-plum: var(--sidebar-opaque-soft);
-    --sidebar-glass-ocean: var(--sidebar-opaque-soft);
-    --sidebar-glass-moss: var(--sidebar-opaque-soft);
+    --sidebar: var(--sidebar-opaque);
   }
 }

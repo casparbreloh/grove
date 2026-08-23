@@ -7,13 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
-import {
-  defaultSidebarAppearance,
-  type SidebarAppearance,
-} from "@/components/sidebar/sidebar-appearance";
-import { SidebarAppearanceMenu } from "@/components/sidebar/sidebar-appearance-menu";
 import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,31 +26,17 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
-  const [sidebarAppearance, setSidebarAppearance] = useState(defaultSidebarAppearance);
-
   return (
-    <SidebarProvider
-      className="desktop-shell h-svh flex-col overflow-hidden"
-      data-sidebar-appearance={sidebarAppearance}
-    >
-      <AppFrame sidebarAppearance={sidebarAppearance} setSidebarAppearance={setSidebarAppearance} />
+    <SidebarProvider className="desktop-shell h-svh flex-col overflow-hidden">
+      <AppFrame />
     </SidebarProvider>
   );
 }
 
-function AppFrame({
-  sidebarAppearance,
-  setSidebarAppearance,
-}: {
-  sidebarAppearance: SidebarAppearance;
-  setSidebarAppearance: (value: SidebarAppearance) => void;
-}) {
+function AppFrame() {
   return (
     <>
-      <DesktopHeader
-        sidebarAppearance={sidebarAppearance}
-        setSidebarAppearance={setSidebarAppearance}
-      />
+      <DesktopHeader />
       <div className="flex min-h-0 flex-1">
         <AppSidebar />
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
@@ -69,13 +49,7 @@ function AppFrame({
   );
 }
 
-function DesktopHeader({
-  sidebarAppearance,
-  setSidebarAppearance,
-}: {
-  sidebarAppearance: SidebarAppearance;
-  setSidebarAppearance: (value: SidebarAppearance) => void;
-}) {
+function DesktopHeader() {
   const { open: sidebarOpen } = useSidebar();
   const { activeTabId, tabs } = useMockGrove();
 
@@ -83,7 +57,7 @@ function DesktopHeader({
     <header
       className="desktop-header grid h-(--desktop-header-height) shrink-0 transition-[grid-template-columns] duration-150 ease-linear"
       style={{
-        gridTemplateColumns: `${sidebarOpen ? "var(--sidebar-width)" : "var(--desktop-header-collapsed-sidebar-width)"} minmax(0, 1fr) auto`,
+        gridTemplateColumns: `${sidebarOpen ? "var(--sidebar-width)" : "var(--desktop-header-collapsed-sidebar-width)"} minmax(0, 1fr)`,
       }}
     >
       <div className="desktop-header-sidebar-controls flex items-center gap-1 pr-1">
@@ -125,9 +99,6 @@ function DesktopHeader({
         ))}
         <NewTabMenu />
       </nav>
-      <div className="flex items-center pr-2">
-        <SidebarAppearanceMenu onValueChange={setSidebarAppearance} value={sidebarAppearance} />
-      </div>
     </header>
   );
 }

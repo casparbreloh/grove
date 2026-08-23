@@ -6,8 +6,8 @@ as the neutral sidebar. Text, controls, borders, and hover states continue to us
 the shared semantic tokens.
 
 Ocean is Grove's temporary default. The remaining colors are candidates for
-future workspace identities; they do not need to appear in the temporary material
-switcher until Workspaces own their appearance.
+future workspace identities and remain documentation-only until Workspaces own
+their appearance.
 
 | Color | Light tint             | Dark tint              | Mix       |
 | ----- | ---------------------- | ---------------------- | --------- |
