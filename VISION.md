@@ -25,7 +25,7 @@ The sidebar switches Workspaces and presents durable Tasks as its primary rows. 
 
 A new-Task draft selects its Project and starting state above the composer. The same control can register a Project through its Environment. Project selection locks when Grove accepts the Task; an existing Task cannot be reparented by changing composer context. Starting a new Session keeps the current Task, Project, Environment, and files.
 
-Core tab kinds initially include agent and terminal. Persist serializable descriptors with a `tabId` distinct from the viewed resource ID. Closing a tab hides a view; it does not cancel a Turn, stop a terminal, delete a Session, or delete a Task. Unknown tab kinds restore as recoverable unavailable views.
+Core tab kinds initially include chat and terminal. Persist serializable descriptors with a `tabId` distinct from the viewed resource ID. Closing a tab hides a view; it does not cancel a Turn, stop a terminal, delete a Session, or delete a Task. Unknown tab kinds restore as recoverable unavailable views.
 
 The Environment is visible for consequential actions. Local Tasks are private. Cloudflare Tasks in shared Workspaces are shared, with multiplayer presence and ordered activity replay.
 
@@ -172,7 +172,7 @@ Ship the smallest vertical slices in this order:
 1. Grove-owned Workspace, Project, Task, Session, Turn, message, capability, event, and durable local persistence.
 2. Local Pi on that state with real Environment-backed tools.
 3. Local native-directory Task isolation with copy-on-write probing and an explicit full-copy fallback.
-4. Restorable agent and terminal tabs; compare/apply; cancellation and restart recovery.
+4. Restorable chat and terminal tabs; compare/apply; cancellation and restart recovery.
 5. The ACP adapter, followed by explicit Claude and Codex bridge validation.
 6. An authenticated development-machine Environment with journaling, receipts, and replay.
 7. A narrow Cloudflare Durable Object/Pi/VFS/Sandbox benchmark.
@@ -182,7 +182,7 @@ Do not build a premature universal VFS to unify local and Cloudflare implementat
 
 ## Near-term success
 
-A person can open a Workspace and Project, create or resume a Task, use independent Sessions with Pi against isolated ordinary files, inspect tool activity, approve consequential actions, use agent and terminal tabs, fork exact declared current state, cancel safely, recover after restart, and understand what is portable.
+A person can open a Workspace and Project, create or resume a Task, use independent Sessions with Pi against isolated ordinary files, inspect tool activity, approve consequential actions, use chat and terminal tabs, fork exact declared current state, cancel safely, recover after restart, and understand what is portable.
 
 The architecture succeeds when a new Agent or Environment can be added without replacing Grove's domain or renderer.
 

@@ -4,9 +4,9 @@ export type Workspace = { id: string; name: string };
 export type Project = { id: string; workspaceId: string; name: string };
 export type Task = { id: string; projectId: string; title: string; updatedAt: string };
 
-export type AgentTab = {
+export type ChatTab = {
   tabId: string;
-  kind: "agent";
+  kind: "chat";
   sessionId: string;
   title: string;
 };
@@ -24,7 +24,7 @@ export type NewTab = {
   title: string;
 };
 
-export type CreatableGroveTab = AgentTab | TerminalTab;
+export type CreatableGroveTab = ChatTab | TerminalTab;
 export type GroveTab = CreatableGroveTab | NewTab;
 
 export type GroveViewState = {
@@ -92,11 +92,11 @@ let activeWorkspaceId = workspaces[0]?.id;
 let draftProjectId: string | undefined;
 let taskProjectFilterId: string | undefined;
 let nextProject = 1;
-let nextAgent = 2;
+let nextChat = 2;
 let nextTerminal = 2;
 let nextTabPicker = 1;
 let tabs: readonly GroveTab[] = [
-  { tabId: "tab_agent", kind: "agent", sessionId: "session_mock", title: "Agent" },
+  { tabId: "tab_chat", kind: "chat", sessionId: "session_mock", title: "Chat" },
   { tabId: "tab_terminal_1", kind: "terminal", terminalId: "terminal_1", title: "Terminal" },
 ];
 let activeTabId = tabs[0].tabId;
@@ -157,13 +157,13 @@ function addOrReplaceMockTab(tab: GroveTab, replaceTabId?: string) {
   emitChange();
 }
 
-export function createMockAgentTab(replaceTabId?: string) {
-  const agentNumber = nextAgent++;
+export function createMockChatTab(replaceTabId?: string) {
+  const chatNumber = nextChat++;
   const tab: GroveTab = {
-    tabId: `tab_agent_${agentNumber}`,
-    kind: "agent",
-    sessionId: `session_${agentNumber}`,
-    title: `Agent ${agentNumber}`,
+    tabId: `tab_chat_${chatNumber}`,
+    kind: "chat",
+    sessionId: `session_${chatNumber}`,
+    title: `Chat ${chatNumber}`,
   };
   addOrReplaceMockTab(tab, replaceTabId);
 }

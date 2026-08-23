@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { createMockProject, mockChatModel, selectMockDraftProject, useMockGrove } from "@/lib/mock";
 
-export function Agent() {
+export function Chat() {
   const runtime = useLocalRuntime(mockChatModel);
 
   return (
