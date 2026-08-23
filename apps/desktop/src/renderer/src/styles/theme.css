@@ -83,7 +83,19 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: color-mix(in oklch, var(--popover) 70%, transparent);
+  --sidebar-opaque-soft: oklch(0.97 0 0);
+  --sidebar-opaque-deep: oklch(0.94 0 0);
+  --sidebar-native-airy: oklch(1 0 0 / 20%);
+  --sidebar-native-muted: oklch(1 0 0 / 50%);
+  --sidebar-glass-neutral: color-mix(in oklch, var(--popover) 70%, transparent);
+  --sidebar-glass-plum: color-mix(in oklab, oklch(0.72 0.09 310) 16%, var(--sidebar-glass-neutral));
+  --sidebar-glass-ocean: color-mix(
+    in oklab,
+    oklch(0.72 0.08 235) 16%,
+    var(--sidebar-glass-neutral)
+  );
+  --sidebar-glass-moss: color-mix(in oklab, oklch(0.72 0.07 150) 16%, var(--sidebar-glass-neutral));
+  --sidebar: var(--sidebar-glass-neutral);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -127,7 +139,15 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: color-mix(in oklch, var(--popover) 70%, transparent);
+  --sidebar-opaque-soft: oklch(0.18 0 0);
+  --sidebar-opaque-deep: oklch(0.16 0 0);
+  --sidebar-native-airy: oklch(0.22 0 0 / 20%);
+  --sidebar-native-muted: oklch(0.22 0 0 / 50%);
+  --sidebar-glass-neutral: color-mix(in oklch, var(--popover) 70%, transparent);
+  --sidebar-glass-plum: color-mix(in oklab, oklch(0.48 0.09 310) 18%, var(--sidebar-glass-neutral));
+  --sidebar-glass-ocean: color-mix(in oklab, oklch(0.5 0.08 235) 18%, var(--sidebar-glass-neutral));
+  --sidebar-glass-moss: color-mix(in oklab, oklch(0.5 0.07 150) 18%, var(--sidebar-glass-neutral));
+  --sidebar: var(--sidebar-glass-neutral);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -142,6 +162,11 @@
 
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --sidebar: var(--background);
+    --sidebar-native-airy: var(--sidebar-opaque-soft);
+    --sidebar-native-muted: var(--sidebar-opaque-soft);
+    --sidebar-glass-neutral: var(--sidebar-opaque-soft);
+    --sidebar-glass-plum: var(--sidebar-opaque-soft);
+    --sidebar-glass-ocean: var(--sidebar-opaque-soft);
+    --sidebar-glass-moss: var(--sidebar-opaque-soft);
   }
 }

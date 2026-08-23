@@ -45,6 +45,54 @@
 
 .desktop-shell {
   --desktop-header-height: 2.5rem;
+  --sidebar-backdrop-filter: blur(40px) saturate(1.5);
+}
+
+.desktop-shell::before {
+  -webkit-backdrop-filter: var(--sidebar-backdrop-filter);
+  backdrop-filter: var(--sidebar-backdrop-filter);
+}
+
+.desktop-shell[data-sidebar-appearance="opaque-soft"] {
+  --sidebar: var(--sidebar-opaque-soft);
+  --sidebar-backdrop-filter: none;
+}
+
+.desktop-shell[data-sidebar-appearance="opaque-deep"] {
+  --sidebar: var(--sidebar-opaque-deep);
+  --sidebar-backdrop-filter: none;
+}
+
+.desktop-shell[data-sidebar-appearance="native-airy"] {
+  --sidebar: var(--sidebar-native-airy);
+  --sidebar-backdrop-filter: none;
+}
+
+.desktop-shell[data-sidebar-appearance="native-muted"] {
+  --sidebar: var(--sidebar-native-muted);
+  --sidebar-backdrop-filter: none;
+}
+
+.desktop-shell[data-sidebar-appearance="glass-neutral"] {
+  --sidebar: var(--sidebar-glass-neutral);
+}
+
+.desktop-shell[data-sidebar-appearance="glass-plum"] {
+  --sidebar: var(--sidebar-glass-plum);
+}
+
+.desktop-shell[data-sidebar-appearance="glass-ocean"] {
+  --sidebar: var(--sidebar-glass-ocean);
+}
+
+.desktop-shell[data-sidebar-appearance="glass-moss"] {
+  --sidebar: var(--sidebar-glass-moss);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .desktop-shell {
+    --sidebar-backdrop-filter: none;
+  }
 }
 
 .desktop-header {
