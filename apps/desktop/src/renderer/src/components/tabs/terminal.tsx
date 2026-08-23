@@ -2,7 +2,7 @@ import { Terminal as WtermTerminal, useTerminal } from "@wterm/react";
 import { useCallback, useRef } from "react";
 import type { CSSProperties } from "react";
 
-const prompt = "\x1b[32m❯\x1b[0m ";
+const prompt = "❯ ";
 
 export function Terminal({ terminalId }: { terminalId: string }) {
   const { ref, write } = useTerminal();
@@ -63,6 +63,22 @@ export function Terminal({ terminalId }: { terminalId: string }) {
           "--term-bg": "var(--background)",
           "--term-fg": "var(--foreground)",
           "--term-cursor": "var(--foreground)",
+          "--term-color-0": "color-mix(in oklch, var(--foreground) 35%, var(--background-base))",
+          "--term-color-1": "var(--destructive)",
+          "--term-color-2": "var(--success)",
+          "--term-color-3": "var(--warning)",
+          "--term-color-4": "var(--info)",
+          "--term-color-5": "color-mix(in oklch, var(--destructive) 55%, var(--info))",
+          "--term-color-6": "color-mix(in oklch, var(--success) 55%, var(--info))",
+          "--term-color-7": "color-mix(in oklch, var(--foreground) 75%, var(--background-base))",
+          "--term-color-8": "var(--muted-foreground)",
+          "--term-color-9": "color-mix(in oklch, var(--destructive) 80%, var(--foreground))",
+          "--term-color-10": "color-mix(in oklch, var(--success) 80%, var(--foreground))",
+          "--term-color-11": "color-mix(in oklch, var(--warning) 80%, var(--foreground))",
+          "--term-color-12": "color-mix(in oklch, var(--info) 80%, var(--foreground))",
+          "--term-color-13": "color-mix(in oklch, var(--destructive) 45%, var(--info))",
+          "--term-color-14": "color-mix(in oklch, var(--success) 45%, var(--info))",
+          "--term-color-15": "var(--foreground)",
         } as CSSProperties
       }
     />

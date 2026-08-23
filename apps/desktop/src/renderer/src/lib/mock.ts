@@ -18,14 +18,14 @@ export type TerminalTab = {
   title: string;
 };
 
-export type DiffTab = {
+export type NewTab = {
   tabId: string;
-  kind: "diff";
-  diffId: string;
+  kind: "new";
   title: string;
 };
 
-export type GroveTab = AgentTab | TerminalTab | DiffTab;
+export type CreatableGroveTab = AgentTab | TerminalTab;
+export type GroveTab = CreatableGroveTab | NewTab;
 
 export type GroveViewState = {
   workspaces: readonly Workspace[];
@@ -94,7 +94,7 @@ let taskProjectFilterId: string | undefined;
 let nextProject = 1;
 let nextAgent = 2;
 let nextTerminal = 2;
-let nextDiff = 1;
+let nextTabPicker = 1;
 let tabs: readonly GroveTab[] = [
   { tabId: "tab_agent", kind: "agent", sessionId: "session_mock", title: "Agent" },
   { tabId: "tab_terminal_1", kind: "terminal", terminalId: "terminal_1", title: "Terminal" },
@@ -147,7 +147,17 @@ export function selectMockTab(tabId: string) {
   emitChange();
 }
 
-export function createMockAgentTab() {
+function addOrReplaceMockTab(tab: GroveTab, replaceTabId?: string) {
+  const replaceIndex = replaceTabId ? tabs.findIndex(({ tabId }) => tabId === replaceTabId) : -1;
+  tabs =
+    replaceIndex === -1
+      ? [...tabs, tab]
+      : tabs.map((currentTab, index) => (index === replaceIndex ? tab : currentTab));
+  activeTabId = tab.tabId;
+  emitChange();
+}
+
+export function createMockAgentTab(replaceTabId?: string) {
   const agentNumber = nextAgent++;
   const tab: GroveTab = {
     tabId: `tab_agent_${agentNumber}`,
@@ -155,12 +165,10 @@ export function createMockAgentTab() {
     sessionId: `session_${agentNumber}`,
     title: `Agent ${agentNumber}`,
   };
-  tabs = [...tabs, tab];
-  activeTabId = tab.tabId;
-  emitChange();
+  addOrReplaceMockTab(tab, replaceTabId);
 }
 
-export function createMockTerminalTab() {
+export function createMockTerminalTab(replaceTabId?: string) {
   const terminalNumber = nextTerminal++;
   const tab: GroveTab = {
     tabId: `tab_terminal_${terminalNumber}`,
@@ -168,22 +176,17 @@ export function createMockTerminalTab() {
     terminalId: `terminal_${terminalNumber}`,
     title: terminalNumber === 1 ? "Terminal" : `Terminal ${terminalNumber}`,
   };
-  tabs = [...tabs, tab];
-  activeTabId = tab.tabId;
-  emitChange();
+  addOrReplaceMockTab(tab, replaceTabId);
 }
 
-export function createMockDiffTab() {
-  const diffNumber = nextDiff++;
+export function createMockTabPicker() {
+  const pickerNumber = nextTabPicker++;
   const tab: GroveTab = {
-    tabId: `tab_diff_${diffNumber}`,
-    kind: "diff",
-    diffId: `diff_${diffNumber}`,
-    title: diffNumber === 1 ? "Diff" : `Diff ${diffNumber}`,
+    tabId: `tab_new_${pickerNumber}`,
+    kind: "new",
+    title: "New tab",
   };
-  tabs = [...tabs, tab];
-  activeTabId = tab.tabId;
-  emitChange();
+  addOrReplaceMockTab(tab);
 }
 
 export function closeMockTab(tabId: string) {

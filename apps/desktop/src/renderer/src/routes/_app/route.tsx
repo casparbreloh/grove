@@ -8,19 +8,12 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
-import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarTrigger, sidebarControlClassName } from "@/components/ui/sidebar";
 import { useSidebar } from "@/components/ui/sidebar-context";
 import { SidebarProvider } from "@/components/ui/sidebar-provider";
 import type { GroveTab } from "@/lib/mock";
-import { closeMockTab, selectMockTab, useMockGrove } from "@/lib/mock";
+import { closeMockTab, createMockTabPicker, selectMockTab, useMockGrove } from "@/lib/mock";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
@@ -82,7 +75,7 @@ function DesktopHeader() {
             <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
           </Button>
         </div>
-        {!sidebarOpen && <NewTabMenu icon={PencilEdit02Icon} />}
+        {!sidebarOpen && <NewTabButton icon={PencilEdit02Icon} />}
       </div>
       <nav
         aria-label="Tabs"
@@ -97,37 +90,24 @@ function DesktopHeader() {
             tab={tab}
           />
         ))}
-        <NewTabMenu />
+        <NewTabButton />
       </nav>
     </header>
   );
 }
 
-function NewTabMenu({ icon = Add01Icon }: { icon?: typeof Add01Icon }) {
+function NewTabButton({ icon = Add01Icon }: { icon?: typeof Add01Icon }) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            aria-label="New tab"
-            className={sidebarControlClassName}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <HugeiconsIcon icon={icon} strokeWidth={2} />
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="start">
-        {tabRegistry.map((registration) => (
-          <DropdownMenuItem key={registration.kind} onClick={registration.create}>
-            <HugeiconsIcon icon={registration.icon} strokeWidth={2} />
-            {registration.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Button
+      aria-label="New tab"
+      className={sidebarControlClassName}
+      onClick={createMockTabPicker}
+      size="icon"
+      type="button"
+      variant="ghost"
+    >
+      <HugeiconsIcon icon={icon} strokeWidth={2} />
+    </Button>
   );
 }
 

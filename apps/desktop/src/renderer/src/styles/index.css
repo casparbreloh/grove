@@ -39,6 +39,10 @@
   scrollbar-width: none;
 }
 
+.wterm ::selection {
+  background: color-mix(in oklch, var(--info) 30%, transparent);
+}
+
 .chat-viewport[data-top-anchor-released] [data-aui-top-anchor-reserve] {
   display: none !important;
 }
