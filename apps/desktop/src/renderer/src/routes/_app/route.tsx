@@ -17,19 +17,26 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import type { SidebarWidthConfig } from "@/components/ui/sidebar";
+
+const sidebarWidths = {
+  left: { min: "14rem", default: "16rem", max: "18rem" },
+  right: { min: "20rem", default: "50%", adjacentPaneMin: "20rem" },
+} satisfies Record<"left" | "right", SidebarWidthConfig>;
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
 function AppLayout() {
   return (
-    <SidebarProvider className="desktop-shell h-svh overflow-hidden">
+    <SidebarProvider className="desktop-shell h-svh overflow-hidden" width={sidebarWidths.left}>
       <AppSidebar />
       <SidebarProvider
         className="h-svh min-h-0 min-w-0 overflow-hidden bg-sidebar [--sidebar:var(--background)]"
         defaultOpen={false}
         side="right"
+        width={sidebarWidths.right}
       >
-        <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+        <SidebarInset className="min-h-0 min-w-(--sidebar-adjacent-pane-min-width) overflow-hidden">
           <DesktopHeader />
           <div className="flex min-h-0 flex-1 flex-col">
             <Outlet />

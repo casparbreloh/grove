@@ -111,7 +111,7 @@
   --info-foreground: oklch(0.707 0.165 254.624);
   --success-foreground: oklch(0.765 0.177 163.223);
   --warning-foreground: oklch(0.828 0.189 84.429);
-  --border: oklch(1 0 0 / 3%);
+  --border: oklch(0.243 0 0);
   --sidebar-border: var(--border);
   --input: oklch(1 0 0 / 8%);
   --ring: oklch(0.556 0 0);

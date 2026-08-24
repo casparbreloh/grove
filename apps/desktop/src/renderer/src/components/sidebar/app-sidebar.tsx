@@ -26,6 +26,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
 } from "@/components/ui/sidebar";
 import { filterMockTasksByProject, useMockGrove } from "@/lib/mock";
 import { TaskItem } from "./task-item";
@@ -111,6 +112,7 @@ export function AppSidebar() {
       <SidebarFooter>
         <ThemeSwitcher />
       </SidebarFooter>
+      <SidebarRail />
     </Sidebar>
   );
 }
