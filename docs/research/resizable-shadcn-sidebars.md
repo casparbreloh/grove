@@ -1,5 +1,9 @@
 # Resizable shadcn sidebars
 
+> Superseded for Grove's main-pane/side-pane layout by [Side-pane overlay behavior](./side-pane-overlay-behavior.md). The fixed-position sidebar-plus-gap model requires passive measurement to enforce the opposite pane's minimum; Grove now uses a dedicated split whose live constraints are resolved by CSS.
+>
+> The remainder of this document is retained only as historical OSS research into the rejected provider-owned resizing approach. Its recommendations are not current Grove implementation guidance.
+
 Research date: 2026-08-24. Scope: OSS source implementations that preserve shadcn's `SidebarProvider` / `SidebarRail` composition, plus shadcn's official general-purpose resizable primitive as the accessibility and dependency baseline.
 
 ## Conclusion
@@ -8,7 +12,7 @@ The closest reusable implementation is the MIT-licensed [`lumpinif/shadcn-resiza
 
 Grove should adopt the thin-provider pattern, but not copy the implementation verbatim. The rail should retain click-to-collapse alongside drag resize: use a small movement threshold to distinguish the two interactions and never toggle after a completed drag. Make the min/default/max widths provider configuration instead of file-wide constants, keep one width state and one wrapper ref in each side's existing context, update the provider-local CSS variable directly during pointer movement, and commit React state on pointer release. Unlike the reference fork, the resized rail should be keyboard-focusable and implement the WAI-ARIA variable-separator contract.
 
-Recommended configuration:
+The product decision now keeps the left sidebar fixed at the primitive's `16rem` default and mounts no rail there. Only the main/right split is resizable. Its recommended configuration is:
 
 ```ts
 type SidebarWidthLimits =
@@ -22,13 +26,14 @@ type SidebarWidthConfig = Readonly<{
 }> &
   SidebarWidthLimits;
 
-const SIDEBAR_WIDTHS = {
-  left: { min: "14rem", default: "16rem", max: "18rem" },
-  right: { min: "20rem", default: "50%", adjacentPaneMin: "20rem" },
-} satisfies Record<SidebarSide, SidebarWidthConfig>;
+const RIGHT_SIDEBAR_WIDTH = {
+  min: "20rem",
+  default: "50%",
+  adjacentPaneMin: "20rem",
+} satisfies SidebarWidthConfig;
 ```
 
-Pass the appropriate object to each `SidebarProvider`. This makes the requested thresholds obvious at the layout call site, while the primitive remains reusable.
+Pass this object only to the right `SidebarProvider`. The left provider uses the fixed default configuration and does not render a `SidebarRail`. This makes the split thresholds obvious at the layout call site, while the primitive remains reusable.
 
 ## Exact-match OSS implementation
 
@@ -54,7 +59,7 @@ The fork also auto-collapses when dragged beyond a threshold and permits draggin
 
 The reference uses separate `${cookieKey}:state` and `${cookieKey}:width` cookies, commits width on pointer release, clamps cookie-provided width before it enters state, and requires distinct keys for multiple sidebars. [Persistence contract](https://github.com/lumpinif/shadcn-resizable-sidebar/blob/ba42d920e9282ff0ba5bb860c55a78cd04ce6dda/README.md#L89-L141), [server restore source](https://github.com/lumpinif/shadcn-resizable-sidebar/blob/ba42d920e9282ff0ba5bb860c55a78cd04ce6dda/components/providers/index.tsx#L10-L39)
 
-Grove is an Electron renderer and is currently frontend-first, so copying Next.js cookie/SSR plumbing would be needless. For this slice, in-memory provider state is enough. When layout restoration becomes part of Grove-owned durable layout, persist `leftSidebarWidth` and `rightSidebarWidth` through that renderer mock/layout boundary and clamp restored values against the current config. Do not let persistence enter the sidebar primitive as a cookie-specific concern.
+Grove is an Electron renderer and is currently frontend-first, so copying Next.js cookie/SSR plumbing would be needless. For this slice, in-memory provider state is enough. When layout restoration becomes part of Grove-owned durable layout, persist the main/right split through that renderer mock/layout boundary and clamp restored values against the current config. Do not let persistence enter the sidebar primitive as a cookie-specific concern.
 
 ## Accessibility gap in the exact-match fork
 
@@ -81,10 +86,11 @@ This is the stronger general panel system, but not the smallest fit here. Its pa
 ## Implementation recommendation for Grove
 
 1. Add a `width` configuration prop to `SidebarProvider` with a minimum, default, optional keyboard step, and either a fixed maximum or the adjacent pane's minimum. Clamp controlled/restored values against the resulting live range.
-2. Extend each side-specific context with current width, a commit function, the immutable config, drag state, and a ref to its own provider wrapper.
+2. Keep width state available in each side-specific context so the primitive remains reusable, but mount a resize rail only for the right split.
 3. Keep provider-local CSS variables as the layout output: `--sidebar-width` for the rail-controlled pane and `--sidebar-adjacent-pane-min-width` for a split sibling. During pointer drag, write the width directly to the correct wrapper; on release, commit the clamped value to React state.
+   When a container resize lowers the live maximum, clamp the stored state as well as the rendered value. Retaining a larger hidden width makes the pane re-expand incrementally when adjacent space returns, producing a second observer-driven animation.
 4. Upgrade `SidebarRail` into a focusable vertical separator with side-aware pointer delta, keyboard resizing, ARIA values, a five-pixel click-versus-drag threshold, and Electron `no-drag` hit testing.
 5. Do not add auto-collapse or persistence in this slice. Preserve the existing triggers and rail click toggle. Persist both widths later through Grove's restorable-layout model, not cookies.
-6. Test both sides independently: exact default values, fixed and split-derived clamps, opposite drag directions, keyboard steps/Home/End, click toggle after a non-drag, no toggle after a drag, transition suppression, provider isolation, and right-trigger hit testing while open.
+6. Verify that the left sidebar remains fixed at `16rem`, then test the right split's exact default, split-derived clamps, keyboard steps/Home/End, click toggle after a non-drag, no toggle after a drag, transition suppression, provider isolation, and right-trigger hit testing while open.
 
-This preserves the requested dimensions—left `14/16/18rem`, followed by a 50/50 main/right split whose panes both have a `20rem` minimum—as data, while keeping the resizing mechanism generic and aligned with the existing shadcn sidebar structure.
+This preserves a fixed `16rem` left sidebar followed by a 50/50 main/right split whose panes both have a `20rem` minimum, while keeping the resizing mechanism generic and aligned with the existing shadcn sidebar structure.

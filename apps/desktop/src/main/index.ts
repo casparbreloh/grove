@@ -1,4 +1,11 @@
-import { app, BrowserWindow, nativeTheme, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  nativeTheme,
+  shell,
+  type MenuItemConstructorOptions,
+} from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -27,6 +34,29 @@ function openExternal(url: string) {
   const protocol = new URL(url).protocol;
   if (protocol === "https:" || protocol === "http:" || protocol === "mailto:")
     void shell.openExternal(url);
+}
+
+function configureApplicationMenu() {
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? ([{ role: "appMenu" }] satisfies MenuItemConstructorOptions[]) : []),
+    { role: "fileMenu" },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function createWindow() {
@@ -109,6 +139,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    configureApplicationMenu();
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
