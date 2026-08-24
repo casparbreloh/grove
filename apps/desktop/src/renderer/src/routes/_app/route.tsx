@@ -29,11 +29,6 @@ function AppLayout() {
         defaultOpen={false}
         side="right"
       >
-        <SidebarTrigger
-          className="fixed top-1.5 right-2 z-20 [-webkit-app-region:no-drag] aria-pressed:bg-accent aria-pressed:text-accent-foreground"
-          side="right"
-          size="icon"
-        />
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
           <DesktopHeader />
           <div className="flex min-h-0 flex-1 flex-col">
@@ -41,6 +36,11 @@ function AppLayout() {
           </div>
         </SidebarInset>
         <AppRightSidebar />
+        <SidebarTrigger
+          className="fixed top-1.5 right-2 z-20 [-webkit-app-region:no-drag] aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+          side="right"
+          size="icon"
+        />
       </SidebarProvider>
     </SidebarProvider>
   );
