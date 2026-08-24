@@ -83,7 +83,7 @@ function DesktopHeader() {
         <span>Chat</span>
       </span>
       <SidebarTrigger
-        className="mr-2 ml-auto [-webkit-app-region:no-drag]"
+        className="fixed top-1.5 right-2 z-20 [-webkit-app-region:no-drag]"
         side="right"
         size="icon"
       />
