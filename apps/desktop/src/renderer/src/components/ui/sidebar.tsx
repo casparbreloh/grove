@@ -249,10 +249,11 @@ function SidebarTrigger({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button> & { side?: SidebarSide }) {
-  const { toggleSidebar } = useSidebar(side);
+  const { state, toggleSidebar } = useSidebar(side);
 
   return (
     <Button
+      aria-pressed={state === "expanded"}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       variant="ghost"

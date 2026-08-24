@@ -29,6 +29,11 @@ function AppLayout() {
         defaultOpen={false}
         side="right"
       >
+        <SidebarTrigger
+          className="fixed top-1.5 right-2 z-20 [-webkit-app-region:no-drag] aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+          side="right"
+          size="icon"
+        />
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
           <DesktopHeader />
           <div className="flex min-h-0 flex-1 flex-col">
@@ -82,11 +87,6 @@ function DesktopHeader() {
         <HugeiconsIcon className="size-3.5" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>
-      <SidebarTrigger
-        className="fixed top-1.5 right-2 z-20 [-webkit-app-region:no-drag]"
-        side="right"
-        size="icon"
-      />
     </header>
   );
 }
