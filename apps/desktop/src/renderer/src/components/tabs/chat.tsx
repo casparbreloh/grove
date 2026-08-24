@@ -8,8 +8,8 @@ import {
 import { Add01Icon, ArrowDown01Icon, Cancel01Icon, Folder01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useRef, useState } from "react";
-import { Composer } from "@/components/ai-elements/composer";
-import { Message } from "@/components/ai-elements/message";
+import { Composer } from "@/components/chat/composer";
+import { Message } from "@/components/chat/message";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

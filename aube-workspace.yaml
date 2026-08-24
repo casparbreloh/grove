@@ -5,7 +5,6 @@ packages:
 catalogMode: strict
 
 overrides:
-  # Provenance-preserving pin for a required transitive dependency.
   cytoscape: 3.33.4
 
 onlyBuiltDependencies:

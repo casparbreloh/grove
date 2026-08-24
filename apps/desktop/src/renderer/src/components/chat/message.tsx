@@ -4,7 +4,7 @@ import {
   MessagePrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { MarkdownText } from "@/components/ai-elements/markdown-text";
+import { MarkdownText } from "@/components/chat/markdown-text";
 import { cn } from "@/lib/utils";
 
 type MessageProps = {
@@ -18,8 +18,11 @@ export function Message({ topPadded }: MessageProps) {
 
 function UserMessage({ topPadded }: MessageProps) {
   const isLatestUserMessage = useAuiState((state) => {
-    const latestUserMessage = state.thread.messages.findLast((message) => message.role === "user");
-    return latestUserMessage?.id === state.message.id;
+    for (let index = state.thread.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.thread.messages[index];
+      if (message?.role === "user") return message.id === state.message.id;
+    }
+    return false;
   });
 
   return (

@@ -48,32 +48,6 @@
 }
 
 .desktop-shell {
-  --desktop-header-height: 2.5rem;
-}
-
-.desktop-main-canvas {
-  --background: color-mix(in oklch, var(--background-base) 90%, transparent);
-
-  background: transparent;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .desktop-main-canvas {
-    --background: var(--background-base);
-  }
-}
-
-.desktop-header {
   --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
-  --desktop-header-collapsed-sidebar-width: calc(var(--desktop-header-safe-area-left) + 8.5rem);
-  -webkit-app-region: drag;
-}
-
-.desktop-header-sidebar-controls {
-  padding-left: calc(var(--desktop-header-safe-area-left) + 0.5rem);
-}
-
-.desktop-header button,
-.desktop-header a {
-  -webkit-app-region: no-drag;
+  --desktop-header-controls-width: calc(var(--desktop-header-safe-area-left) + 8.75rem);
 }

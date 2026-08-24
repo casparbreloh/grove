@@ -1,5 +1,12 @@
-import { Compass01Icon, FilterMailIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
+import {
+  Compass01Icon,
+  FilterMailIcon,
+  Moon02Icon,
+  PencilEdit02Icon,
+  Sun03Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,13 +18,14 @@ import {
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  sidebarControlClassName,
 } from "@/components/ui/sidebar";
 import { filterMockTasksByProject, useMockGrove } from "@/lib/mock";
 import { TaskItem } from "./task-item";
@@ -29,10 +37,8 @@ export function AppSidebar() {
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <Sidebar
-      className="top-(--desktop-header-height) h-[calc(100svh-var(--desktop-header-height))]"
-      variant="inset"
-    >
+    <Sidebar>
+      <SidebarHeader className="h-10 shrink-0 p-0 [-webkit-app-region:drag]" />
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
@@ -66,7 +72,6 @@ export function AppSidebar() {
                 render={
                   <Button
                     aria-label="Filter tasks by project"
-                    className={sidebarControlClassName}
                     size="icon"
                     type="button"
                     variant="ghost"
@@ -103,6 +108,40 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter>
+        <ThemeSwitcher />
+      </SidebarFooter>
     </Sidebar>
+  );
+}
+
+function ThemeSwitcher() {
+  const { resolvedTheme, setTheme } = useTheme();
+
+  return (
+    <div aria-label="Color theme" className="grid grid-cols-2 gap-1" role="group">
+      <Button
+        aria-pressed={resolvedTheme === "light"}
+        className="aria-pressed:bg-accent"
+        onClick={() => setTheme("light")}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />
+        Light
+      </Button>
+      <Button
+        aria-pressed={resolvedTheme === "dark"}
+        className="aria-pressed:bg-accent"
+        onClick={() => setTheme("dark")}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />
+        Dark
+      </Button>
+    </div>
   );
 }
