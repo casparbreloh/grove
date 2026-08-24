@@ -20,7 +20,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { LayoutLeftIcon } from "@hugeicons/core-free-icons";
+import { LayoutLeftIcon, LayoutRightIcon } from "@hugeicons/core-free-icons";
 
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "18rem";
@@ -37,18 +37,24 @@ type SidebarContextProps = {
   toggleSidebar: () => void;
 };
 
-const SidebarContext = React.createContext<SidebarContextProps | null>(null);
+type SidebarSide = "left" | "right";
 
-function useSidebar() {
-  const context = React.useContext(SidebarContext);
+const SidebarContexts = {
+  left: React.createContext<SidebarContextProps | null>(null),
+  right: React.createContext<SidebarContextProps | null>(null),
+} satisfies Record<SidebarSide, React.Context<SidebarContextProps | null>>;
+
+function useSidebar(side: SidebarSide = "left") {
+  const context = React.useContext(SidebarContexts[side]);
   if (!context) {
-    throw new Error("useSidebar must be used within a SidebarProvider.");
+    throw new Error(`useSidebar("${side}") must be used within a ${side} SidebarProvider.`);
   }
 
   return context;
 }
 
 function SidebarProvider({
+  side = "left",
   defaultOpen = true,
   open: openProp,
   onOpenChange: setOpenProp,
@@ -57,10 +63,12 @@ function SidebarProvider({
   children,
   ...props
 }: React.ComponentProps<"div"> & {
+  side?: SidebarSide;
   defaultOpen?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const SidebarContext = SidebarContexts[side];
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
 
@@ -83,6 +91,8 @@ function SidebarProvider({
   }, [isMobile, setOpen, setOpenMobile]);
 
   React.useEffect(() => {
+    if (side !== "left") return;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
@@ -92,7 +102,7 @@ function SidebarProvider({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar]);
+  }, [side, toggleSidebar]);
 
   const state = open ? "expanded" : "collapsed";
 
@@ -110,8 +120,9 @@ function SidebarProvider({
   );
 
   return (
-    <SidebarContext.Provider value={contextValue}>
+    <SidebarContext value={contextValue}>
       <div
+        data-sidebar-provider={side}
         data-slot="sidebar-wrapper"
         style={
           {
@@ -128,7 +139,7 @@ function SidebarProvider({
       >
         {children}
       </div>
-    </SidebarContext.Provider>
+    </SidebarContext>
   );
 }
 
@@ -141,11 +152,11 @@ function Sidebar({
   dir,
   ...props
 }: React.ComponentProps<"div"> & {
-  side?: "left" | "right";
+  side?: SidebarSide;
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const { isMobile, state, openMobile, setOpenMobile } = useSidebar(side);
 
   if (collapsible === "none") {
     return (
@@ -232,8 +243,13 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+function SidebarTrigger({
+  side = "left",
+  className,
+  onClick,
+  ...props
+}: React.ComponentProps<typeof Button> & { side?: SidebarSide }) {
+  const { toggleSidebar } = useSidebar(side);
 
   return (
     <Button
@@ -248,23 +264,27 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       }}
       {...props}
     >
-      <HugeiconsIcon icon={LayoutLeftIcon} strokeWidth={2} />
-      <span className="sr-only">Toggle Sidebar</span>
+      <HugeiconsIcon icon={side === "left" ? LayoutLeftIcon : LayoutRightIcon} strokeWidth={2} />
+      <span className="sr-only">Toggle {side} sidebar</span>
     </Button>
   );
 }
 
-function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
-  const { toggleSidebar } = useSidebar();
+function SidebarRail({
+  side = "left",
+  className,
+  ...props
+}: React.ComponentProps<"button"> & { side?: SidebarSide }) {
+  const { toggleSidebar } = useSidebar(side);
 
   return (
     <button
       data-sidebar="rail"
       data-slot="sidebar-rail"
-      aria-label="Toggle Sidebar"
+      aria-label={`Toggle ${side} sidebar`}
       tabIndex={-1}
       onClick={toggleSidebar}
-      title="Toggle Sidebar"
+      title={`Toggle ${side} sidebar`}
       className={cn(
         "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2",
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",

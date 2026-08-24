@@ -7,6 +7,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { AppRightSidebar } from "@/components/sidebar/app-right-sidebar";
 import { tabRegistry } from "@/components/tabs/registry";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,12 +24,19 @@ function AppLayout() {
   return (
     <SidebarProvider className="desktop-shell h-svh overflow-hidden">
       <AppSidebar />
-      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-        <DesktopHeader />
-        <div className="flex min-h-0 flex-1 flex-col">
-          <Outlet />
-        </div>
-      </SidebarInset>
+      <SidebarProvider
+        className="h-svh min-h-0 min-w-0 overflow-hidden bg-sidebar [--sidebar:var(--background)]"
+        defaultOpen={false}
+        side="right"
+      >
+        <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+          <DesktopHeader />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <Outlet />
+          </div>
+        </SidebarInset>
+        <AppRightSidebar />
+      </SidebarProvider>
     </SidebarProvider>
   );
 }
@@ -74,6 +82,11 @@ function DesktopHeader() {
         <HugeiconsIcon className="size-3.5" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>
+      <SidebarTrigger
+        className="mr-2 ml-auto [-webkit-app-region:no-drag]"
+        side="right"
+        size="icon"
+      />
     </header>
   );
 }
