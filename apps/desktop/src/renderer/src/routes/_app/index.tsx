@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { renderTab } from "@/components/tabs/registry";
+import { renderTab } from "@/components/layout/tabs/registry";
 import { useMockGrove } from "@/lib/mock";
 
 export const Route = createFileRoute("/_app/")({ component: App });

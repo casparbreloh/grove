@@ -2,6 +2,7 @@
   "name": "grove",
   "private": true,
   "devDependencies": {
+    "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "react-doctor": "catalog:",

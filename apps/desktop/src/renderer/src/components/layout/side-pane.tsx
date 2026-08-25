@@ -1,11 +1,7 @@
 import { Add01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
-import {
-  getSidePaneTabIcon,
-  renderSidePaneTab,
-  sidePaneTabRegistry,
-} from "@/components/side-pane/registry";
+import { getSidePaneTabIcon, renderSidePaneTab, sidePaneTabRegistry } from "./tabs/registry";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -13,8 +9,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { usePaneSplit } from "@/components/ui/pane-split";
-import { TabStrip } from "@/components/ui/tab-strip";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 import {
   closeMockSidePaneTab,
@@ -24,6 +18,8 @@ import {
   useMockSidePane,
 } from "@/lib/mock-side-pane";
 import { cn } from "@/lib/utils";
+import { usePaneSplit } from "./pane-split";
+import { TabStrip } from "./tabs/tab-strip";
 
 export function SidePane() {
   const { isSidePaneMaximized, isSidePaneOpen } = usePaneSplit();

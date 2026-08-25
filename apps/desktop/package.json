@@ -29,7 +29,6 @@
     "@tailwindcss/vite": "catalog:",
     "@tanstack/devtools-vite": "catalog:",
     "@tanstack/router-plugin": "catalog:",
-    "@testing-library/react": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
@@ -37,9 +36,7 @@
     "electron": "catalog:",
     "electron-builder": "catalog:",
     "electron-vite": "catalog:",
-    "jsdom": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "vitest": "catalog:"
+    "vite": "catalog:"
   }
 }

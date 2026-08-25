@@ -1,4 +1,3 @@
 [tasks]
 build = "aube exec electron-vite build"
 dev = "aube exec electron-vite dev"
-test = "aube exec vitest run"

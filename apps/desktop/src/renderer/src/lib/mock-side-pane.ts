@@ -19,7 +19,7 @@ export type TestSidePaneTab = Readonly<{
   title: string;
 }>;
 
-export type UnavailableSidePaneTab = Readonly<{
+type UnavailableSidePaneTab = Readonly<{
   kind: "unavailable";
   originalKind: string;
   tabId: string;

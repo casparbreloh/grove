@@ -1,4 +1,14 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["electron.vite.config.ts", "src/main/index.ts", "src/renderer/src/main.tsx"]
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "electron-builder.config.ts",
+    "electron.vite.config.ts",
+    "src/main/index.ts",
+    "src/renderer/src/main.tsx"
+  ],
+  "ignore": ["src/renderer/src/components/ui/**"],
+  "ignoreIssues": {
+    "src/renderer/src/routeTree.gen.ts": ["exports", "types"]
+  },
+  "include": ["files", "exports", "types"]
 }

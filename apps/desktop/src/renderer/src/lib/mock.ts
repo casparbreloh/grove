@@ -1,17 +1,17 @@
 import { useSyncExternalStore } from "react";
 
-export type Workspace = { id: string; name: string };
+type Workspace = { id: string; name: string };
 export type Project = { id: string; workspaceId: string; name: string };
 export type Task = { id: string; projectId: string; title: string; updatedAt: string };
 
-export type ChatTab = {
+type ChatTab = {
   tabId: string;
   kind: "chat";
   sessionId: string;
   title: string;
 };
 
-export type TerminalTab = {
+type TerminalTab = {
   tabId: string;
   kind: "terminal";
   terminalId: string;
@@ -20,7 +20,7 @@ export type TerminalTab = {
 
 export type GroveTab = ChatTab | TerminalTab;
 
-export type GroveViewState = {
+type GroveViewState = {
   workspaces: readonly Workspace[];
   activeWorkspaceId: string | undefined;
   projects: readonly Project[];
@@ -225,7 +225,13 @@ function waitForChunk(abortSignal: AbortSignal) {
 
 export const mockChatModel: ChatModelAdapter = {
   async *run({ messages, abortSignal }) {
-    const userMessage = messages.findLast((message) => message.role === "user");
+    let userMessage: (typeof messages)[number] | undefined;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message?.role !== "user") continue;
+      userMessage = message;
+      break;
+    }
     const promptParts: string[] = [];
     for (const part of userMessage?.content ?? []) {
       if (part.type === "text") promptParts.push(part.text);

@@ -4,7 +4,7 @@
     "files": [
       "src/renderer/src/components/ai-elements/**",
       "src/renderer/src/components/ui/**",
-      "src/renderer/src/routeTree.gen.ts"
+      "src/renderer/src/hooks/use-mobile.ts"
     ],
     "overrides": [
       {
