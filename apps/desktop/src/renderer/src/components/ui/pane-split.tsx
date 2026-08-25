@@ -10,6 +10,7 @@ const KEYBOARD_STEP_REM = 1;
 const MINIMUM_PANE_REM = 20;
 const DOCKED_MAIN_PANE_WIDTH =
   "clamp(var(--pane-minimum), var(--main-pane-intent), calc(100% - var(--pane-minimum)))";
+const DOCKED_SIDE_PANE_WIDTH = `calc(100% - ${DOCKED_MAIN_PANE_WIDTH})`;
 
 type PaneSplitProps = Omit<React.ComponentProps<"div">, "children"> & {
   mainPane: React.ReactNode;
@@ -80,13 +81,12 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplitProps) {
-  const { isSidePaneOpen, isSidePaneMaximized, toggleSidePane } = usePaneSplit();
+  const { isSidePaneOpen, isSidePaneMaximized } = usePaneSplit();
   const [mainPaneIntent, setMainPaneIntent] = React.useState(DEFAULT_MAIN_PANE_SIZE);
   const splitRef = React.useRef<HTMLDivElement>(null);
   const mainPaneRef = React.useRef<HTMLDivElement>(null);
-  const railRef = React.useRef<HTMLButtonElement>(null);
+  const railRef = React.useRef<HTMLDivElement>(null);
   const sidePaneId = React.useId();
-  const suppressClickRef = React.useRef(false);
   const dragRef = React.useRef<{
     pointerId: number;
     startX: number;
@@ -97,7 +97,7 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
   } | null>(null);
 
   const mainPaneWidth = isSidePaneOpen ? DOCKED_MAIN_PANE_WIDTH : "100%";
-  const sidePaneInset = isSidePaneMaximized ? 0 : mainPaneWidth;
+  const sidePaneWidth = isSidePaneMaximized ? "100%" : DOCKED_SIDE_PANE_WIDTH;
 
   const readBounds = React.useCallback((): ResizeBounds => {
     const splitWidth = splitRef.current?.clientWidth ?? 0;
@@ -144,7 +144,7 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
   }, []);
 
   const finishResize = React.useCallback(
-    (pointerId: number, suppressClick: boolean) => {
+    (pointerId: number) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== pointerId) return false;
 
@@ -152,12 +152,6 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
       setDragging(false);
       if (drag.moved) {
         setMainPaneIntent(`${drag.currentWidth}px`);
-        if (suppressClick) {
-          suppressClickRef.current = true;
-          window.setTimeout(() => {
-            suppressClickRef.current = false;
-          });
-        }
       } else {
         splitRef.current?.style.setProperty("--main-pane-intent", mainPaneIntent);
       }
@@ -167,16 +161,7 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
     [mainPaneIntent, setDragging],
   );
 
-  const handleRailClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      event.preventDefault();
-      return;
-    }
-    toggleSidePane();
-  };
-
-  const handleRailKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+  const handleRailKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const bounds = readBounds();
     const currentWidth = readMainPaneWidth();
     const step = KEYBOARD_STEP_REM * bounds.pixelsPerRem;
@@ -193,7 +178,7 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
     setMainPaneIntent(`${effectiveWidth}px`);
   };
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
 
     const bounds = readBounds();
@@ -211,7 +196,7 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
     setDragging(true);
   };
 
-  const handlePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
@@ -221,8 +206,8 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
     drag.currentWidth = publishWidth(drag.startWidth + delta, drag.bounds);
   };
 
-  const handlePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (!finishResize(event.pointerId, true)) return;
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!finishResize(event.pointerId)) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -259,14 +244,14 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
         id={sidePaneId}
         data-slot="side-pane"
         data-state={isSidePaneOpen ? "open" : "closed"}
-        className="group/side-pane relative col-[1/-1] row-start-1 z-10 min-w-0 overflow-hidden bg-background transition-[margin-left] duration-150 ease-linear group-data-[dragging=true]/pane-split:duration-0"
-        style={{ marginLeft: sidePaneInset }}
+        className="group/side-pane relative col-[1/-1] row-start-1 z-10 min-w-0 justify-self-end overflow-hidden bg-background transition-[transform,visibility] duration-150 ease-linear data-[state=closed]:invisible data-[state=closed]:translate-x-full group-data-[dragging=true]/pane-split:duration-0"
+        style={{ width: sidePaneWidth }}
         aria-hidden={!isSidePaneOpen}
         inert={!isSidePaneOpen}
       >
         {sidePane}
         {isSidePaneOpen && !isSidePaneMaximized && (
-          <button
+          <div
             ref={railRef}
             aria-controls={sidePaneId}
             aria-label="Main and side pane divider"
@@ -278,13 +263,12 @@ function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplit
             data-slot="pane-split-rail"
             role="separator"
             tabIndex={0}
-            title="Resize panes or close side pane"
+            title="Resize panes"
             className="absolute inset-y-0 left-0 z-20 w-4 -translate-x-1/2 touch-none cursor-col-resize select-none [-webkit-app-region:no-drag] after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 hover:after:bg-border focus-visible:outline-none focus-visible:after:bg-border"
-            onClick={handleRailClick}
             onFocus={() => syncAccessibleValue(readMainPaneWidth(), readBounds())}
             onKeyDown={handleRailKeyDown}
-            onLostPointerCapture={(event) => finishResize(event.pointerId, true)}
-            onPointerCancel={(event) => finishResize(event.pointerId, false)}
+            onLostPointerCapture={(event) => finishResize(event.pointerId)}
+            onPointerCancel={(event) => finishResize(event.pointerId)}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
