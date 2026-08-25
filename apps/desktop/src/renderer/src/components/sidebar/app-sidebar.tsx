@@ -44,13 +44,13 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu aria-label="Primary">
               <SidebarMenuItem>
-                <SidebarMenuButton size="sm">
+                <SidebarMenuButton>
                   <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
                   <span>New Task</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton size="sm">
+                <SidebarMenuButton>
                   <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
                   <span>Explore</span>
                 </SidebarMenuButton>
@@ -61,10 +61,7 @@ export function AppSidebar() {
 
         <SidebarGroup aria-labelledby="tasks-heading">
           <div className="flex items-center">
-            <SidebarGroupLabel
-              className="min-w-0 flex-1 font-medium text-[11px]"
-              id="tasks-heading"
-            >
+            <SidebarGroupLabel className="min-w-0 flex-1 font-medium" id="tasks-heading">
               Tasks
             </SidebarGroupLabel>
             <DropdownMenu>
@@ -72,7 +69,7 @@ export function AppSidebar() {
                 render={
                   <Button
                     aria-label="Filter tasks by project"
-                    size="icon"
+                    size="icon-sm"
                     type="button"
                     variant="ghost"
                   />

@@ -43,11 +43,7 @@
   background: color-mix(in oklch, var(--info) 30%, transparent);
 }
 
-.chat-viewport[data-top-anchor-released] [data-aui-top-anchor-reserve] {
-  display: none !important;
-}
-
 .desktop-shell {
   --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
-  --desktop-header-controls-width: calc(var(--desktop-header-safe-area-left) + 8.75rem);
+  --desktop-header-controls-width: calc(var(--desktop-header-safe-area-left) + 8.875rem);
 }

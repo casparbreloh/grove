@@ -55,12 +55,12 @@ function DesktopControls() {
 
   return (
     <div className="fixed top-0 left-0 z-20 flex h-10 items-center gap-1 pr-1 pl-[calc(var(--desktop-header-safe-area-left)+0.5rem)] [-webkit-app-region:no-drag]">
-      <SidebarTrigger size="icon" />
+      <SidebarTrigger size="icon-sm" />
       <div className="flex items-center gap-1">
         <Button
           aria-label="Go back"
           onClick={() => window.history.back()}
-          size="icon"
+          size="icon-sm"
           variant="ghost"
         >
           <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} />
@@ -68,7 +68,7 @@ function DesktopControls() {
         <Button
           aria-label="Go forward"
           onClick={() => window.history.forward()}
-          size="icon"
+          size="icon-sm"
           variant="ghost"
         >
           <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
@@ -91,7 +91,7 @@ function SidePaneControls() {
           aria-pressed={isSidePaneMaximized}
           className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
           onClick={toggleSidePaneMaximized}
-          size="icon"
+          size="icon-sm"
           title={isSidePaneMaximized ? "Restore split view" : "Maximize side pane"}
           variant="ghost"
         >
@@ -103,7 +103,7 @@ function SidePaneControls() {
         aria-pressed={isSidePaneOpen}
         className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
         onClick={toggleSidePane}
-        size="icon"
+        size="icon-sm"
         title="Toggle side pane"
         variant="ghost"
       >
@@ -119,10 +119,10 @@ function DesktopHeader() {
   return (
     <header className="relative flex h-10 shrink-0 items-center bg-background [-webkit-app-region:drag]">
       <span
-        className="flex h-7 items-center gap-1.5 pr-3 text-xs/3.5 font-medium transition-[padding] duration-150 ease-linear data-[app-sidebar-open=false]:pl-[var(--desktop-header-controls-width)] data-[app-sidebar-open=true]:pl-3"
+        className="flex h-8 items-center gap-2 pr-3 text-sm font-medium transition-[padding] duration-150 ease-linear data-[app-sidebar-open=false]:pl-[var(--desktop-header-controls-width)] data-[app-sidebar-open=true]:pl-3"
         data-app-sidebar-open={appSidebarOpen}
       >
-        <HugeiconsIcon className="size-3.5" icon={Layers01Icon} strokeWidth={2} />
+        <HugeiconsIcon className="size-4" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>
     </header>
@@ -138,7 +138,7 @@ function NewTabMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button aria-label="New tab" size="icon" type="button" variant="ghost" />}
+        render={<Button aria-label="New tab" size="icon-sm" type="button" variant="ghost" />}
       >
         <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
       </DropdownMenuTrigger>
