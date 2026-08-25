@@ -33,18 +33,18 @@ export function Terminal({ terminalId }: { terminalId: string }) {
   const [size, setSize] = useState(defaultTerminalSize);
   const hostRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<WTerm | null>(null);
-  const cellSizeRef = useRef<CellSize>(undefined);
+  const resizeTimerRef = useRef<number>(undefined);
+  const initializedRef = useRef(false);
   const input = useRef("");
 
   const fitTerminal = useCallback((instance = instanceRef.current) => {
-    if (!instance) return;
+    if (!instance) return false;
 
     const { element } = instance;
-    if (element.clientWidth <= 0 || element.clientHeight <= 0) return;
+    if (element.clientWidth <= 0 || element.clientHeight <= 0) return false;
 
-    const cellSize = cellSizeRef.current ?? measureCell(element);
-    if (!cellSize) return;
-    cellSizeRef.current = cellSize;
+    const cellSize = measureCell(element);
+    if (!cellSize) return false;
 
     const style = window.getComputedStyle(element);
     const horizontalPadding =
@@ -64,26 +64,36 @@ export function Terminal({ terminalId }: { terminalId: string }) {
         ? currentSize
         : nextSize,
     );
+    return true;
   }, []);
+
+  const scheduleFit = useCallback(() => {
+    window.clearTimeout(resizeTimerRef.current);
+    resizeTimerRef.current = window.setTimeout(() => {
+      if (!fitTerminal() || initializedRef.current) return;
+      instanceRef.current?.write(
+        `Grove terminal prototype\r\nWorking directory: ~\r\nType 'help' for available commands.\r\n\r\n${prompt}`,
+      );
+      initializedRef.current = true;
+    }, terminalResizeSettleMs);
+  }, [fitTerminal]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    let resizeTimer: number | undefined;
     const observer = new ResizeObserver(([entry]) => {
-      window.clearTimeout(resizeTimer);
       if (!entry || entry.contentRect.width <= 0 || entry.contentRect.height <= 0) return;
-      resizeTimer = window.setTimeout(fitTerminal, terminalResizeSettleMs);
+      scheduleFit();
     });
     observer.observe(host);
 
     return () => {
-      window.clearTimeout(resizeTimer);
+      window.clearTimeout(resizeTimerRef.current);
       observer.disconnect();
       instanceRef.current = null;
     };
-  }, [fitTerminal]);
+  }, [scheduleFit]);
 
   const handleData = useCallback(
     (data: string) => {
@@ -133,10 +143,8 @@ export function Terminal({ terminalId }: { terminalId: string }) {
         onData={handleData}
         onReady={(instance) => {
           instanceRef.current = instance;
-          fitTerminal(instance);
-          instance.write(
-            `Grove terminal prototype\r\nWorking directory: ~\r\nType 'help' for available commands.\r\n\r\n${prompt}`,
-          );
+          initializedRef.current = false;
+          scheduleFit();
         }}
         ref={ref}
         rows={size.rows}

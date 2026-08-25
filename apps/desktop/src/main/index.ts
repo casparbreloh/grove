@@ -76,7 +76,7 @@ function createWindow() {
           ...(useSidebarVibrancy
             ? {
                 vibrancy: "sidebar" as const,
-                visualEffectState: "followWindow" as const,
+                visualEffectState: "active" as const,
               }
             : {}),
         }
@@ -119,8 +119,6 @@ function createWindow() {
   };
 
   nativeTheme.on("updated", updateWindowMaterial);
-  window.on("enter-full-screen", updateWindowMaterial);
-  window.on("leave-full-screen", updateWindowMaterial);
 
   void window.loadURL(rendererUrl());
 
