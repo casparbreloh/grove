@@ -57,21 +57,21 @@ function TabStripButton({
         aria-controls={`${tab.id}-panel`}
         aria-selected={isActive}
         className={cn(
-          "h-full w-full justify-start pr-7 group-hover/tab:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] focus-visible:ring-inset focus-visible:ring-offset-0",
-          isActive && "bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
+          "h-full w-full justify-start pr-7 font-normal text-foreground group-hover/tab:bg-accent group-hover/tab:text-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0",
+          isActive && "bg-accent text-accent-foreground",
         )}
         id={`${tab.id}-tab`}
         onClick={() => onSelect(tab.id)}
         role="tab"
         type="button"
-        variant="secondary"
+        variant="ghost"
       >
         {tab.icon && <HugeiconsIcon icon={tab.icon} strokeWidth={2} />}
         <span className="truncate">{tab.title}</span>
       </Button>
       <Button
         aria-label={`Close ${tab.title}`}
-        className="pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-muted-foreground opacity-0 group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-transparent"
+        className="pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100"
         onClick={(event) => {
           event.stopPropagation();
           onClose(tab.id);
