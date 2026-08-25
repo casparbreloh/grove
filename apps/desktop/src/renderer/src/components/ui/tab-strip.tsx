@@ -2,6 +2,7 @@ import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type TabStripItem = Readonly<{
   id: string;
@@ -50,22 +51,30 @@ function TabStripButton({
   tab: TabStripItem;
 }>) {
   return (
-    <div className="flex items-center">
+    <div className="group/tab relative flex h-7 w-36 shrink-0 items-center">
       <Button
         aria-controls={`${tab.id}-panel`}
         aria-selected={isActive}
+        className={cn(
+          "h-full w-full justify-start truncate pr-7 focus-visible:ring-inset focus-visible:ring-offset-0",
+          isActive &&
+            "bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
+        )}
         id={`${tab.id}-tab`}
         onClick={() => onSelect(tab.id)}
         role="tab"
-        size="sm"
         type="button"
-        variant="ghost"
+        variant="secondary"
       >
         {tab.title}
       </Button>
       <Button
         aria-label={`Close ${tab.title}`}
-        onClick={() => onClose(tab.id)}
+        className="pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-muted-foreground opacity-0 group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-transparent"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose(tab.id);
+        }}
         size="icon-sm"
         type="button"
         variant="ghost"
