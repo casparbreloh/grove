@@ -23,7 +23,7 @@ export function TabStrip({ activeTabId, children, label, onClose, onSelect, tabs
   return (
     <nav
       aria-label={label}
-      className="flex h-full min-w-0 items-center gap-1 overflow-x-auto [-webkit-app-region:no-drag]"
+      className="flex h-full w-full min-w-0 items-center gap-1 overflow-x-auto [-webkit-app-region:no-drag]"
       role="tablist"
     >
       {tabs.map((tab) => (
@@ -52,7 +52,7 @@ function TabStripButton({
   tab: TabStripItem;
 }>) {
   return (
-    <div className="group/tab relative flex h-7 w-36 shrink-0 items-center">
+    <div className="group/tab relative flex h-7 min-w-24 max-w-48 flex-[1_1_9rem] items-center">
       <Button
         aria-controls={`${tab.id}-panel`}
         aria-selected={isActive}

@@ -63,17 +63,13 @@ export function SidePane() {
           </TabStrip>
         )}
       </header>
-      <div className="relative min-h-0 flex-1">
+      <div className="min-h-0 flex-1">
         {tabs.map((tab) => (
           <div
             aria-hidden={tab.tabId !== activeTabId}
             aria-label={tab.kind === "new" ? tab.title : undefined}
             aria-labelledby={tab.kind === "new" ? undefined : `${tab.tabId}-tab`}
-            className={
-              tab.tabId === activeTabId
-                ? "absolute inset-0 size-full"
-                : "invisible pointer-events-none absolute inset-0 size-full"
-            }
+            className={tab.tabId === activeTabId ? "h-full" : "hidden"}
             id={`${tab.tabId}-panel`}
             inert={tab.tabId !== activeTabId}
             key={tab.tabId}

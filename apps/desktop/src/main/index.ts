@@ -119,6 +119,8 @@ function createWindow() {
   };
 
   nativeTheme.on("updated", updateWindowMaterial);
+  window.on("enter-full-screen", updateWindowMaterial);
+  window.on("leave-full-screen", updateWindowMaterial);
 
   void window.loadURL(rendererUrl());
 
