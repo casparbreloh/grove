@@ -1,4 +1,4 @@
-import { SquareIcon, TerminalIcon } from "@hugeicons/core-free-icons";
+import { TerminalIcon, TestTube01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { TestTab } from "@/components/side-pane/test-tab";
@@ -50,11 +50,16 @@ export const sidePaneTabRegistry = [
   defineSidePaneTab({
     kind: "test",
     label: "Test",
-    icon: SquareIcon,
+    icon: TestTube01Icon,
     create: createMockSidePaneTestTab,
     render: () => <TestTab />,
   }),
 ] as const;
+
+export function getSidePaneTabIcon(tab: SidePaneTab) {
+  if (tab.kind === "new" || tab.kind === "unavailable") return undefined;
+  return sidePaneTabRegistry.find(({ kind }) => kind === tab.kind)?.icon;
+}
 
 export function renderSidePaneTab(tab: SidePaneTab) {
   if (tab.kind === "new") {

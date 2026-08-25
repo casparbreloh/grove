@@ -1,10 +1,11 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type TabStripItem = Readonly<{
+  icon?: IconSvgElement;
   id: string;
   title: string;
 }>;
@@ -56,9 +57,8 @@ function TabStripButton({
         aria-controls={`${tab.id}-panel`}
         aria-selected={isActive}
         className={cn(
-          "h-full w-full justify-start truncate pr-7 focus-visible:ring-inset focus-visible:ring-offset-0",
-          isActive &&
-            "bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
+          "h-full w-full justify-start pr-7 group-hover/tab:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] focus-visible:ring-inset focus-visible:ring-offset-0",
+          isActive && "bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
         )}
         id={`${tab.id}-tab`}
         onClick={() => onSelect(tab.id)}
@@ -66,7 +66,8 @@ function TabStripButton({
         type="button"
         variant="secondary"
       >
-        {tab.title}
+        {tab.icon && <HugeiconsIcon icon={tab.icon} strokeWidth={2} />}
+        <span className="truncate">{tab.title}</span>
       </Button>
       <Button
         aria-label={`Close ${tab.title}`}

@@ -1,7 +1,11 @@
 import { Add01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
-import { renderSidePaneTab, sidePaneTabRegistry } from "@/components/side-pane/registry";
+import {
+  getSidePaneTabIcon,
+  renderSidePaneTab,
+  sidePaneTabRegistry,
+} from "@/components/side-pane/registry";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -43,19 +47,29 @@ export function SidePane() {
             label="Side pane tabs"
             onClose={closeMockSidePaneTab}
             onSelect={selectMockSidePaneTab}
-            tabs={tabs.map(({ tabId, title }) => ({ id: tabId, title }))}
+            tabs={tabs.map((tab) => ({
+              id: tab.tabId,
+              icon: getSidePaneTabIcon(tab),
+              title: tab.title,
+            }))}
           >
             <NewSidePaneTabMenu />
           </TabStrip>
         )}
       </header>
-      <div className="min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1">
         {tabs.map((tab) => (
           <div
+            aria-hidden={tab.tabId !== activeTabId}
             aria-label={tab.kind === "new" ? tab.title : undefined}
             aria-labelledby={tab.kind === "new" ? undefined : `${tab.tabId}-tab`}
-            className={tab.tabId === activeTabId ? "h-full" : "hidden"}
+            className={
+              tab.tabId === activeTabId
+                ? "absolute inset-0 size-full"
+                : "invisible pointer-events-none absolute inset-0 size-full"
+            }
             id={`${tab.tabId}-panel`}
+            inert={tab.tabId !== activeTabId}
             key={tab.tabId}
             role="tabpanel"
           >
