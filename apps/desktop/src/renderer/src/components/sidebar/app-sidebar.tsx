@@ -61,7 +61,7 @@ export function AppSidebar() {
 
         <SidebarGroup aria-labelledby="tasks-heading">
           <div className="flex items-center">
-            <SidebarGroupLabel className="min-w-0 flex-1 font-medium" id="tasks-heading">
+            <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">
               Tasks
             </SidebarGroupLabel>
             <DropdownMenu>

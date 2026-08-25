@@ -94,11 +94,16 @@ let tabs: readonly GroveTab[] = [
 let activeTabId = tabs[0].tabId;
 
 function createState(): GroveViewState {
-  const visibleProjects = projects.filter(({ workspaceId }) => workspaceId === activeWorkspaceId);
-  const projectIds = new Set(visibleProjects.map(({ id }) => id));
+  const visibleProjects: Project[] = [];
+  const visibleProjectIds = new Set<string>();
+  for (const project of projects) {
+    if (project.workspaceId !== activeWorkspaceId) continue;
+    visibleProjects.push(project);
+    visibleProjectIds.add(project.id);
+  }
   const visibleTasks = tasks.filter(
     ({ projectId }) =>
-      projectIds.has(projectId) &&
+      visibleProjectIds.has(projectId) &&
       (taskProjectFilterId === undefined || projectId === taskProjectFilterId),
   );
   const byLastUpdated = (left: Task, right: Task) => right.updatedAt.localeCompare(left.updatedAt);
@@ -133,12 +138,6 @@ export function useMockGrove() {
   );
 }
 
-export function selectMockTab(tabId: string) {
-  if (tabId === activeTabId || !tabs.some((tab) => tab.tabId === tabId)) return;
-  activeTabId = tabId;
-  emitChange();
-}
-
 function addMockTab(tab: GroveTab) {
   tabs = [...tabs, tab];
   activeTabId = tab.tabId;
@@ -165,24 +164,6 @@ export function createMockTerminalTab() {
     title: terminalNumber === 1 ? "Terminal" : `Terminal ${terminalNumber}`,
   };
   addMockTab(tab);
-}
-
-export function closeMockTab(tabId: string) {
-  const index = tabs.findIndex((tab) => tab.tabId === tabId);
-  if (index < 0 || tabs.length === 1) return;
-
-  tabs = tabs.filter((tab) => tab.tabId !== tabId);
-  if (activeTabId === tabId) activeTabId = tabs[Math.min(index, tabs.length - 1)].tabId;
-  emitChange();
-}
-
-export function selectMockWorkspace(workspaceId: string) {
-  if (workspaceId === activeWorkspaceId) return;
-  if (!workspaces.some(({ id }) => id === workspaceId)) return;
-  activeWorkspaceId = workspaceId;
-  draftProjectId = undefined;
-  taskProjectFilterId = undefined;
-  emitChange();
 }
 
 export function selectMockDraftProject(projectId: string | undefined) {
@@ -245,11 +226,11 @@ function waitForChunk(abortSignal: AbortSignal) {
 export const mockChatModel: ChatModelAdapter = {
   async *run({ messages, abortSignal }) {
     const userMessage = messages.findLast((message) => message.role === "user");
-    const prompt = userMessage?.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n\n")
-      .trim();
+    const promptParts: string[] = [];
+    for (const part of userMessage?.content ?? []) {
+      if (part.type === "text") promptParts.push(part.text);
+    }
+    const prompt = promptParts.join("\n\n").trim();
     if (!prompt) throw new Error("A message is required");
 
     let text = "";

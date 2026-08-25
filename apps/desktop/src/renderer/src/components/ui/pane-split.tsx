@@ -5,19 +5,15 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const RESIZE_THRESHOLD = 5;
+const DEFAULT_MAIN_PANE_SIZE = "50%";
+const KEYBOARD_STEP_REM = 1;
+const MINIMUM_PANE_REM = 20;
 const DOCKED_MAIN_PANE_WIDTH =
   "clamp(var(--pane-minimum), var(--main-pane-intent), calc(100% - var(--pane-minimum)))";
-type RemSize = `${number}rem`;
-type PercentageSize = `${number}%`;
-type PixelSize = `${number}px`;
-type SizeIntent = PercentageSize | PixelSize;
 
 type PaneSplitProps = Omit<React.ComponentProps<"div">, "children"> & {
   mainPane: React.ReactNode;
   sidePane: React.ReactNode;
-  minimumSize?: RemSize;
-  defaultMainPaneSize?: PercentageSize;
-  keyboardStep?: RemSize;
 };
 
 type PaneSplitContextProps = Readonly<{
@@ -83,18 +79,9 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function PaneSplit({
-  mainPane,
-  sidePane,
-  minimumSize = "20rem",
-  defaultMainPaneSize = "50%",
-  keyboardStep = "1rem",
-  className,
-  style,
-  ...props
-}: PaneSplitProps) {
+function PaneSplit({ mainPane, sidePane, className, style, ...props }: PaneSplitProps) {
   const { isSidePaneOpen, isSidePaneMaximized, toggleSidePane } = usePaneSplit();
-  const [mainPaneIntent, setMainPaneIntent] = React.useState<SizeIntent>(defaultMainPaneSize);
+  const [mainPaneIntent, setMainPaneIntent] = React.useState(DEFAULT_MAIN_PANE_SIZE);
   const splitRef = React.useRef<HTMLDivElement>(null);
   const mainPaneRef = React.useRef<HTMLDivElement>(null);
   const railRef = React.useRef<HTMLButtonElement>(null);
@@ -109,37 +96,20 @@ function PaneSplit({
     moved: boolean;
   } | null>(null);
 
-  const minimumRem = Number.parseFloat(minimumSize);
-  const defaultMainPanePercentage = Number.parseFloat(defaultMainPaneSize);
-  const keyboardStepRem = Number.parseFloat(keyboardStep);
   const mainPaneWidth = isSidePaneOpen ? DOCKED_MAIN_PANE_WIDTH : "100%";
   const sidePaneInset = isSidePaneMaximized ? 0 : mainPaneWidth;
-
-  if (!Number.isFinite(minimumRem) || minimumRem <= 0) {
-    throw new Error("PaneSplit minimumSize must be a positive rem value.");
-  }
-  if (!Number.isFinite(keyboardStepRem) || keyboardStepRem <= 0) {
-    throw new Error("PaneSplit keyboardStep must be a positive rem value.");
-  }
-  if (
-    !Number.isFinite(defaultMainPanePercentage) ||
-    defaultMainPanePercentage <= 0 ||
-    defaultMainPanePercentage >= 100
-  ) {
-    throw new Error("PaneSplit defaultMainPaneSize must be between 0% and 100%.");
-  }
 
   const readBounds = React.useCallback((): ResizeBounds => {
     const splitWidth = splitRef.current?.clientWidth ?? 0;
     const pixelsPerRem = rootPixelsPerRem();
-    const minimum = minimumRem * pixelsPerRem;
+    const minimum = MINIMUM_PANE_REM * pixelsPerRem;
     return {
       minimum,
       maximum: Math.max(minimum, splitWidth - minimum),
       splitWidth,
       pixelsPerRem,
     };
-  }, [minimumRem]);
+  }, []);
 
   const readMainPaneWidth = React.useCallback(
     () => mainPaneRef.current?.getBoundingClientRect().width ?? 0,
@@ -197,6 +167,67 @@ function PaneSplit({
     [mainPaneIntent, setDragging],
   );
 
+  const handleRailClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      event.preventDefault();
+      return;
+    }
+    toggleSidePane();
+  };
+
+  const handleRailKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const bounds = readBounds();
+    const currentWidth = readMainPaneWidth();
+    const step = KEYBOARD_STEP_REM * bounds.pixelsPerRem;
+    let nextWidth: number | undefined;
+
+    if (event.key === "Home") nextWidth = bounds.minimum;
+    if (event.key === "End") nextWidth = bounds.maximum;
+    if (event.key === "ArrowLeft") nextWidth = currentWidth - step;
+    if (event.key === "ArrowRight") nextWidth = currentWidth + step;
+
+    if (nextWidth === undefined) return;
+    event.preventDefault();
+    const effectiveWidth = publishWidth(nextWidth, bounds);
+    setMainPaneIntent(`${effectiveWidth}px`);
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+
+    const bounds = readBounds();
+    const currentWidth = readMainPaneWidth();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: currentWidth,
+      currentWidth,
+      bounds,
+      moved: false,
+    };
+    syncAccessibleValue(currentWidth, bounds);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const delta = event.clientX - drag.startX;
+    event.preventDefault();
+    drag.moved ||= Math.abs(delta) >= RESIZE_THRESHOLD;
+    drag.currentWidth = publishWidth(drag.startWidth + delta, drag.bounds);
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!finishResize(event.pointerId, true)) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
   return (
     <div
       ref={splitRef}
@@ -208,7 +239,7 @@ function PaneSplit({
       style={
         {
           ...style,
-          "--pane-minimum": minimumSize,
+          "--pane-minimum": `${MINIMUM_PANE_REM}rem`,
           "--main-pane-intent": mainPaneIntent,
         } as React.CSSProperties
       }
@@ -249,66 +280,14 @@ function PaneSplit({
             tabIndex={0}
             title="Resize panes or close side pane"
             className="absolute inset-y-0 left-0 z-20 w-4 -translate-x-1/2 touch-none cursor-col-resize select-none [-webkit-app-region:no-drag] after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 hover:after:bg-border focus-visible:outline-none focus-visible:after:bg-border"
-            onClick={(event) => {
-              if (suppressClickRef.current) {
-                suppressClickRef.current = false;
-                event.preventDefault();
-                return;
-              }
-              toggleSidePane();
-            }}
+            onClick={handleRailClick}
             onFocus={() => syncAccessibleValue(readMainPaneWidth(), readBounds())}
-            onKeyDown={(event) => {
-              const bounds = readBounds();
-              const currentWidth = readMainPaneWidth();
-              const step = keyboardStepRem * bounds.pixelsPerRem;
-              let nextWidth: number | undefined;
-
-              if (event.key === "Home") nextWidth = bounds.minimum;
-              if (event.key === "End") nextWidth = bounds.maximum;
-              if (event.key === "ArrowLeft") nextWidth = currentWidth - step;
-              if (event.key === "ArrowRight") nextWidth = currentWidth + step;
-
-              if (nextWidth !== undefined) {
-                event.preventDefault();
-                const effectiveWidth = publishWidth(nextWidth, bounds);
-                setMainPaneIntent(`${effectiveWidth}px`);
-              }
-            }}
+            onKeyDown={handleRailKeyDown}
             onLostPointerCapture={(event) => finishResize(event.pointerId, true)}
             onPointerCancel={(event) => finishResize(event.pointerId, false)}
-            onPointerDown={(event) => {
-              if (event.button !== 0) return;
-
-              const bounds = readBounds();
-              const currentWidth = readMainPaneWidth();
-              dragRef.current = {
-                pointerId: event.pointerId,
-                startX: event.clientX,
-                startWidth: currentWidth,
-                currentWidth,
-                bounds,
-                moved: false,
-              };
-              syncAccessibleValue(currentWidth, bounds);
-              event.currentTarget.setPointerCapture(event.pointerId);
-              setDragging(true);
-            }}
-            onPointerMove={(event) => {
-              const drag = dragRef.current;
-              if (!drag || drag.pointerId !== event.pointerId) return;
-
-              const delta = event.clientX - drag.startX;
-              event.preventDefault();
-              drag.moved ||= Math.abs(delta) >= RESIZE_THRESHOLD;
-              drag.currentWidth = publishWidth(drag.startWidth + delta, drag.bounds);
-            }}
-            onPointerUp={(event) => {
-              if (!finishResize(event.pointerId, true)) return;
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId);
-              }
-            }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
           />
         )}
       </div>

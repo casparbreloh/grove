@@ -1,0 +1,4 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["electron.vite.config.ts", "src/main/index.ts", "src/renderer/src/main.tsx"]
+}

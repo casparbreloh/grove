@@ -1,0 +1,20 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "ignore": {
+    "files": [
+      "src/renderer/src/components/ai-elements/**",
+      "src/renderer/src/components/ui/**",
+      "src/renderer/src/routeTree.gen.ts"
+    ],
+    "overrides": [
+      {
+        "files": ["package.json"],
+        "rules": ["deslop/unused-dependency"]
+      }
+    ]
+  },
+  "share": false,
+  "supplyChain": {
+    "enabled": false
+  }
+}

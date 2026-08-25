@@ -19,6 +19,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { createMockProject, mockChatModel, selectMockDraftProject, useMockGrove } from "@/lib/mock";
 
+function createProjectFromPrompt() {
+  const name = window.prompt("Project name");
+  if (name?.trim()) createMockProject(name);
+}
+
 export function Chat() {
   const runtime = useLocalRuntime(mockChatModel);
 
@@ -33,11 +38,6 @@ function ChatViewport() {
   const { projects, draftProjectId } = useMockGrove();
   const selectedProject = projects.find(({ id }) => id === draftProjectId);
   const [showNoProject, setShowNoProject] = useState(Boolean(draftProjectId));
-
-  const handleNewProject = () => {
-    const name = window.prompt("Project name");
-    if (name?.trim()) createMockProject(name);
-  };
 
   return (
     <ThreadPrimitive.Root className="flex h-full flex-col bg-background">
@@ -90,7 +90,7 @@ function ChatViewport() {
                       </DropdownMenuItem>
                     ))}
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleNewProject}>
+                    <DropdownMenuItem onClick={createProjectFromPrompt}>
                       <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
                       New project
                     </DropdownMenuItem>
