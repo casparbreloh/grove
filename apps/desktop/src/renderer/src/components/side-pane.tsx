@@ -22,6 +22,7 @@ import {
 export function SidePane() {
   const { isSidePaneMaximized, isSidePaneOpen } = usePaneSplit();
   const { activeTabId, tabs } = useMockSidePane();
+  const activeTab = tabs.find(({ tabId }) => tabId === activeTabId);
 
   useEffect(() => {
     if (isSidePaneOpen) ensureMockSidePaneTab();
@@ -36,20 +37,23 @@ export function SidePane() {
         className="flex h-10 shrink-0 items-center pr-20 pl-3 [-webkit-app-region:drag] data-[maximized=true]:pl-[calc(var(--desktop-header-safe-area-left)+0.5rem)]"
         data-maximized={isSidePaneMaximized}
       >
-        <TabStrip
-          activeTabId={activeTabId}
-          label="Side pane tabs"
-          onClose={closeMockSidePaneTab}
-          onSelect={selectMockSidePaneTab}
-          tabs={tabs.map(({ tabId, title }) => ({ id: tabId, title }))}
-        >
-          <NewSidePaneTabMenu />
-        </TabStrip>
+        {activeTab !== undefined && activeTab.kind !== "new" && (
+          <TabStrip
+            activeTabId={activeTabId}
+            label="Side pane tabs"
+            onClose={closeMockSidePaneTab}
+            onSelect={selectMockSidePaneTab}
+            tabs={tabs.map(({ tabId, title }) => ({ id: tabId, title }))}
+          >
+            <NewSidePaneTabMenu />
+          </TabStrip>
+        )}
       </header>
       <div className="min-h-0 flex-1">
         {tabs.map((tab) => (
           <div
-            aria-labelledby={`${tab.tabId}-tab`}
+            aria-label={tab.kind === "new" ? tab.title : undefined}
+            aria-labelledby={tab.kind === "new" ? undefined : `${tab.tabId}-tab`}
             className={tab.tabId === activeTabId ? "h-full" : "hidden"}
             id={`${tab.tabId}-panel`}
             key={tab.tabId}
