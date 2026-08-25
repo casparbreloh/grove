@@ -20,7 +20,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
@@ -127,11 +128,6 @@ function DesktopHeader() {
       </span>
     </header>
   );
-}
-
-function useAppSidebarOpen() {
-  const { isMobile, open, openMobile } = useSidebar();
-  return isMobile ? openMobile : open;
 }
 
 function NewTabMenu() {

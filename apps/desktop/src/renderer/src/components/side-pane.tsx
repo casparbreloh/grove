@@ -14,8 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { usePaneSplit } from "@/components/ui/pane-split";
-import { useSidebar } from "@/components/ui/sidebar";
 import { TabStrip } from "@/components/ui/tab-strip";
+import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 import {
   closeMockSidePaneTab,
   ensureMockSidePaneTab,
@@ -27,11 +27,10 @@ import { cn } from "@/lib/utils";
 
 export function SidePane() {
   const { isSidePaneMaximized, isSidePaneOpen } = usePaneSplit();
-  const { isMobile, open: isAppSidebarOpen, openMobile: isMobileSidebarOpen } = useSidebar();
+  const isAppSidebarOpen = useAppSidebarOpen();
   const { activeTabId, tabs } = useMockSidePane();
   const activeTab = tabs.find(({ tabId }) => tabId === activeTabId);
-  const needsTitlebarSafeArea =
-    isSidePaneMaximized && !(isMobile ? isMobileSidebarOpen : isAppSidebarOpen);
+  const needsTitlebarSafeArea = isSidePaneMaximized && !isAppSidebarOpen;
 
   useEffect(() => {
     if (isSidePaneOpen) ensureMockSidePaneTab();
