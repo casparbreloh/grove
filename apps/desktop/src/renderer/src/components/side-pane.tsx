@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { usePaneSplit } from "@/components/ui/pane-split";
+import { useSidebar } from "@/components/ui/sidebar";
 import { TabStrip } from "@/components/ui/tab-strip";
 import {
   closeMockSidePaneTab,
@@ -22,11 +23,15 @@ import {
   selectMockSidePaneTab,
   useMockSidePane,
 } from "@/lib/mock-side-pane";
+import { cn } from "@/lib/utils";
 
 export function SidePane() {
   const { isSidePaneMaximized, isSidePaneOpen } = usePaneSplit();
+  const { isMobile, open: isAppSidebarOpen, openMobile: isMobileSidebarOpen } = useSidebar();
   const { activeTabId, tabs } = useMockSidePane();
   const activeTab = tabs.find(({ tabId }) => tabId === activeTabId);
+  const needsTitlebarSafeArea =
+    isSidePaneMaximized && !(isMobile ? isMobileSidebarOpen : isAppSidebarOpen);
 
   useEffect(() => {
     if (isSidePaneOpen) ensureMockSidePaneTab();
@@ -38,8 +43,10 @@ export function SidePane() {
       className="flex size-full flex-col border-l bg-background text-foreground"
     >
       <header
-        className="flex h-10 shrink-0 items-center pr-20 pl-3 [-webkit-app-region:drag] data-[maximized=true]:pl-[calc(var(--desktop-header-safe-area-left)+0.5rem)]"
-        data-maximized={isSidePaneMaximized}
+        className={cn(
+          "flex h-10 shrink-0 items-center pr-20 pl-1.5 [-webkit-app-region:drag]",
+          needsTitlebarSafeArea && "pl-[calc(var(--desktop-header-safe-area-left)+0.375rem)]",
+        )}
       >
         {activeTab !== undefined && activeTab.kind !== "new" && (
           <TabStrip
