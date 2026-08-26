@@ -78,7 +78,7 @@ function SidebarProvider({
 
   const toggleSidebar = React.useCallback(() => {
     return isMobile ? setOpenMobile((open) => !open) : setOpen(!open);
-  }, [isMobile, setOpen, setOpenMobile]);
+  }, [isMobile, open, setOpen, setOpenMobile]);
 
   const state = open ? "expanded" : "collapsed";
 
@@ -113,7 +113,6 @@ function SidebarProvider({
           className,
         )}
         {...props}
-        data-state={state}
       >
         {children}
       </div>

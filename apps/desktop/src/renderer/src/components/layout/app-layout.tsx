@@ -69,6 +69,8 @@ function MainPaneHeader() {
 }
 
 function AppTitlebarControls() {
+  const appSidebarOpen = useAppSidebarOpen();
+
   return (
     <div className="fixed top-0 left-0 z-20 flex h-10 items-center gap-1 pr-1 pl-[calc(var(--desktop-header-safe-area-left)+0.5rem)] [-webkit-app-region:no-drag]">
       <SidebarTrigger size="icon-sm" />
@@ -90,7 +92,11 @@ function AppTitlebarControls() {
           <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
         </Button>
       </div>
-      <span className="group-data-[state=expanded]/sidebar-wrapper:hidden">
+      <span
+        className="transition-opacity duration-150 data-[app-sidebar-open=true]:invisible data-[app-sidebar-open=true]:opacity-0 motion-reduce:transition-none"
+        data-app-sidebar-open={appSidebarOpen}
+        inert={appSidebarOpen}
+      >
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button aria-label="New tab" size="icon-sm" type="button" variant="ghost" />}

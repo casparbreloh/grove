@@ -54,8 +54,8 @@
 }
 
 :root {
-  --icon-sm: calc(var(--text-sm) + 1px);
-  --icon-xs: calc(var(--text-xs) + 1px);
+  --icon-sm: calc(var(--text-sm) + 2px);
+  --icon-xs: calc(var(--text-xs) + 2px);
   --background: oklch(0.985 0 0);
   --foreground: oklch(0.269 0 0);
   --card: oklch(1 0 0);

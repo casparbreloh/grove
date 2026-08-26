@@ -166,7 +166,11 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
           </span>
         </span>
         <span className="flex min-w-0 items-center gap-1 pr-16 text-xs text-muted-foreground">
-          <HugeiconsIcon className="size-[var(--icon-xs)]" icon={Folder01Icon} strokeWidth={2} />
+          <HugeiconsIcon
+            className="size-[calc(var(--text-xs)+1px)]"
+            icon={Folder01Icon}
+            strokeWidth={2}
+          />
           <span className="min-w-0 flex-1 truncate">{project?.name}</span>
         </span>
       </SidebarMenuButton>
