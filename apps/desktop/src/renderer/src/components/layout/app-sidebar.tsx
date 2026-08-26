@@ -17,7 +17,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
 import {
   Sidebar,
   SidebarContent,
@@ -116,31 +115,24 @@ export function AppSidebar() {
 
 function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
   return (
-    <SidebarMenuItem>
-      <Item
-        className="group/task-item relative rounded-md border-0 px-2 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    <SidebarMenuItem className="group/task-item">
+      <SidebarMenuButton className="h-auto flex-col items-stretch gap-0 py-1.5 group-hover/task-item:bg-sidebar-accent group-hover/task-item:text-sidebar-accent-foreground">
+        <span className="truncate leading-snug">{task.title}</span>
+        <span className="flex min-w-0 items-center gap-1 pr-16 text-xs leading-normal text-muted-foreground">
+          <HugeiconsIcon className="size-3!" icon={Folder01Icon} strokeWidth={2} />
+          <span className="truncate">{project?.name}</span>
+        </span>
+      </SidebarMenuButton>
+      <Button
+        aria-label={`Archive ${task.title}`}
+        className="pointer-events-none absolute right-0 bottom-0.5 font-normal text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/task-item:pointer-events-auto group-hover/task-item:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100"
         size="xs"
+        type="button"
+        variant="ghost"
       >
-        <ItemContent className="min-w-0">
-          <ItemTitle className="font-normal text-foreground group-hover/task-item:text-sidebar-accent-foreground">
-            {task.title}
-          </ItemTitle>
-          <ItemDescription className="flex min-w-0 items-center gap-1 pr-16">
-            <HugeiconsIcon className="size-3!" icon={Folder01Icon} strokeWidth={2} />
-            <span className="truncate">{project?.name}</span>
-          </ItemDescription>
-        </ItemContent>
-        <Button
-          aria-label={`Archive ${task.title}`}
-          className="pointer-events-none absolute right-0 bottom-1 font-normal text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/task-item:pointer-events-auto group-hover/task-item:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100"
-          size="xs"
-          type="button"
-          variant="ghost"
-        >
-          <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} />
-          <span>Archive</span>
-        </Button>
-      </Item>
+        <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} />
+        <span>Archive</span>
+      </Button>
     </SidebarMenuItem>
   );
 }
