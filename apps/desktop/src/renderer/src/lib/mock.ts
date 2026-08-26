@@ -51,7 +51,7 @@ const tasks: readonly Task[] = [
   {
     id: "task_sidebar",
     projectId: "project_grove",
-    title: "Refine the task sidebar",
+    title: "Refine the task sidebar overflow behavior for unusually long task titles",
     updatedAt: "2026-08-18T14:30:00Z",
   },
   {
@@ -63,7 +63,7 @@ const tasks: readonly Task[] = [
   {
     id: "task_auth",
     projectId: "project_permalux",
-    title: "Investigate authentication flow",
+    title: "Investigate authentication recovery across expired and interrupted sessions",
     updatedAt: "2026-08-16T18:20:00Z",
   },
   {

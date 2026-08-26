@@ -8,6 +8,7 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useRef } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -115,13 +116,28 @@ export function AppSidebar() {
 }
 
 function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
+  const titleRef = useRef<HTMLSpanElement>(null);
+
+  function scrollTitleTo(left: number) {
+    titleRef.current?.scrollTo({ left });
+  }
+
   return (
-    <SidebarMenuItem className="group/task-item">
+    <SidebarMenuItem
+      className="group/task-item"
+      onMouseEnter={() => scrollTitleTo(titleRef.current?.scrollWidth ?? 0)}
+      onMouseLeave={() => scrollTitleTo(0)}
+    >
       <SidebarMenuButton className="h-auto flex-col items-stretch gap-0 py-1.5 group-hover/task-item:bg-sidebar-accent group-hover/task-item:text-sidebar-accent-foreground">
-        <span className="truncate-fade leading-snug">{task.title}</span>
+        <span
+          className="mask-r-from-[calc(100%-1rem)] mr-7 overflow-hidden scroll-smooth leading-snug whitespace-nowrap group-hover/task-item:mask-none motion-reduce:scroll-auto"
+          ref={titleRef}
+        >
+          {task.title}
+        </span>
         <span className="flex min-w-0 items-center gap-1 pr-16 text-xs leading-normal text-muted-foreground">
           <HugeiconsIcon className="size-3!" icon={Folder01Icon} strokeWidth={2} />
-          <span className="min-w-0 flex-1 truncate-fade">{project?.name}</span>
+          <span className="min-w-0 flex-1 truncate">{project?.name}</span>
         </span>
       </SidebarMenuButton>
       <Button
