@@ -2,7 +2,7 @@
 
 Read `VISION.md` before product or architecture work. It is the source of truth for vocabulary, product semantics, Agent/Environment boundaries, and delivery order; do not duplicate or redefine them here.
 
-For renderer design-system or UI work, read `design.md`.
+For renderer design-system or UI work, read `DESIGN.md`.
 
 ## Working principles
 
