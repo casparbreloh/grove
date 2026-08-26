@@ -45,7 +45,7 @@ function ChatViewport() {
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-8 sm:px-10">
           <AuiIf condition={(state) => state.thread.messages.length === 0}>
             <div className="flex flex-1 items-center justify-center pb-24">
-              <h1 className="text-section-title font-semibold">What would you like to work on?</h1>
+              <h1 className="text-2xl font-semibold">What would you like to work on?</h1>
             </div>
           </AuiIf>
 

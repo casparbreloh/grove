@@ -251,7 +251,7 @@ function SidePaneTabButton({
         type="button"
         variant="ghost"
       >
-        <HugeiconsIcon className="size-(--icon-small)" icon={Cancel01Icon} strokeWidth={2} />
+        <HugeiconsIcon className="size-3" icon={Cancel01Icon} strokeWidth={2} />
       </Button>
     </div>
   );
@@ -330,8 +330,8 @@ function UnavailableSidePaneTab({ title }: { title: string }) {
   return (
     <div className="flex size-full items-center justify-center bg-background p-6 text-center">
       <div>
-        <h1 className="text-ui-small font-medium">{title} is unavailable</h1>
-        <p className="mt-1 text-ui-micro text-muted-foreground">
+        <h1 className="text-sm font-medium">{title} is unavailable</h1>
+        <p className="mt-1 text-xs text-muted-foreground">
           This tab type is not available in this version of Grove.
         </p>
       </div>
