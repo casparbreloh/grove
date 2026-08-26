@@ -83,7 +83,7 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: color-mix(in oklch, var(--background) 75%, transparent);
+  --sidebar: color-mix(in oklch, var(--background) 70%, transparent);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);

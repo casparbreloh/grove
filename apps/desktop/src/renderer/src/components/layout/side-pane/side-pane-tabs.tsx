@@ -9,9 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollFade } from "@/components/ui/scroll-fade";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
-import { useScrollOverflow } from "@/hooks/use-scroll-overflow";
 import {
   closeMockSidePaneTab,
   createMockSidePaneTerminalTab,
@@ -92,8 +90,6 @@ function SidePaneTabStrip({
   sidePaneTabs: readonly SidePaneTab[];
 }>) {
   const [closingSidePaneTabId, setClosingSidePaneTabId] = useState<string>();
-  const { hasHiddenContentAtEnd, hasHiddenContentAtStart, onScroll, scrollElementRef } =
-    useScrollOverflow("horizontal", sidePaneTabs.length);
 
   function finishClosingSidePaneTab(sidePaneTabId: string) {
     if (closingSidePaneTabId !== sidePaneTabId) return;
@@ -102,12 +98,10 @@ function SidePaneTabStrip({
   }
 
   return (
-    <div className="relative h-full w-full min-w-0 [-webkit-app-region:no-drag]">
+    <div className="flex h-full w-full min-w-0 items-center [-webkit-app-region:no-drag]">
       <nav
         aria-label="Side pane tabs"
-        className="flex size-full min-w-0 items-center gap-1 overflow-x-auto"
-        onScroll={onScroll}
-        ref={scrollElementRef}
+        className="scroll-fade-x scroll-fade-6 flex h-full w-fit max-w-[calc(100%_-_1.75rem)] min-w-0 items-center gap-1 overflow-x-auto"
         role="tablist"
       >
         {sidePaneTabs.map((sidePaneTab) => (
@@ -122,12 +116,8 @@ function SidePaneTabStrip({
             sidePaneTab={sidePaneTab}
           />
         ))}
-        <div className="sticky right-0 z-10 flex shrink-0 bg-background">
-          <SidePaneTabCreationMenu />
-        </div>
       </nav>
-      <ScrollFade edge="left" isVisible={hasHiddenContentAtStart} />
-      <ScrollFade className="right-7" edge="right" isVisible={hasHiddenContentAtEnd} />
+      <SidePaneTabCreationMenu />
     </div>
   );
 }
@@ -171,7 +161,7 @@ function SidePaneTabButton({
         variant="ghost"
       >
         {icon && <HugeiconsIcon icon={icon} strokeWidth={2} />}
-        <span className="truncate">{sidePaneTab.title}</span>
+        <span className="min-w-0 flex-1 truncate-fade">{sidePaneTab.title}</span>
       </Button>
       <Button
         aria-label={`Close ${sidePaneTab.title}`}

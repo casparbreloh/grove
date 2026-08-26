@@ -7,6 +7,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@utility truncate-fade {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, currentColor calc(100% - 1rem), transparent);
+  mask-mode: alpha;
+}
+
 @source "../**/*.{ts,tsx}";
 @source "../../../../node_modules/streamdown/dist/*.js";
 @source "../../../../node_modules/@streamdown/code/dist/*.js";
