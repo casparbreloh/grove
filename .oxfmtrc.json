@@ -1,18 +1,4 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": [
-    "**/routeTree.gen.ts",
-    ".agent/**",
-    ".agents/**",
-    ".claude/**",
-    ".codex/**",
-    ".continue/**",
-    ".cursor/**",
-    ".gemini/**",
-    ".opencode/**",
-    ".pi/**",
-    ".roo/**",
-    ".windsurf/**",
-    "tools/oxlint/anti-slop/**"
-  ]
+  "ignorePatterns": ["**/routeTree.gen.ts"]
 }
