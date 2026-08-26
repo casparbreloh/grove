@@ -116,7 +116,7 @@ export function AppSidebar() {
 function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
   return (
     <SidebarMenuItem className="group/task-item rounded-md transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-      <SidebarMenuButton className="h-6 rounded-b-none py-1 font-normal text-foreground hover:bg-transparent active:bg-transparent group-hover/task-item:text-sidebar-accent-foreground">
+      <SidebarMenuButton className="h-5 rounded-b-none py-0 font-normal text-foreground hover:bg-transparent active:bg-transparent group-hover/task-item:text-sidebar-accent-foreground">
         <span className="truncate">{task.title}</span>
       </SidebarMenuButton>
       <div className="flex h-6 min-w-0 items-center px-2 text-xs text-muted-foreground">
@@ -126,7 +126,7 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
         </span>
         <Button
           aria-label={`Archive ${task.title}`}
-          className="pointer-events-none -mr-2 ml-auto font-normal text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/task-item:pointer-events-auto group-hover/task-item:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+          className="pointer-events-none -mr-2 ml-auto font-normal text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/task-item:pointer-events-auto group-hover/task-item:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100"
           size="xs"
           type="button"
           variant="ghost"
