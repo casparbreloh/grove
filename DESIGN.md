@@ -7,7 +7,7 @@ Keep Grove calm, dense, and native to the desktop. The renderer projects Grove s
 ## tokens
 
 - Surfaces: `background` is the app canvas, `card` is a raised opaque surface, `popover` is an overlay, and `sidebar` is a translucent `background`-derived surface. Use semantic foreground, muted, accent, border, ring, destructive, info, success, and warning tokens; do not introduce literal light/dark colors in components.
-- Type: use Tailwind's native `text-xs` for metadata, code, and terminal content; use `text-sm` for controls and reading; use Tailwind heading utilities only when hierarchy needs them. Do not add a Grove type scale or custom font-size tokens.
+- Type: use `text-xs` (Grove's 13px Tailwind theme value) for metadata, code, and terminal content; use `text-sm` for controls and reading; use Tailwind heading utilities only when hierarchy needs them. Do not add component-specific type scales.
 - Icons: use shadcn's default icon sizes. Override an individual glyph only when visual balance requires it, while preserving its control's hit area.
 - Spacing and radius follow Tailwind’s scale. Keep standard controls compact; use the existing radius tokens rather than literal radii. Motion is quick (75–200ms), only clarifies a state change, and always has a `motion-reduce` path.
 

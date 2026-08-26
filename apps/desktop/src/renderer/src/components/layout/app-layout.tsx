@@ -19,6 +19,7 @@ import {
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 import { useMockSidePaneTabs } from "@/lib/mock-side-pane-state";
+import { cn } from "@/lib/utils";
 import { AppSidebar } from "./app-sidebar";
 import {
   SidePaneLayout,
@@ -53,9 +54,16 @@ function MainPane() {
 }
 
 function MainPaneHeader() {
+  const appSidebarOpen = useAppSidebarOpen();
+
   return (
     <header className="relative flex h-10 shrink-0 items-center bg-background [-webkit-app-region:drag]">
-      <span className="flex h-8 items-center gap-2 pr-3 pl-3 text-sm font-medium">
+      <span
+        className={cn(
+          "flex h-8 items-center gap-2 pr-3 pl-3 text-sm font-medium",
+          !appSidebarOpen && "ml-[var(--desktop-header-controls-width)]",
+        )}
+      >
         <HugeiconsIcon className="size-4" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>

@@ -101,7 +101,7 @@ function SidePaneTabStrip({
   sidePaneTabs,
 }: Readonly<{
   activeSidePaneTabId: string | undefined;
-  onLastTabClose: () => void;
+  onLastTabClose: (afterClose: () => void) => void;
   sidePaneTabs: readonly SidePaneTab[];
 }>) {
   const [closingSidePaneTabId, setClosingSidePaneTabId] = useState<string>();
@@ -123,8 +123,7 @@ function SidePaneTabStrip({
     if (closingSidePaneTabId) return;
 
     if (sidePaneTabs.length === 1) {
-      closeMockSidePaneTab(sidePaneTabId);
-      onLastTabClose();
+      onLastTabClose(() => closeMockSidePaneTab(sidePaneTabId));
       restoreTabFocus(undefined);
       return;
     }
@@ -251,7 +250,7 @@ function SidePaneTabButton({
         variant="ghost"
       >
         {icon && <HugeiconsIcon icon={icon} strokeWidth={2} />}
-        <span className="mask-r-from-[calc(100%-1rem)] flex min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+        <span className="mask-r-from-[calc(100%-1rem)] flex min-w-0 flex-1 overflow-hidden text-xs whitespace-nowrap">
           <span className="min-w-max">{sidePaneTab.title}</span>
         </span>
       </Button>
@@ -270,7 +269,7 @@ function SidePaneTabButton({
         type="button"
         variant="ghost"
       >
-        <HugeiconsIcon className="size-3" icon={Cancel01Icon} strokeWidth={2} />
+        <HugeiconsIcon className="size-[var(--text-xs)]" icon={Cancel01Icon} strokeWidth={2} />
       </Button>
     </div>
   );

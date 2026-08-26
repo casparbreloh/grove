@@ -11,7 +11,7 @@ import {
   type PanelSize,
 } from "react-resizable-panels";
 
-const DEFAULT_SIDE_PANE_LAYOUT = { "main-pane": 50, "side-pane": 50 } as const;
+const DEFAULT_SIDE_PANE_LAYOUT = { "main-pane": 100, "side-pane": 0 } as const;
 const DEFAULT_DOCKED_SIDE_PANE_WIDTH = "50%";
 const MINIMUM_PANE_WIDTH = "20rem";
 
@@ -21,7 +21,7 @@ type SidePaneLayoutProps = Readonly<{
 }>;
 
 type SidePaneLayoutContextValue = Readonly<{
-  closeSidePane: () => void;
+  closeSidePane: (afterClose?: () => void) => void;
   isSidePaneMaximized: boolean;
   isSidePaneOpen: boolean;
   openSidePane: () => void;
@@ -74,20 +74,27 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
   const isSidePaneOpen = sidePaneLayoutState.status === "open";
   const isSidePaneMaximized =
     sidePaneLayoutState.status !== "closed" && sidePaneLayoutState.mode === "maximized";
+  const afterSidePaneCloseRef = React.useRef<(() => void) | undefined>(undefined);
 
   const openSidePane = React.useCallback(() => {
+    afterSidePaneCloseRef.current = undefined;
     setSidePaneLayoutState((currentState) =>
       currentState.status === "open" ? currentState : { status: "open", mode: "docked" },
     );
   }, []);
 
-  const closeSidePane = React.useCallback(() => {
-    setSidePaneLayoutState((currentState) =>
-      beginSidePaneClose(currentState, prefersReducedMotion()),
-    );
+  const closeSidePane = React.useCallback((afterClose?: () => void) => {
+    afterSidePaneCloseRef.current = afterClose;
+    const reducedMotion = prefersReducedMotion();
+    setSidePaneLayoutState((currentState) => beginSidePaneClose(currentState, reducedMotion));
+    if (reducedMotion) {
+      afterSidePaneCloseRef.current?.();
+      afterSidePaneCloseRef.current = undefined;
+    }
   }, []);
 
   const toggleSidePane = React.useCallback(() => {
+    afterSidePaneCloseRef.current = undefined;
     setSidePaneLayoutState((currentState) => {
       if (currentState.status === "closed" || currentState.status === "closing") {
         return { status: "open", mode: "docked" };
@@ -107,6 +114,8 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
   }, []);
 
   const completeSidePaneCloseTransition = React.useCallback(() => {
+    afterSidePaneCloseRef.current?.();
+    afterSidePaneCloseRef.current = undefined;
     setSidePaneLayoutState((currentState) =>
       currentState.status === "closing" ? { status: "closed" } : currentState,
     );
@@ -144,19 +153,19 @@ function SidePaneLayout({ mainPaneContent, sidePaneContent }: SidePaneLayoutProp
   const [sidePaneSizingPanelHandle, setSidePaneSizingPanelHandle] = usePanelCallbackRef();
   const sidePaneSeparatorRef = React.useRef<HTMLDivElement>(null);
   const sidePaneLayoutRef = React.useRef<HTMLDivElement>(null);
+  const dockedSidePaneWidthRef = React.useRef(DEFAULT_DOCKED_SIDE_PANE_WIDTH);
 
   React.useLayoutEffect(() => {
     if (!sidePaneSizingPanelHandle) return;
-    if (isSidePaneOpen) sidePaneSizingPanelHandle.expand();
+    if (isSidePaneOpen) sidePaneSizingPanelHandle.resize(dockedSidePaneWidthRef.current);
     else sidePaneSizingPanelHandle.collapse();
   }, [isSidePaneOpen, sidePaneSizingPanelHandle]);
 
   const rememberDockedSidePaneWidth = React.useCallback((panelSize: PanelSize) => {
     if (panelSize.asPercentage > 0) {
-      sidePaneLayoutRef.current?.style.setProperty(
-        "--docked-side-pane-width",
-        `${panelSize.asPercentage}%`,
-      );
+      const width = `${panelSize.asPercentage}%`;
+      dockedSidePaneWidthRef.current = width;
+      sidePaneLayoutRef.current?.style.setProperty("--docked-side-pane-width", width);
     }
   }, []);
 
@@ -234,12 +243,12 @@ function SidePaneLayout({ mainPaneContent, sidePaneContent }: SidePaneLayoutProp
       <div
         data-slot="side-pane-surface"
         data-state={isSidePaneOpen ? "open" : "closed"}
-        className="absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden bg-background transition-[translate,width] duration-150 ease-linear motion-reduce:transition-none data-[state=closed]:translate-x-full group-has-[[data-separator=active]]/side-pane-layout:duration-0 group-has-[[data-separator=focus]]/side-pane-layout:duration-0"
+        className="absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden bg-background opacity-100 transition-[opacity,translate,width] duration-150 ease-linear motion-reduce:transition-none data-[state=closed]:translate-x-full data-[state=closed]:opacity-0 group-has-[[data-separator=active]]/side-pane-layout:duration-0 group-has-[[data-separator=focus]]/side-pane-layout:duration-0"
         style={{ width: isSidePaneMaximized ? "100%" : "var(--docked-side-pane-width)" }}
         aria-hidden={!isSidePaneOpen}
         inert={!isSidePaneOpen}
         onTransitionEnd={(event) => {
-          if (event.currentTarget === event.target && event.propertyName === "translate") {
+          if (event.currentTarget === event.target && event.propertyName === "opacity") {
             completeSidePaneCloseTransition();
           }
         }}
