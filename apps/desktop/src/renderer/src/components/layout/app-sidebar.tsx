@@ -8,7 +8,7 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +33,8 @@ import {
 import { filterMockTasksByProject, useMockGrove, type Project, type Task } from "@/lib/mock";
 
 const allProjectsValue = "all-projects";
+const taskTitleScrollDelayMs = 500;
+const taskTitleScrollPixelsPerSecond = 30;
 
 export function AppSidebar() {
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
@@ -116,24 +118,55 @@ export function AppSidebar() {
 }
 
 function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
-  const titleRef = useRef<HTMLSpanElement>(null);
+  const titleViewportRef = useRef<HTMLSpanElement>(null);
+  const titleTextRef = useRef<HTMLSpanElement>(null);
+  const titleAnimationRef = useRef<Animation>(null);
 
-  function scrollTitleTo(left: number) {
-    titleRef.current?.scrollTo({ left });
+  useEffect(() => () => titleAnimationRef.current?.cancel(), []);
+
+  function revealTitle() {
+    const titleViewport = titleViewportRef.current;
+    const titleText = titleTextRef.current;
+    if (!titleViewport || !titleText) return;
+
+    const overflowWidth = titleText.scrollWidth - titleViewport.clientWidth;
+    if (overflowWidth <= 0) return;
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      titleText.style.transform = `translateX(-${overflowWidth}px)`;
+      return;
+    }
+
+    titleAnimationRef.current = titleText.animate(
+      { transform: ["translateX(0)", `translateX(-${overflowWidth}px)`] },
+      {
+        delay: taskTitleScrollDelayMs,
+        duration: (overflowWidth / taskTitleScrollPixelsPerSecond) * 1000,
+        easing: "linear",
+        fill: "forwards",
+      },
+    );
+  }
+
+  function resetTitle() {
+    titleAnimationRef.current?.cancel();
+    titleTextRef.current?.style.removeProperty("transform");
   }
 
   return (
     <SidebarMenuItem
       className="group/task-item"
-      onMouseEnter={() => scrollTitleTo(titleRef.current?.scrollWidth ?? 0)}
-      onMouseLeave={() => scrollTitleTo(0)}
+      onMouseEnter={revealTitle}
+      onMouseLeave={resetTitle}
     >
       <SidebarMenuButton className="h-auto flex-col items-stretch gap-0 py-1.5 group-hover/task-item:bg-sidebar-accent group-hover/task-item:text-sidebar-accent-foreground">
         <span
-          className="mask-r-from-[calc(100%-1rem)] mr-7 overflow-hidden scroll-smooth leading-snug whitespace-nowrap group-hover/task-item:mask-none motion-reduce:scroll-auto"
-          ref={titleRef}
+          className="mask-r-from-[calc(100%-1rem)] mr-7 overflow-hidden leading-snug whitespace-nowrap group-hover/task-item:mask-none"
+          ref={titleViewportRef}
         >
-          {task.title}
+          <span className="inline-block min-w-max" ref={titleTextRef}>
+            {task.title}
+          </span>
         </span>
         <span className="flex min-w-0 items-center gap-1 pr-16 text-xs leading-normal text-muted-foreground">
           <HugeiconsIcon className="size-3!" icon={Folder01Icon} strokeWidth={2} />
