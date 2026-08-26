@@ -61,7 +61,7 @@ function MainPaneHeader() {
         className="flex h-8 translate-x-0 items-center gap-2 pr-3 pl-3 text-sm font-medium transition-transform duration-150 ease-linear motion-reduce:transition-none data-[app-sidebar-open=false]:translate-x-[calc(var(--desktop-header-controls-width)-0.75rem)]"
         data-app-sidebar-open={appSidebarOpen}
       >
-        <HugeiconsIcon className="size-[var(--text-sm)]" icon={Layers01Icon} strokeWidth={2} />
+        <HugeiconsIcon className="size-[var(--icon-sm)]" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>
     </header>
