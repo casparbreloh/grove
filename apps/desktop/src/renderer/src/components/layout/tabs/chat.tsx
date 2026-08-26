@@ -75,12 +75,7 @@ function ChatViewport() {
                       />
                     }
                   >
-                    <HugeiconsIcon
-                      className="size-[calc(var(--text-sm)+1px)]"
-                      data-icon="inline-start"
-                      icon={Folder01Icon}
-                      strokeWidth={2}
-                    />
+                    <HugeiconsIcon data-icon="inline-start" icon={Folder01Icon} strokeWidth={2} />
                     <span className="truncate">{selectedProject?.name ?? "Choose project"}</span>
                     <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
                   </DropdownMenuTrigger>
@@ -90,11 +85,7 @@ function ChatViewport() {
                         key={project.id}
                         onClick={() => selectMockDraftProject(project.id)}
                       >
-                        <HugeiconsIcon
-                          className="size-[calc(var(--text-sm)+1px)]"
-                          icon={Folder01Icon}
-                          strokeWidth={2}
-                        />
+                        <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
                         {project.name}
                       </DropdownMenuItem>
                     ))}

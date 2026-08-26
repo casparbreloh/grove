@@ -10,7 +10,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 import {
   closeMockSidePaneTab,
   createMockSidePaneTerminalTab,
@@ -52,22 +51,15 @@ function getSidePaneTabAfterClose(
 }
 
 export function SidePaneTabs() {
-  const { closeSidePane, isSidePaneMaximized } = useSidePaneLayout();
-  const isAppSidebarOpen = useAppSidebarOpen();
+  const { closeSidePane } = useSidePaneLayout();
   const { activeSidePaneTabId, sidePaneTabs } = useMockSidePaneTabs();
-  const needsTitlebarSafeArea = isSidePaneMaximized && !isAppSidebarOpen;
 
   return (
     <aside
       aria-label="Side pane"
       className="flex size-full flex-col border-l bg-background text-foreground"
     >
-      <header
-        className={cn(
-          "flex h-10 shrink-0 items-center pr-18 pl-1.5 [-webkit-app-region:drag]",
-          needsTitlebarSafeArea && "pl-[calc(var(--desktop-header-safe-area-left)+0.375rem)]",
-        )}
-      >
+      <header className="flex h-10 shrink-0 items-center pr-18 pl-1.5 [-webkit-app-region:drag] group-data-[state=collapsed]/sidebar-wrapper:group-data-[maximized=true]/side-pane-surface:pl-[calc(var(--desktop-header-safe-area-left)+0.375rem)]">
         {sidePaneTabs.length > 0 && (
           <SidePaneTabStrip
             activeSidePaneTabId={activeSidePaneTabId}

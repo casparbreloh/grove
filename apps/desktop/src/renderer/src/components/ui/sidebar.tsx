@@ -80,7 +80,7 @@ function SidebarProvider({
     return isMobile ? setOpenMobile((open) => !open) : setOpen(!open);
   }, [isMobile, open, setOpen, setOpenMobile]);
 
-  const state = open ? "expanded" : "collapsed";
+  const state = (isMobile ? openMobile : open) ? "expanded" : "collapsed";
 
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
@@ -113,6 +113,7 @@ function SidebarProvider({
           className,
         )}
         {...props}
+        data-state={state}
       >
         {children}
       </div>

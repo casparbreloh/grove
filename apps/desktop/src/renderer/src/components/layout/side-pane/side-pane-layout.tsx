@@ -242,13 +242,14 @@ function SidePaneLayout({ mainPaneContent, sidePaneContent }: SidePaneLayoutProp
       </Group>
       <div
         data-slot="side-pane-surface"
+        data-maximized={isSidePaneMaximized}
         data-state={isSidePaneOpen ? "open" : "closed"}
-        className="absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden bg-background opacity-100 transition-[opacity,translate,width] duration-150 ease-linear motion-reduce:transition-none data-[state=closed]:translate-x-full data-[state=closed]:opacity-0 group-has-[[data-separator=active]]/side-pane-layout:duration-0 group-has-[[data-separator=focus]]/side-pane-layout:duration-0"
+        className="group/side-pane-surface absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden bg-background transition-[translate,width] duration-150 ease-linear motion-reduce:transition-none data-[state=closed]:translate-x-full group-has-[[data-separator=active]]/side-pane-layout:duration-0 group-has-[[data-separator=focus]]/side-pane-layout:duration-0"
         style={{ width: isSidePaneMaximized ? "100%" : "var(--docked-side-pane-width)" }}
         aria-hidden={!isSidePaneOpen}
         inert={!isSidePaneOpen}
         onTransitionEnd={(event) => {
-          if (event.currentTarget === event.target && event.propertyName === "opacity") {
+          if (event.currentTarget === event.target && event.propertyName === "translate") {
             completeSidePaneCloseTransition();
           }
         }}
