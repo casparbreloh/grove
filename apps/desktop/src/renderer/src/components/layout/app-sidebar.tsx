@@ -30,7 +30,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { useScrollFade } from "@/hooks/use-scroll-fade";
 import { filterMockTasksByProject, useMockGrove, type Project, type Task } from "@/lib/mock";
 
 const allProjectsValue = "all-projects";
@@ -38,7 +37,6 @@ const taskTitleScrollDelayMs = 500;
 const taskTitleScrollPixelsPerSecond = 30;
 
 export function AppSidebar() {
-  const taskListFade = useScrollFade("vertical");
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
@@ -65,7 +63,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarHeader>
-      <SidebarContent {...taskListFade} className="scroll-fade scroll-fade-6">
+      <SidebarContent className="scroll-fade scroll-fade-6">
         <SidebarGroup aria-labelledby="tasks-heading">
           <div className="flex items-center">
             <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">

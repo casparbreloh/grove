@@ -296,10 +296,9 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
   );
 }
 
-const SidebarContent = React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(
-  ({ className, ...props }, ref) => (
+function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
+  return (
     <div
-      ref={ref}
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
@@ -308,8 +307,8 @@ const SidebarContent = React.forwardRef<HTMLDivElement, React.ComponentProps<"di
       )}
       {...props}
     />
-  ),
-);
+  );
+}
 
 function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (

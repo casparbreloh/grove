@@ -10,7 +10,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
-import { useScrollFade } from "@/hooks/use-scroll-fade";
 import {
   closeMockSidePaneTab,
   createMockSidePaneTerminalTab,
@@ -103,7 +102,6 @@ function SidePaneTabStrip({
   sidePaneTabs: readonly SidePaneTab[];
 }>) {
   const [closingSidePaneTabId, setClosingSidePaneTabId] = useState<string>();
-  const tabStripFade = useScrollFade("horizontal");
 
   const restoreTabFocus = useCallback((sidePaneTabId: string | undefined) => {
     window.requestAnimationFrame(() => {
@@ -142,7 +140,6 @@ function SidePaneTabStrip({
     <div className="flex h-full w-full min-w-0 items-center gap-1 [-webkit-app-region:no-drag]">
       <nav
         aria-label="Side pane tabs"
-        {...tabStripFade}
         className="scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_2rem)] min-w-0 items-center gap-1 overflow-x-auto"
         aria-orientation="horizontal"
         role="tablist"

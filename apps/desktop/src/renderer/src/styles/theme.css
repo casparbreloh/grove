@@ -1,10 +1,13 @@
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Inter Variable", sans-serif;
+  --font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --text-ui-micro: 0.75rem;
   --text-ui-micro--line-height: 1rem;
   --text-ui-small: 0.8125rem;
   --text-ui-small--line-height: 1.1875rem;
+  --text-ui-code: 0.8125rem;
+  --text-ui-code--line-height: 1.1875rem;
   --text-ui: 0.9375rem;
   --text-ui--line-height: 1.5rem;
   --text-section-title: 1.5rem;

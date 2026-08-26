@@ -6,7 +6,7 @@ import { memo } from "react";
 
 const MarkdownTextImpl = () => (
   <StreamdownTextPrimitive
-    containerClassName="aui-md"
+    containerClassName="aui-md [&_[data-streamdown=code-block-body]]:text-ui-code [&_[data-streamdown=inline-code]]:text-ui-code"
     defer
     plugins={{ code }}
     security={{
