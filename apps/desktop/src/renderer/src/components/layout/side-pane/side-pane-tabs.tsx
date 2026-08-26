@@ -98,10 +98,10 @@ function SidePaneTabStrip({
   }
 
   return (
-    <div className="flex h-full w-full min-w-0 items-center [-webkit-app-region:no-drag]">
+    <div className="flex h-full w-full min-w-0 items-center gap-1 [-webkit-app-region:no-drag]">
       <nav
         aria-label="Side pane tabs"
-        className="scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_1.75rem)] min-w-0 items-center gap-1 overflow-x-auto"
+        className="scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_2rem)] min-w-0 items-center gap-1 overflow-x-auto"
         role="tablist"
       >
         {sidePaneTabs.map((sidePaneTab) => (
