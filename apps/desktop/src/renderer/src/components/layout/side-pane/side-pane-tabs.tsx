@@ -151,8 +151,8 @@ function SidePaneTabButton({
         aria-controls={`${sidePaneTab.tabId}-panel`}
         aria-selected={isActive}
         className={cn(
-          "h-full w-full justify-start font-normal text-foreground group-hover/tab:bg-accent group-hover/tab:text-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0",
-          isActive && "bg-accent text-accent-foreground",
+          "h-full w-full justify-start font-normal text-foreground transition-colors duration-75 group-hover/tab:bg-accent group-hover/tab:pr-7 group-hover/tab:text-accent-foreground group-focus-within/tab:pr-7 focus-visible:ring-inset focus-visible:ring-offset-0",
+          isActive && "bg-accent pr-7 text-accent-foreground",
         )}
         id={`${sidePaneTab.tabId}-tab`}
         onClick={() => selectMockSidePaneTab(sidePaneTab.tabId)}
@@ -161,14 +161,14 @@ function SidePaneTabButton({
         variant="ghost"
       >
         {icon && <HugeiconsIcon icon={icon} strokeWidth={2} />}
-        <span className="mask-r-from-[calc(100%-1rem)] min-w-0 flex-1 overflow-hidden whitespace-nowrap">
-          {sidePaneTab.title}
+        <span className="mask-r-from-[calc(100%-1rem)] flex min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+          <span className="min-w-max">{sidePaneTab.title}</span>
         </span>
       </Button>
       <Button
         aria-label={`Close ${sidePaneTab.title}`}
         className={cn(
-          "pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity duration-75 group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100",
+          "pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-muted-foreground opacity-0 transition-none group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 group-focus-within/tab:pointer-events-auto group-focus-within/tab:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100",
           isActive && "pointer-events-auto opacity-100",
         )}
         onClick={(event) => {
