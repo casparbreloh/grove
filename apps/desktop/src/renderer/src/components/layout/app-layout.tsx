@@ -54,7 +54,7 @@ function MainPane() {
 function MainPaneHeader() {
   return (
     <header className="relative flex h-10 shrink-0 items-center bg-background [-webkit-app-region:drag]">
-      <span className="flex h-8 translate-x-0 items-center gap-2 pr-3 pl-3 text-sm font-medium transition-transform duration-150 ease-linear motion-reduce:transition-none group-data-[state=collapsed]/sidebar-wrapper:translate-x-[calc(var(--desktop-header-controls-width)-0.75rem)]">
+      <span className="fixed top-1 left-(--sidebar-width) flex h-8 translate-x-0 items-center gap-2 pr-3 pl-3 text-sm font-medium transition-transform duration-150 ease-linear motion-reduce:transition-none group-data-[state=collapsed]/sidebar-wrapper:translate-x-[calc(var(--desktop-header-controls-width)-var(--sidebar-width)-0.75rem)]">
         <HugeiconsIcon className="size-[var(--icon-sm)]" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>

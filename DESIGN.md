@@ -7,7 +7,7 @@ Keep Grove calm, dense, and desktop-native. Prefer semantic tokens and current s
 - Surfaces: `background` is canvas, `card` raised, `popover` overlay, and `sidebar` a translucent `background`-derived surface. Use semantic foreground, muted, accent, border, ring, and status tokens; never literal light/dark component colors.
 - Type: `text-sm` is 13px for controls, reading, code, terminals, and tab titles. Native `text-xs` is 12px for metadata and compact controls. Use heading utilities only for hierarchy.
 - Icons are text role + 2px: `--icon-sm` is 15px beside `text-sm`; `--icon-xs` is 14px beside `text-xs`. Primitives apply this to unqualified SVGs without changing hit areas. The task-item project folder is the sole +1px optical exception.
-- Use Tailwind spacing and existing radius tokens. Motion is 75–200ms, communicates state only, and has a `motion-reduce` path.
+- Use Tailwind spacing and existing radius tokens. Control height and padding come from explicit size variants, not typography. Motion is 75–200ms, communicates state only, and has a `motion-reduce` path.
 
 ## composition
 
