@@ -249,8 +249,8 @@ function SidePaneTabButton({
         type="button"
         variant="ghost"
       >
-        {icon && <HugeiconsIcon icon={icon} strokeWidth={2} />}
-        <span className="mask-r-from-[calc(100%-1rem)] flex min-w-0 flex-1 overflow-hidden text-xs whitespace-nowrap">
+        {icon && <HugeiconsIcon className="size-[var(--text-sm)]" icon={icon} strokeWidth={2} />}
+        <span className="mask-r-from-[calc(100%-1rem)] flex min-w-0 flex-1 overflow-hidden text-sm whitespace-nowrap">
           <span className="min-w-max">{sidePaneTab.title}</span>
         </span>
       </Button>

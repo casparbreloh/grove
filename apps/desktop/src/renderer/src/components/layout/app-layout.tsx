@@ -54,17 +54,10 @@ function MainPane() {
 }
 
 function MainPaneHeader() {
-  const appSidebarOpen = useAppSidebarOpen();
-
   return (
     <header className="relative flex h-10 shrink-0 items-center bg-background [-webkit-app-region:drag]">
-      <span
-        className={cn(
-          "flex h-8 items-center gap-2 pr-3 pl-3 text-sm font-medium",
-          !appSidebarOpen && "ml-[var(--desktop-header-controls-width)]",
-        )}
-      >
-        <HugeiconsIcon className="size-4" icon={Layers01Icon} strokeWidth={2} />
+      <span className="flex h-8 items-center gap-2 pr-3 pl-3 text-sm font-medium">
+        <HugeiconsIcon className="size-[var(--text-sm)]" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>
     </header>
@@ -95,28 +88,31 @@ function AppTitlebarControls() {
           <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
         </Button>
       </div>
-      {!appSidebarOpen && (
-        <span className="animate-in fade-in duration-75 motion-reduce:animate-none">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button aria-label="New tab" size="icon-sm" type="button" variant="ghost" />}
-            >
-              <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {mainPaneTabDefinitions.map((mainPaneTabDefinition) => (
-                <DropdownMenuItem
-                  key={mainPaneTabDefinition.kind}
-                  onClick={mainPaneTabDefinition.create}
-                >
-                  <HugeiconsIcon icon={mainPaneTabDefinition.icon} strokeWidth={2} />
-                  {mainPaneTabDefinition.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </span>
-      )}
+      <span
+        className={cn(
+          "transition-opacity duration-75 motion-reduce:transition-none",
+          appSidebarOpen && "pointer-events-none opacity-0",
+        )}
+      >
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button aria-label="New tab" size="icon-sm" type="button" variant="ghost" />}
+          >
+            <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {mainPaneTabDefinitions.map((mainPaneTabDefinition) => (
+              <DropdownMenuItem
+                key={mainPaneTabDefinition.kind}
+                onClick={mainPaneTabDefinition.create}
+              >
+                <HugeiconsIcon icon={mainPaneTabDefinition.icon} strokeWidth={2} />
+                {mainPaneTabDefinition.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
     </div>
   );
 }
