@@ -113,6 +113,7 @@ function SidebarProvider({
           className,
         )}
         {...props}
+        data-state={state}
       >
         {children}
       </div>

@@ -19,7 +19,6 @@ import {
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 import { useMockSidePaneTabs } from "@/lib/mock-side-pane-state";
-import { cn } from "@/lib/utils";
 import { AppSidebar } from "./app-sidebar";
 import {
   SidePaneLayout,
@@ -54,9 +53,14 @@ function MainPane() {
 }
 
 function MainPaneHeader() {
+  const appSidebarOpen = useAppSidebarOpen();
+
   return (
     <header className="relative flex h-10 shrink-0 items-center bg-background [-webkit-app-region:drag]">
-      <span className="flex h-8 items-center gap-2 pr-3 pl-3 text-sm font-medium">
+      <span
+        className="flex h-8 translate-x-0 items-center gap-2 pr-3 pl-3 text-sm font-medium transition-transform duration-150 ease-linear motion-reduce:transition-none data-[app-sidebar-open=false]:translate-x-[calc(var(--desktop-header-controls-width)-0.75rem)]"
+        data-app-sidebar-open={appSidebarOpen}
+      >
         <HugeiconsIcon className="size-[var(--text-sm)]" icon={Layers01Icon} strokeWidth={2} />
         <span>Chat</span>
       </span>
@@ -65,8 +69,6 @@ function MainPaneHeader() {
 }
 
 function AppTitlebarControls() {
-  const appSidebarOpen = useAppSidebarOpen();
-
   return (
     <div className="fixed top-0 left-0 z-20 flex h-10 items-center gap-1 pr-1 pl-[calc(var(--desktop-header-safe-area-left)+0.5rem)] [-webkit-app-region:no-drag]">
       <SidebarTrigger size="icon-sm" />
@@ -88,12 +90,7 @@ function AppTitlebarControls() {
           <HugeiconsIcon icon={ArrowRight02Icon} strokeWidth={2} />
         </Button>
       </div>
-      <span
-        className={cn(
-          "transition-opacity duration-75 motion-reduce:transition-none",
-          appSidebarOpen && "pointer-events-none opacity-0",
-        )}
-      >
+      <span className="group-data-[state=expanded]/sidebar-wrapper:hidden">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button aria-label="New tab" size="icon-sm" type="button" variant="ghost" />}
