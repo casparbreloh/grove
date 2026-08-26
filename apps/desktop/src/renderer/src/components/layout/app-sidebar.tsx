@@ -17,6 +17,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ScrollFade } from "@/components/ui/scroll-fade";
 import {
   Sidebar,
   SidebarContent,
@@ -29,6 +30,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { useScrollOverflow } from "@/hooks/use-scroll-overflow";
 import { filterMockTasksByProject, useMockGrove, type Project, type Task } from "@/lib/mock";
 
 const allProjectsValue = "all-projects";
@@ -36,76 +38,82 @@ const allProjectsValue = "all-projects";
 export function AppSidebar() {
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
   const projectById = new Map(projects.map((project) => [project.id, project]));
+  const { hasHiddenContentAtEnd, hasHiddenContentAtStart, onScroll, scrollElementRef } =
+    useScrollOverflow("vertical", tasks.length);
 
   return (
     <Sidebar>
       <SidebarHeader className="h-10 shrink-0 p-0 [-webkit-app-region:drag]" />
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu aria-label="Primary">
-              <SidebarMenuItem>
-                <SidebarMenuButton>
-                  <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
-                  <span>New Task</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton>
-                  <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
-                  <span>Explore</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      <div className="relative flex min-h-0 flex-1">
+        <SidebarContent onScroll={onScroll} ref={scrollElementRef}>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu aria-label="Primary">
+                <SidebarMenuItem>
+                  <SidebarMenuButton>
+                    <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
+                    <span>New Task</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton>
+                    <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
+                    <span>Explore</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
 
-        <SidebarGroup aria-labelledby="tasks-heading">
-          <div className="flex items-center">
-            <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">
-              Tasks
-            </SidebarGroupLabel>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    aria-label="Filter tasks by project"
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <HugeiconsIcon icon={FilterMailIcon} strokeWidth={2} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-52" side="bottom">
-                <DropdownMenuRadioGroup
-                  onValueChange={(value) =>
-                    filterMockTasksByProject(value === allProjectsValue ? undefined : value)
+          <SidebarGroup aria-labelledby="tasks-heading">
+            <div className="flex items-center">
+              <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">
+                Tasks
+              </SidebarGroupLabel>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      aria-label="Filter tasks by project"
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                    />
                   }
-                  value={taskProjectFilterId ?? allProjectsValue}
                 >
-                  <DropdownMenuRadioItem value={allProjectsValue}>
-                    All projects
-                  </DropdownMenuRadioItem>
-                  {projects.map((project) => (
-                    <DropdownMenuRadioItem key={project.id} value={project.id}>
-                      {project.name}
+                  <HugeiconsIcon icon={FilterMailIcon} strokeWidth={2} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52" side="bottom">
+                  <DropdownMenuRadioGroup
+                    onValueChange={(value) =>
+                      filterMockTasksByProject(value === allProjectsValue ? undefined : value)
+                    }
+                    value={taskProjectFilterId ?? allProjectsValue}
+                  >
+                    <DropdownMenuRadioItem value={allProjectsValue}>
+                      All projects
                     </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {tasks.map((task) => (
-                <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+                    {projects.map((project) => (
+                      <DropdownMenuRadioItem key={project.id} value={project.id}>
+                        {project.name}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {tasks.map((task) => (
+                  <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <ScrollFade edge="top" isVisible={hasHiddenContentAtStart} surface="sidebar" />
+        <ScrollFade edge="bottom" isVisible={hasHiddenContentAtEnd} surface="sidebar" />
+      </div>
       <SidebarFooter>
         <ThemeSwitcher />
       </SidebarFooter>

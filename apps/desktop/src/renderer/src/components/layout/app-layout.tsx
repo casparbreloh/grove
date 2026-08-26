@@ -19,34 +19,39 @@ import {
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
 import { AppSidebar } from "./app-sidebar";
-import { PaneSplit, PaneSplitProvider, usePaneSplit } from "./pane-split";
-import { SidePane } from "./side-pane";
-import { tabRegistry } from "./tabs/registry";
+import {
+  SidePaneLayout,
+  SidePaneLayoutProvider,
+  useSidePaneLayout,
+} from "./side-pane/side-pane-layout";
+import { SidePaneTabs } from "./side-pane/side-pane-tabs";
+import { mainPaneTabDefinitions } from "./tabs/main-pane-tabs";
 
 export function AppLayout() {
   return (
     <SidebarProvider className="desktop-shell h-svh overflow-hidden">
       <AppSidebar />
-      <PaneSplitProvider>
-        <PaneSplit
-          mainPane={
-            <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-              <AppHeader />
-              <div className="flex min-h-0 flex-1 flex-col">
-                <Outlet />
-              </div>
-            </SidebarInset>
-          }
-          sidePane={<SidePane />}
-        />
-        <AppControls />
-        <SidePaneControls />
-      </PaneSplitProvider>
+      <SidePaneLayoutProvider>
+        <SidePaneLayout mainPaneContent={<MainPane />} sidePaneContent={<SidePaneTabs />} />
+        <AppTitlebarControls />
+        <SidePaneTitlebarControls />
+      </SidePaneLayoutProvider>
     </SidebarProvider>
   );
 }
 
-function AppHeader() {
+function MainPane() {
+  return (
+    <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+      <MainPaneHeader />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Outlet />
+      </div>
+    </SidebarInset>
+  );
+}
+
+function MainPaneHeader() {
   const appSidebarOpen = useAppSidebarOpen();
 
   return (
@@ -62,7 +67,7 @@ function AppHeader() {
   );
 }
 
-function AppControls() {
+function AppTitlebarControls() {
   const appSidebarOpen = useAppSidebarOpen();
 
   return (
@@ -94,10 +99,13 @@ function AppControls() {
             <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            {tabRegistry.map((registration) => (
-              <DropdownMenuItem key={registration.kind} onClick={registration.create}>
-                <HugeiconsIcon icon={registration.icon} strokeWidth={2} />
-                {registration.label}
+            {mainPaneTabDefinitions.map((mainPaneTabDefinition) => (
+              <DropdownMenuItem
+                key={mainPaneTabDefinition.kind}
+                onClick={mainPaneTabDefinition.create}
+              >
+                <HugeiconsIcon icon={mainPaneTabDefinition.icon} strokeWidth={2} />
+                {mainPaneTabDefinition.label}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -107,9 +115,9 @@ function AppControls() {
   );
 }
 
-function SidePaneControls() {
+function SidePaneTitlebarControls() {
   const { isSidePaneMaximized, isSidePaneOpen, toggleSidePane, toggleSidePaneMaximized } =
-    usePaneSplit();
+    useSidePaneLayout();
 
   return (
     <div className="fixed top-1.5 right-2 z-20 flex items-center gap-1 [-webkit-app-region:no-drag]">
