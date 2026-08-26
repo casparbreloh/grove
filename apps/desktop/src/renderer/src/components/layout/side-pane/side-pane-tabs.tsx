@@ -101,7 +101,7 @@ function SidePaneTabStrip({
     <div className="flex h-full w-full min-w-0 items-center [-webkit-app-region:no-drag]">
       <nav
         aria-label="Side pane tabs"
-        className="scroll-fade-x scroll-fade-6 flex h-full w-fit max-w-[calc(100%_-_1.75rem)] min-w-0 items-center gap-1 overflow-x-auto"
+        className="scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_1.75rem)] min-w-0 items-center gap-1 overflow-x-auto"
         role="tablist"
       >
         {sidePaneTabs.map((sidePaneTab) => (
@@ -140,8 +140,8 @@ function SidePaneTabButton({
   return (
     <div
       className={cn(
-        "group/tab relative flex h-7 min-w-24 max-w-48 flex-[1_1_9rem] translate-x-0 items-center overflow-hidden opacity-100 transition-[flex-grow,flex-shrink,flex-basis,min-width,max-width,opacity,translate] duration-100 ease-out starting:min-w-0 starting:max-w-0 starting:flex-[0_0_0rem] starting:-translate-x-1 starting:opacity-0",
-        isClosing && "pointer-events-none min-w-0 max-w-0 flex-[0_0_0rem] -translate-x-1 opacity-0",
+        "group/tab relative flex h-7 w-56 min-w-48 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
+        isClosing && "pointer-events-none w-0 min-w-0 shrink-0 -translate-x-1 opacity-0",
       )}
       onTransitionEnd={(event) => {
         if (event.currentTarget === event.target && isClosing) onCloseTransitionEnd();
@@ -161,7 +161,7 @@ function SidePaneTabButton({
         variant="ghost"
       >
         {icon && <HugeiconsIcon icon={icon} strokeWidth={2} />}
-        <span className="min-w-0 flex-1 truncate-fade">{sidePaneTab.title}</span>
+        <span className="min-w-0 flex-1 truncate">{sidePaneTab.title}</span>
       </Button>
       <Button
         aria-label={`Close ${sidePaneTab.title}`}
