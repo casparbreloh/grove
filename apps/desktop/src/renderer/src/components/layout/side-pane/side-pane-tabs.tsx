@@ -161,7 +161,7 @@ function SidePaneTabButton({
         variant="ghost"
       >
         {icon && <HugeiconsIcon icon={icon} strokeWidth={2} />}
-        <span className="min-w-0 truncate">{sidePaneTab.title}</span>
+        <span className="min-w-0 flex-1 truncate-fade">{sidePaneTab.title}</span>
       </Button>
       <Button
         aria-label={`Close ${sidePaneTab.title}`}
