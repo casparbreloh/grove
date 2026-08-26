@@ -140,7 +140,7 @@ function SidePaneTabButton({
   return (
     <div
       className={cn(
-        "group/tab relative flex h-7 w-50 min-w-25 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
+        "group/tab relative flex h-7 w-37.5 min-w-25 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
         isClosing && "pointer-events-none w-0 min-w-0 shrink-0 -translate-x-1 opacity-0",
       )}
       onTransitionEnd={(event) => {
