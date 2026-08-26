@@ -116,10 +116,10 @@ export function AppSidebar() {
 function TaskItem({ project, task }: { project: Project | undefined; task: Task }) {
   return (
     <SidebarMenuItem className="group/task-item rounded-md transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-      <SidebarMenuButton className="h-5 rounded-b-none py-0 font-normal text-foreground hover:bg-transparent active:bg-transparent group-hover/task-item:text-sidebar-accent-foreground">
+      <SidebarMenuButton className="h-6 rounded-b-none py-1 font-normal text-foreground hover:bg-transparent active:bg-transparent group-hover/task-item:text-sidebar-accent-foreground">
         <span className="truncate">{task.title}</span>
       </SidebarMenuButton>
-      <div className="flex h-6 min-w-0 items-center px-2 text-xs text-muted-foreground">
+      <div className="-mt-0.5 flex h-6 min-w-0 items-center px-2 text-xs text-muted-foreground">
         <span className="flex min-w-0 items-center gap-1">
           <HugeiconsIcon className="size-3!" icon={Folder01Icon} strokeWidth={2} />
           <span className="truncate">{project?.name}</span>
