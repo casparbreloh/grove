@@ -1,7 +1,9 @@
 {
   "name": "grove",
   "private": true,
+  "type": "module",
   "devDependencies": {
+    "@oxlint/plugins": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
