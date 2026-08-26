@@ -21,6 +21,7 @@ type SidePaneLayoutProps = Readonly<{
 }>;
 
 type SidePaneLayoutContextValue = Readonly<{
+  closeSidePane: () => void;
   isSidePaneMaximized: boolean;
   isSidePaneOpen: boolean;
   openSidePane: () => void;
@@ -80,6 +81,12 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
     );
   }, []);
 
+  const closeSidePane = React.useCallback(() => {
+    setSidePaneLayoutState((currentState) =>
+      beginSidePaneClose(currentState, prefersReducedMotion()),
+    );
+  }, []);
+
   const toggleSidePane = React.useCallback(() => {
     setSidePaneLayoutState((currentState) => {
       if (currentState.status === "closed" || currentState.status === "closing") {
@@ -107,6 +114,7 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
 
   const sidePaneLayoutContextValue = React.useMemo<InternalSidePaneLayoutContextValue>(
     () => ({
+      closeSidePane,
       completeSidePaneCloseTransition,
       isSidePaneMaximized,
       isSidePaneOpen,
@@ -115,6 +123,7 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
       toggleSidePaneMaximized,
     }),
     [
+      closeSidePane,
       completeSidePaneCloseTransition,
       isSidePaneMaximized,
       isSidePaneOpen,

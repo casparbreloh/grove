@@ -1,5 +1,6 @@
 import { Add01Icon, Cancel01Icon, TerminalIcon, TestTube01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { ReactElement, ReactNode } from "react";
 import { useCallback, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -51,7 +52,7 @@ function getSidePaneTabAfterClose(
 }
 
 export function SidePaneTabs() {
-  const { isSidePaneMaximized } = useSidePaneLayout();
+  const { closeSidePane, isSidePaneMaximized } = useSidePaneLayout();
   const isAppSidebarOpen = useAppSidebarOpen();
   const { activeSidePaneTabId, sidePaneTabs } = useMockSidePaneTabs();
   const needsTitlebarSafeArea = isSidePaneMaximized && !isAppSidebarOpen;
@@ -68,27 +69,27 @@ export function SidePaneTabs() {
         )}
       >
         {sidePaneTabs.length > 0 && (
-          <SidePaneTabStrip activeSidePaneTabId={activeSidePaneTabId} sidePaneTabs={sidePaneTabs} />
+          <SidePaneTabStrip
+            activeSidePaneTabId={activeSidePaneTabId}
+            onLastTabClose={closeSidePane}
+            sidePaneTabs={sidePaneTabs}
+          />
         )}
       </header>
       <div className="min-h-0 flex-1">
-        {sidePaneTabs.length === 0 ? (
-          <SidePaneTabPicker />
-        ) : (
-          sidePaneTabs.map((sidePaneTab) => (
-            <div
-              aria-hidden={sidePaneTab.tabId !== activeSidePaneTabId}
-              aria-labelledby={`${sidePaneTab.tabId}-tab`}
-              className={sidePaneTab.tabId === activeSidePaneTabId ? "h-full" : "hidden"}
-              id={`${sidePaneTab.tabId}-panel`}
-              inert={sidePaneTab.tabId !== activeSidePaneTabId}
-              key={sidePaneTab.tabId}
-              role="tabpanel"
-            >
-              {renderSidePaneTabContent(sidePaneTab)}
-            </div>
-          ))
-        )}
+        {sidePaneTabs.map((sidePaneTab) => (
+          <div
+            aria-hidden={sidePaneTab.tabId !== activeSidePaneTabId}
+            aria-labelledby={`${sidePaneTab.tabId}-tab`}
+            className={sidePaneTab.tabId === activeSidePaneTabId ? "h-full" : "hidden"}
+            id={`${sidePaneTab.tabId}-panel`}
+            inert={sidePaneTab.tabId !== activeSidePaneTabId}
+            key={sidePaneTab.tabId}
+            role="tabpanel"
+          >
+            {renderSidePaneTabContent(sidePaneTab)}
+          </div>
+        ))}
       </div>
     </aside>
   );
@@ -96,18 +97,18 @@ export function SidePaneTabs() {
 
 function SidePaneTabStrip({
   activeSidePaneTabId,
+  onLastTabClose,
   sidePaneTabs,
 }: Readonly<{
   activeSidePaneTabId: string | undefined;
+  onLastTabClose: () => void;
   sidePaneTabs: readonly SidePaneTab[];
 }>) {
   const [closingSidePaneTabId, setClosingSidePaneTabId] = useState<string>();
 
   const restoreTabFocus = useCallback((sidePaneTabId: string | undefined) => {
     window.requestAnimationFrame(() => {
-      document
-        .getElementById(sidePaneTabId ? `${sidePaneTabId}-tab` : "side-pane-tab-picker-terminal")
-        ?.focus();
+      document.getElementById(sidePaneTabId ? `${sidePaneTabId}-tab` : "side-pane-toggle")?.focus();
     });
   }, []);
 
@@ -120,6 +121,13 @@ function SidePaneTabStrip({
 
   function closeSidePaneTab(sidePaneTabId: string) {
     if (closingSidePaneTabId) return;
+
+    if (sidePaneTabs.length === 1) {
+      closeMockSidePaneTab(sidePaneTabId);
+      onLastTabClose();
+      restoreTabFocus(undefined);
+      return;
+    }
 
     const focusTabId = getSidePaneTabAfterClose(sidePaneTabs, sidePaneTabId, activeSidePaneTabId);
 
@@ -169,10 +177,17 @@ function SidePaneTabStrip({
               selectSidePaneTab(sidePaneTabs[nextIndex]?.tabId ?? sidePaneTab.tabId);
             }}
             sidePaneTab={sidePaneTab}
+            shouldAnimateOnEnter={sidePaneTabs.length > 1}
           />
         ))}
       </nav>
-      <SidePaneTabCreationMenu />
+      <SidePaneTabCreationMenu
+        trigger={
+          <Button aria-label="New side pane tab" size="icon-sm" type="button" variant="ghost" />
+        }
+      >
+        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+      </SidePaneTabCreationMenu>
     </div>
   );
 }
@@ -185,6 +200,7 @@ function SidePaneTabButton({
   onSelect,
   onSelectFromKeyboard,
   sidePaneTab,
+  shouldAnimateOnEnter,
 }: Readonly<{
   isActive: boolean;
   isClosing: boolean;
@@ -193,13 +209,16 @@ function SidePaneTabButton({
   onSelect: () => void;
   onSelectFromKeyboard: (key: "ArrowLeft" | "ArrowRight" | "End" | "Home") => void;
   sidePaneTab: SidePaneTab;
+  shouldAnimateOnEnter: boolean;
 }>) {
   const icon = getSidePaneTabIcon(sidePaneTab);
 
   return (
     <div
       className={cn(
-        "group/tab relative flex h-7 w-37.5 min-w-25 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out motion-reduce:transition-none starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
+        "group/tab relative flex h-7 w-37.5 min-w-25 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out motion-reduce:transition-none",
+        shouldAnimateOnEnter &&
+          "starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
         isClosing && "pointer-events-none w-0 min-w-0 shrink-0 -translate-x-1 opacity-0",
       )}
       inert={isClosing}
@@ -257,18 +276,18 @@ function SidePaneTabButton({
   );
 }
 
-function SidePaneTabCreationMenu() {
+export function SidePaneTabCreationMenu({
+  children,
+  trigger,
+}: Readonly<{
+  children: ReactNode;
+  trigger: ReactElement;
+}>) {
   const openSidePaneTab = useOpenSidePaneTab();
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button aria-label="New side pane tab" size="icon-sm" type="button" variant="ghost" />
-        }
-      >
-        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger render={trigger}>{children}</DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         {sidePaneTabDefinitions.map((sidePaneTabDefinition) => (
           <DropdownMenuItem
@@ -281,33 +300,6 @@ function SidePaneTabCreationMenu() {
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function SidePaneTabPicker() {
-  const openSidePaneTab = useOpenSidePaneTab();
-
-  return (
-    <div className="size-full overflow-y-auto p-6">
-      <div className="flex min-h-full items-center justify-center">
-        <div className="flex w-full max-w-64 flex-col gap-2">
-          {sidePaneTabDefinitions.map((sidePaneTabDefinition) => (
-            <Button
-              className="w-full justify-start"
-              id={`side-pane-tab-picker-${sidePaneTabDefinition.kind}`}
-              key={sidePaneTabDefinition.kind}
-              onClick={() => openSidePaneTab(sidePaneTabDefinition.create())}
-              size="lg"
-              type="button"
-              variant="secondary"
-            >
-              <HugeiconsIcon icon={sidePaneTabDefinition.icon} strokeWidth={2} />
-              {sidePaneTabDefinition.label}
-            </Button>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 

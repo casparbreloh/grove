@@ -18,13 +18,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
+import { useMockSidePaneTabs } from "@/lib/mock-side-pane-state";
 import { AppSidebar } from "./app-sidebar";
 import {
   SidePaneLayout,
   SidePaneLayoutProvider,
   useSidePaneLayout,
 } from "./side-pane/side-pane-layout";
-import { SidePaneTabs } from "./side-pane/side-pane-tabs";
+import { SidePaneTabCreationMenu, SidePaneTabs } from "./side-pane/side-pane-tabs";
 import { mainPaneTabDefinitions } from "./tabs/main-pane-tabs";
 
 export function AppLayout() {
@@ -115,6 +116,20 @@ function AppTitlebarControls() {
 function SidePaneTitlebarControls() {
   const { isSidePaneMaximized, isSidePaneOpen, toggleSidePane, toggleSidePaneMaximized } =
     useSidePaneLayout();
+  const { sidePaneTabs } = useMockSidePaneTabs();
+  const sidePaneToggle = (
+    <Button
+      aria-label={sidePaneTabs.length === 0 ? "New side pane tab" : "Toggle side pane"}
+      aria-pressed={sidePaneTabs.length === 0 ? undefined : isSidePaneOpen}
+      className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+      id="side-pane-toggle"
+      onClick={sidePaneTabs.length === 0 ? undefined : toggleSidePane}
+      size="icon-sm"
+      title={sidePaneTabs.length === 0 ? "New side pane tab" : "Toggle side pane"}
+      type="button"
+      variant="ghost"
+    />
+  );
 
   return (
     <div className="fixed top-1.5 right-2 z-20 flex items-center gap-1 [-webkit-app-region:no-drag]">
@@ -131,17 +146,25 @@ function SidePaneTitlebarControls() {
           <HugeiconsIcon icon={isSidePaneMaximized ? CollapseIcon : ExpandIcon} strokeWidth={2} />
         </Button>
       )}
-      <Button
-        aria-label="Toggle side pane"
-        aria-pressed={isSidePaneOpen}
-        className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
-        onClick={toggleSidePane}
-        size="icon-sm"
-        title="Toggle side pane"
-        variant="ghost"
-      >
-        <HugeiconsIcon icon={LayoutRightIcon} strokeWidth={2} />
-      </Button>
+      {sidePaneTabs.length === 0 ? (
+        <SidePaneTabCreationMenu trigger={sidePaneToggle}>
+          <HugeiconsIcon icon={LayoutRightIcon} strokeWidth={2} />
+        </SidePaneTabCreationMenu>
+      ) : (
+        <Button
+          aria-label="Toggle side pane"
+          aria-pressed={isSidePaneOpen}
+          className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+          id="side-pane-toggle"
+          onClick={toggleSidePane}
+          size="icon-sm"
+          title="Toggle side pane"
+          type="button"
+          variant="ghost"
+        >
+          <HugeiconsIcon icon={LayoutRightIcon} strokeWidth={2} />
+        </Button>
+      )}
     </div>
   );
 }
