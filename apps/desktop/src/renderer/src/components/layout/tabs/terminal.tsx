@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 const prompt = "❯ ";
 const defaultTerminalSize = { cols: 80, rows: 24 };
 const terminalResizeSettleMs = 160;
+// SAFETY: Wterm consumes these CSS custom properties as strings without type conversion.
 const terminalTheme = {
   "--term-bg": "var(--background)",
   "--term-fg": "var(--foreground)",

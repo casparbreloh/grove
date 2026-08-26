@@ -1,6 +1,6 @@
 import { Add01Icon, Cancel01Icon, TerminalIcon, TestTube01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAppSidebarOpen } from "@/hooks/use-app-sidebar-open";
+import { useScrollFade } from "@/hooks/use-scroll-fade";
 import {
   closeMockSidePaneTab,
   createMockSidePaneTerminalTab,
@@ -37,6 +38,18 @@ const sidePaneTabDefinitions = [
     create: createMockSidePaneTestTab,
   },
 ] as const;
+
+function getSidePaneTabAfterClose(
+  sidePaneTabs: readonly SidePaneTab[],
+  closingSidePaneTabId: string,
+  activeSidePaneTabId: string | undefined,
+) {
+  if (closingSidePaneTabId !== activeSidePaneTabId) return activeSidePaneTabId;
+  const closingIndex = sidePaneTabs.findIndex(
+    (sidePaneTab) => sidePaneTab.tabId === closingSidePaneTabId,
+  );
+  return sidePaneTabs[Math.min(closingIndex, sidePaneTabs.length - 2)]?.tabId;
+}
 
 export function SidePaneTabs() {
   const { isSidePaneMaximized } = useSidePaneLayout();
@@ -90,18 +103,48 @@ function SidePaneTabStrip({
   sidePaneTabs: readonly SidePaneTab[];
 }>) {
   const [closingSidePaneTabId, setClosingSidePaneTabId] = useState<string>();
+  const tabStripFade = useScrollFade("horizontal");
 
-  function finishClosingSidePaneTab(sidePaneTabId: string) {
+  const restoreTabFocus = useCallback((sidePaneTabId: string | undefined) => {
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(sidePaneTabId ? `${sidePaneTabId}-tab` : "side-pane-tab-picker-terminal")
+        ?.focus();
+    });
+  }, []);
+
+  function finishClosingSidePaneTab(sidePaneTabId: string, focusTabId: string | undefined) {
     if (closingSidePaneTabId !== sidePaneTabId) return;
     closeMockSidePaneTab(sidePaneTabId);
     setClosingSidePaneTabId(undefined);
+    restoreTabFocus(focusTabId);
+  }
+
+  function closeSidePaneTab(sidePaneTabId: string) {
+    if (closingSidePaneTabId) return;
+
+    const focusTabId = getSidePaneTabAfterClose(sidePaneTabs, sidePaneTabId, activeSidePaneTabId);
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      closeMockSidePaneTab(sidePaneTabId);
+      restoreTabFocus(focusTabId);
+      return;
+    }
+    setClosingSidePaneTabId(sidePaneTabId);
+  }
+
+  function selectSidePaneTab(sidePaneTabId: string) {
+    selectMockSidePaneTab(sidePaneTabId);
+    restoreTabFocus(sidePaneTabId);
   }
 
   return (
     <div className="flex h-full w-full min-w-0 items-center gap-1 [-webkit-app-region:no-drag]">
       <nav
         aria-label="Side pane tabs"
+        {...tabStripFade}
         className="scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_2rem)] min-w-0 items-center gap-1 overflow-x-auto"
+        aria-orientation="horizontal"
         role="tablist"
       >
         {sidePaneTabs.map((sidePaneTab) => (
@@ -109,10 +152,25 @@ function SidePaneTabStrip({
             isActive={sidePaneTab.tabId === activeSidePaneTabId}
             isClosing={sidePaneTab.tabId === closingSidePaneTabId}
             key={sidePaneTab.tabId}
-            onClose={() =>
-              setClosingSidePaneTabId((currentTabId) => currentTabId ?? sidePaneTab.tabId)
+            onClose={() => closeSidePaneTab(sidePaneTab.tabId)}
+            onCloseTransitionEnd={() =>
+              finishClosingSidePaneTab(
+                sidePaneTab.tabId,
+                getSidePaneTabAfterClose(sidePaneTabs, sidePaneTab.tabId, activeSidePaneTabId),
+              )
             }
-            onCloseTransitionEnd={() => finishClosingSidePaneTab(sidePaneTab.tabId)}
+            onSelect={() => selectSidePaneTab(sidePaneTab.tabId)}
+            onSelectFromKeyboard={(key) => {
+              const currentIndex = sidePaneTabs.findIndex((tab) => tab.tabId === sidePaneTab.tabId);
+              const nextIndex =
+                key === "Home"
+                  ? 0
+                  : key === "End"
+                    ? sidePaneTabs.length - 1
+                    : (currentIndex + (key === "ArrowRight" ? 1 : -1) + sidePaneTabs.length) %
+                      sidePaneTabs.length;
+              selectSidePaneTab(sidePaneTabs[nextIndex]?.tabId ?? sidePaneTab.tabId);
+            }}
             sidePaneTab={sidePaneTab}
           />
         ))}
@@ -127,12 +185,16 @@ function SidePaneTabButton({
   isClosing,
   onClose,
   onCloseTransitionEnd,
+  onSelect,
+  onSelectFromKeyboard,
   sidePaneTab,
 }: Readonly<{
   isActive: boolean;
   isClosing: boolean;
   onClose: () => void;
   onCloseTransitionEnd: () => void;
+  onSelect: () => void;
+  onSelectFromKeyboard: (key: "ArrowLeft" | "ArrowRight" | "End" | "Home") => void;
   sidePaneTab: SidePaneTab;
 }>) {
   const icon = getSidePaneTabIcon(sidePaneTab);
@@ -140,9 +202,10 @@ function SidePaneTabButton({
   return (
     <div
       className={cn(
-        "group/tab relative flex h-7 w-37.5 min-w-25 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
+        "group/tab relative flex h-7 w-37.5 min-w-25 shrink translate-x-0 items-center overflow-hidden opacity-100 transition-[width,min-width,opacity,translate] duration-100 ease-out motion-reduce:transition-none starting:w-0 starting:min-w-0 starting:shrink-0 starting:-translate-x-1 starting:opacity-0",
         isClosing && "pointer-events-none w-0 min-w-0 shrink-0 -translate-x-1 opacity-0",
       )}
+      inert={isClosing}
       onTransitionEnd={(event) => {
         if (event.currentTarget === event.target && isClosing) onCloseTransitionEnd();
       }}
@@ -155,8 +218,19 @@ function SidePaneTabButton({
           isActive && "bg-accent pr-7 text-accent-foreground",
         )}
         id={`${sidePaneTab.tabId}-tab`}
-        onClick={() => selectMockSidePaneTab(sidePaneTab.tabId)}
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          switch (event.key) {
+            case "ArrowLeft":
+            case "ArrowRight":
+            case "End":
+            case "Home":
+              event.preventDefault();
+              onSelectFromKeyboard(event.key);
+          }
+        }}
         role="tab"
+        tabIndex={isActive && !isClosing ? 0 : -1}
         type="button"
         variant="ghost"
       >
@@ -176,6 +250,7 @@ function SidePaneTabButton({
           onClose();
         }}
         size="icon-sm"
+        tabIndex={isActive && !isClosing ? 0 : -1}
         type="button"
         variant="ghost"
       >
@@ -222,6 +297,7 @@ function SidePaneTabPicker() {
           {sidePaneTabDefinitions.map((sidePaneTabDefinition) => (
             <Button
               className="w-full justify-start"
+              id={`side-pane-tab-picker-${sidePaneTabDefinition.kind}`}
               key={sidePaneTabDefinition.kind}
               onClick={() => openSidePaneTab(sidePaneTabDefinition.create())}
               size="lg"
@@ -257,8 +333,8 @@ function UnavailableSidePaneTab({ title }: { title: string }) {
   return (
     <div className="flex size-full items-center justify-center bg-background p-6 text-center">
       <div>
-        <h1 className="text-sm font-medium">{title} is unavailable</h1>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <h1 className="text-ui-small font-medium">{title} is unavailable</h1>
+        <p className="mt-1 text-ui-micro text-muted-foreground">
           This tab type is not available in this version of Grove.
         </p>
       </div>

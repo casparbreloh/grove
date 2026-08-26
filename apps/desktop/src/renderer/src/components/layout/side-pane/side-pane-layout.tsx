@@ -21,7 +21,6 @@ type SidePaneLayoutProps = Readonly<{
 }>;
 
 type SidePaneLayoutContextValue = Readonly<{
-  closeSidePane: () => void;
   isSidePaneMaximized: boolean;
   isSidePaneOpen: boolean;
   openSidePane: () => void;
@@ -53,11 +52,18 @@ function useSidePaneLayout(): SidePaneLayoutContextValue {
   return useSidePaneLayoutContext();
 }
 
-function beginSidePaneClose(currentState: SidePaneLayoutState): SidePaneLayoutState {
+function beginSidePaneClose(
+  currentState: SidePaneLayoutState,
+  prefersReducedMotion: boolean,
+): SidePaneLayoutState {
   if (currentState.status !== "open") return currentState;
-  return currentState.mode === "maximized"
+  return currentState.mode === "maximized" && !prefersReducedMotion
     ? { status: "closing", mode: "maximized" }
     : { status: "closed" };
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
@@ -74,16 +80,12 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
     );
   }, []);
 
-  const closeSidePane = React.useCallback(() => {
-    setSidePaneLayoutState(beginSidePaneClose);
-  }, []);
-
   const toggleSidePane = React.useCallback(() => {
     setSidePaneLayoutState((currentState) => {
       if (currentState.status === "closed" || currentState.status === "closing") {
         return { status: "open", mode: "docked" };
       }
-      return beginSidePaneClose(currentState);
+      return beginSidePaneClose(currentState, prefersReducedMotion());
     });
   }, []);
 
@@ -105,7 +107,6 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
 
   const sidePaneLayoutContextValue = React.useMemo<InternalSidePaneLayoutContextValue>(
     () => ({
-      closeSidePane,
       completeSidePaneCloseTransition,
       isSidePaneMaximized,
       isSidePaneOpen,
@@ -114,7 +115,6 @@ function SidePaneLayoutProvider({ children }: React.PropsWithChildren) {
       toggleSidePaneMaximized,
     }),
     [
-      closeSidePane,
       completeSidePaneCloseTransition,
       isSidePaneMaximized,
       isSidePaneOpen,
@@ -176,6 +176,7 @@ function SidePaneLayout({ mainPaneContent, sidePaneContent }: SidePaneLayoutProp
       ref={sidePaneLayoutRef}
       data-slot="side-pane-layout"
       className="group/side-pane-layout relative min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      // SAFETY: React forwards this custom property unchanged; it is scoped to this layout.
       style={
         {
           "--docked-side-pane-width": DEFAULT_DOCKED_SIDE_PANE_WIDTH,
@@ -183,7 +184,7 @@ function SidePaneLayout({ mainPaneContent, sidePaneContent }: SidePaneLayoutProp
       }
     >
       <Group
-        className="size-full [&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-150 [&>[data-panel]]:ease-linear has-[[data-separator=active]]:[&>[data-panel]]:duration-0 has-[[data-separator=focus]]:[&>[data-panel]]:duration-0"
+        className="size-full motion-reduce:[&>[data-panel]]:transition-none [&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-150 [&>[data-panel]]:ease-linear has-[[data-separator=active]]:[&>[data-panel]]:duration-0 has-[[data-separator=focus]]:[&>[data-panel]]:duration-0"
         defaultLayout={DEFAULT_SIDE_PANE_LAYOUT}
         disabled={!isSidePaneOpen || isSidePaneMaximized}
         id="side-pane-layout"
@@ -224,7 +225,7 @@ function SidePaneLayout({ mainPaneContent, sidePaneContent }: SidePaneLayoutProp
       <div
         data-slot="side-pane-surface"
         data-state={isSidePaneOpen ? "open" : "closed"}
-        className="absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden bg-background transition-[translate,width] duration-150 ease-linear data-[state=closed]:translate-x-full group-has-[[data-separator=active]]/side-pane-layout:duration-0 group-has-[[data-separator=focus]]/side-pane-layout:duration-0"
+        className="absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden bg-background transition-[translate,width] duration-150 ease-linear motion-reduce:transition-none data-[state=closed]:translate-x-full group-has-[[data-separator=active]]/side-pane-layout:duration-0 group-has-[[data-separator=focus]]/side-pane-layout:duration-0"
         style={{ width: isSidePaneMaximized ? "100%" : "var(--docked-side-pane-width)" }}
         aria-hidden={!isSidePaneOpen}
         inert={!isSidePaneOpen}

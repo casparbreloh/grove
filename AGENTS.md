@@ -2,6 +2,8 @@
 
 Read `VISION.md` before product or architecture work. It is the source of truth for vocabulary, product semantics, Agent/Environment boundaries, and delivery order; do not duplicate or redefine them here.
 
+For renderer design-system or UI work, read `design.md`.
+
 ## Working principles
 
 - Ship the smallest clear vertical slice. Do not prebuild speculative providers, protocols, storage backends, configuration, or extension systems.

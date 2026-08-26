@@ -13,7 +13,7 @@ export function Composer() {
         <ComposerPrimitive.Input
           aria-label="Message input"
           autoFocus
-          className="aui-composer-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-sm/6 outline-none placeholder:text-muted-foreground/60"
+          className="aui-composer-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-ui outline-none placeholder:text-muted-foreground/60"
           enterKeyHint="send"
           placeholder="Ask anything"
           rows={1}
