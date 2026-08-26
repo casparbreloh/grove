@@ -251,7 +251,7 @@ function SidePaneTabButton({
         type="button"
         variant="ghost"
       >
-        <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+        <HugeiconsIcon className="size-(--icon-small)" icon={Cancel01Icon} strokeWidth={2} />
       </Button>
     </div>
   );
