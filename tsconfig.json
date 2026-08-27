@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "./apps/desktop" }]
+  "references": [
+    { "path": "./packages/runtime" },
+    { "path": "./apps/tui" },
+    { "path": "./apps/desktop" }
+  ]
 }

@@ -17,6 +17,7 @@ auto = true
 build = { depends = [{ task = "//...:build", optional = true }] }
 check = { depends = ["doctor", "doctor-design", "format-check", "knip", "lint", "typecheck"] }
 desktop = { depends = [{ task = "//apps/desktop:dev" }] }
+tui = { depends = [{ task = "//apps/tui:build" }], run = "node apps/tui/dist/index.mjs" }
 doctor = "aube exec react-doctor apps/desktop --verbose"
 doctor-design = "aube exec react-doctor design apps/desktop --verbose"
 format = "aube exec oxfmt --write ."
