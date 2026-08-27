@@ -1,24 +1,23 @@
 import { AuiIf, ComposerPrimitive } from "@assistant-ui/react";
 import { ArrowUp02Icon, StopIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { RefObject } from "react";
 import { Button } from "@/components/ui/button";
 
-export function Composer() {
+export function Composer({ inputRef }: { inputRef?: RefObject<HTMLTextAreaElement | null> }) {
   return (
-    <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <div
-        className="flex w-full cursor-text flex-col gap-2 rounded-3xl border bg-card p-2 shadow-xs transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
-        data-slot="aui-composer-shell"
-      >
+    <ComposerPrimitive.Root className="relative flex w-full flex-col">
+      <div className="flex w-full cursor-text flex-col gap-2 rounded-3xl border bg-card p-2 shadow-xs transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
         <ComposerPrimitive.Input
           aria-label="Message input"
           autoFocus
-          className="aui-composer-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-sm/6 outline-none placeholder:text-muted-foreground/60"
+          className="max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-sm/6 outline-none placeholder:text-muted-foreground/60"
           enterKeyHint="send"
           placeholder="Ask anything"
+          ref={inputRef}
           rows={1}
         />
-        <div className="aui-composer-action-wrapper flex items-center justify-end">
+        <div className="flex items-center justify-end">
           <AuiIf condition={(state) => !state.thread.isRunning}>
             <ComposerPrimitive.Send
               render={

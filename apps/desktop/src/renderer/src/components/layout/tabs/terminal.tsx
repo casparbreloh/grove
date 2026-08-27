@@ -159,7 +159,7 @@ export function Terminal({ terminalId }: { terminalId: string }) {
   );
 
   return (
-    <div className="size-full" ref={hostRef}>
+    <div className="size-full selection:bg-info/30" ref={hostRef}>
       <WtermTerminal
         aria-label={`Terminal ${terminalId}`}
         autoResize={false}

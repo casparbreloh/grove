@@ -33,15 +33,15 @@ import {
 import { filterMockTasksByProject, useMockGrove, type Project, type Task } from "@/lib/mock";
 
 const allProjectsValue = "all-projects";
-const taskTitleScrollDelayMs = 500;
-const taskTitleScrollPixelsPerSecond = 30;
+const taskTitleScrollDelayMs = 400;
+const taskTitleScrollPixelsPerSecond = 40;
 
 export function AppSidebar() {
   const { projects, tasks, taskProjectFilterId } = useMockGrove();
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <Sidebar>
+    <Sidebar className="backdrop-blur-2xl backdrop-saturate-150">
       <SidebarHeader className="shrink-0 gap-0 p-0">
         <div className="h-10 shrink-0 [-webkit-app-region:drag]" />
         <SidebarGroup>
@@ -125,6 +125,8 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
   useEffect(() => () => titleAnimationRef.current?.cancel(), []);
 
   function revealTitle() {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+
     const titleViewport = titleViewportRef.current;
     const titleText = titleTextRef.current;
     if (!titleViewport || !titleText) return;
@@ -134,6 +136,7 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
+    titleAnimationRef.current?.cancel();
     titleAnimationRef.current = titleText.animate(
       { transform: ["translateX(0)", `translateX(-${overflowWidth}px)`] },
       {

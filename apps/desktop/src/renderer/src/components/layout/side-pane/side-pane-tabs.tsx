@@ -139,7 +139,7 @@ function SidePaneTabStrip({
     <div className="flex h-full w-full min-w-0 items-center gap-1 [-webkit-app-region:no-drag]">
       <nav
         aria-label="Side pane tabs"
-        className="scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_2rem)] min-w-0 items-center gap-1 overflow-x-auto"
+        className="no-scrollbar scroll-fade-x scroll-fade-6 flex h-full w-max max-w-[calc(100%_-_2rem)] min-w-0 items-center gap-1 overflow-x-auto"
         aria-orientation="horizontal"
         role="tablist"
       >

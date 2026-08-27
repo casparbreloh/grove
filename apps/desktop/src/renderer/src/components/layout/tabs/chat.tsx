@@ -6,7 +6,7 @@ import {
 } from "@assistant-ui/react";
 import { Add01Icon, ArrowDown01Icon, Cancel01Icon, Folder01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import { useRef } from "react";
 import { Composer } from "@/components/ai-elements/composer";
 import { Message } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
@@ -37,13 +37,16 @@ export function Chat() {
 function ChatViewport() {
   const { projects, draftProjectId } = useMockGrove();
   const selectedProject = projects.find(({ id }) => id === draftProjectId);
-  const [showNoProject, setShowNoProject] = useState(Boolean(draftProjectId));
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
 
   return (
     <ThreadPrimitive.Root className="flex h-full flex-col bg-background">
-      <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-auto" turnAnchor="top">
+      <ThreadPrimitive.Viewport
+        className="no-scrollbar flex flex-1 flex-col overflow-y-auto"
+        turnAnchor="top"
+      >
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-8 sm:px-10">
-          <AuiIf condition={(state) => state.thread.messages.length === 0}>
+          <AuiIf condition={(state) => state.thread.isEmpty}>
             <div className="flex flex-1 items-center justify-center pb-24">
               <h1 className="text-2xl font-semibold">What would you like to work on?</h1>
             </div>
@@ -54,13 +57,9 @@ function ChatViewport() {
           </div>
 
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-gradient-to-t from-background via-background to-transparent pb-6 pt-8 sm:-mx-4">
-            <AuiIf condition={(state) => state.thread.messages.length === 0}>
+            <AuiIf condition={(state) => state.thread.isEmpty}>
               <div className="mx-4 flex h-10 items-center rounded-t-2xl border border-b-0 bg-card px-2 text-muted-foreground shadow-xs">
-                <DropdownMenu
-                  onOpenChange={(open) => {
-                    if (open) setShowNoProject(Boolean(draftProjectId));
-                  }}
-                >
+                <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
                       <Button
@@ -79,7 +78,12 @@ function ChatViewport() {
                     <span className="truncate">{selectedProject?.name ?? "Choose project"}</span>
                     <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56" side="top">
+                  <DropdownMenuContent
+                    align="start"
+                    className="w-56"
+                    finalFocus={composerInputRef}
+                    side="top"
+                  >
                     {projects.map((project) => (
                       <DropdownMenuItem
                         key={project.id}
@@ -94,7 +98,7 @@ function ChatViewport() {
                       <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
                       New project
                     </DropdownMenuItem>
-                    {showNoProject && (
+                    {selectedProject && (
                       <DropdownMenuItem onClick={() => selectMockDraftProject(undefined)}>
                         <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
                         No project
@@ -105,7 +109,7 @@ function ChatViewport() {
               </div>
             </AuiIf>
             <div className="-mt-px">
-              <Composer />
+              <Composer inputRef={composerInputRef} />
             </div>
           </ThreadPrimitive.ViewportFooter>
         </div>

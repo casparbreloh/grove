@@ -15,32 +15,12 @@
   * {
     @apply border-border outline-ring/50;
   }
-
-  html {
-    overscroll-behavior: none;
-  }
-
-  body {
-    @apply bg-transparent text-foreground;
-  }
-
-  html {
-    @apply font-sans;
-  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   body {
     @apply bg-background;
   }
-}
-
-* {
-  scrollbar-width: none;
-}
-
-.wterm ::selection {
-  background: color-mix(in oklch, var(--info) 30%, transparent);
 }
 
 .desktop-shell {
