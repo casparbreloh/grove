@@ -4,18 +4,21 @@ import { Outlet } from "@tanstack/react-router";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
 import { NewTabMenu } from "./tabs/new-tab-menu";
-import { TabBar } from "./tabs/tab-bar";
+import { TopPaneHeaders } from "./tabs/tab-bar";
+import { TabDragDropProvider } from "./tabs/tab-drag-drop";
 
 export function AppLayout() {
   return (
     <SidebarProvider className="relative isolate h-svh flex-col overflow-hidden before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:backdrop-blur-2xl before:backdrop-saturate-150 [--header-height:2.5rem] [--titlebar-safe-area:min(4.5rem,env(titlebar-area-x,0px))]">
-      <DesktopHeader />
-      <div className="flex min-h-0 flex-1">
-        <AppSidebar />
-        <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-          <Outlet />
-        </SidebarInset>
-      </div>
+      <TabDragDropProvider>
+        <DesktopHeader />
+        <div className="flex min-h-0 flex-1">
+          <AppSidebar />
+          <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+            <Outlet />
+          </SidebarInset>
+        </div>
+      </TabDragDropProvider>
     </SidebarProvider>
   );
 }
@@ -30,7 +33,7 @@ function DesktopHeader() {
           icon={PencilEdit02Icon}
         />
       </div>
-      <TabBar />
+      <TopPaneHeaders />
     </header>
   );
 }

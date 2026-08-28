@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { createMockChatTab, createMockTerminalTab } from "@/lib/mocks/grove";
+import { createMockChatTab, createMockTerminalTab, type PaneId } from "@/lib/mocks/grove";
 
 const newTabOptions = [
   { label: "Chat", icon: ChatIcon, create: createMockChatTab },
@@ -18,9 +18,11 @@ const newTabOptions = [
 export function NewTabMenu({
   className,
   icon = Add01Icon,
+  paneId,
 }: {
   className?: string;
   icon?: IconSvgElement;
+  paneId?: PaneId;
 }) {
   return (
     <DropdownMenu>
@@ -39,7 +41,7 @@ export function NewTabMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         {newTabOptions.map((option) => (
-          <DropdownMenuItem key={option.label} onClick={option.create}>
+          <DropdownMenuItem key={option.label} onClick={() => option.create(paneId)}>
             <HugeiconsIcon icon={option.icon} strokeWidth={2} />
             {option.label}
           </DropdownMenuItem>

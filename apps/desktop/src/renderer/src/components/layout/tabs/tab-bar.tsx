@@ -1,50 +1,128 @@
+import { useDroppable } from "@dnd-kit/core";
+import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 
 import { Button } from "@/components/ui/button";
-import { closeMockTab, selectMockTab, useMockGrove, type Tab } from "@/lib/mocks/grove";
+import {
+  closeMockTab,
+  getPaneTabs,
+  selectMockTab,
+  useMockGrove,
+  type PaneId,
+  type Tab,
+  type TabPane,
+} from "@/lib/mocks/grove";
 import { cn } from "@/lib/utils";
 import { NewTabMenu } from "./new-tab-menu";
+import {
+  focusTab,
+  useHorizontalPaneLayout,
+  type TabDragData,
+  type TabDropData,
+} from "./tab-drag-drop";
 
-function focusTab(tabId: string) {
-  window.requestAnimationFrame(() => document.getElementById(`${tabId}-tab`)?.focus());
-}
+export function TopPaneHeaders() {
+  const { tabLayout } = useMockGrove();
+  const [horizontalLayout] = useHorizontalPaneLayout();
+  const firstPane = tabLayout.panes[0];
 
-export function TabBar() {
-  const { activeTabId, tabs } = useMockGrove();
+  if (tabLayout.kind === "single") {
+    return <PaneTabBar ariaLabel="Open tabs" pane={firstPane} />;
+  }
+
+  if (tabLayout.orientation === "vertical") {
+    return <PaneTabBar ariaLabel="Top pane tabs" pane={firstPane} />;
+  }
+
+  const secondPane = tabLayout.panes[1];
+  const splitKey = getSplitKey(tabLayout.panes);
+  const layout = horizontalLayout?.splitKey === splitKey ? horizontalLayout.layout : undefined;
+  const firstSize = layout?.[firstPane.paneId] ?? 50;
+  const secondSize = layout?.[secondPane.paneId] ?? 50;
 
   return (
-    <div className="flex h-full min-w-0 items-center gap-1">
-      <nav
-        aria-label="Open tabs"
-        className="no-scrollbar scroll-fade-x scroll-fade-6 flex h-full min-w-0 items-center gap-1 overflow-x-auto"
-      >
-        {tabs.map((tab) => (
-          <TabItem isActive={tab.tabId === activeTabId} key={tab.tabId} tab={tab} tabs={tabs} />
-        ))}
-      </nav>
-      <NewTabMenu className="mr-2" />
+    <div
+      className="grid h-full min-w-0"
+      style={{ gridTemplateColumns: `minmax(0, ${firstSize}fr) 1px minmax(0, ${secondSize}fr)` }}
+    >
+      <PaneTabBar ariaLabel="Left pane tabs" pane={firstPane} />
+      <div aria-hidden="true" className="bg-border" />
+      <PaneTabBar ariaLabel="Right pane tabs" pane={secondPane} />
     </div>
   );
 }
 
-function TabItem({
+export function PaneTabBar({
+  ariaLabel = "Open tabs",
+  pane,
+}: {
+  ariaLabel?: string;
+  pane: TabPane;
+}) {
+  const { tabs } = useMockGrove();
+  const paneTabs = getPaneTabs(pane, tabs);
+
+  return (
+    <div
+      className="flex h-10 min-w-0 items-center gap-1 [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]"
+      onFocusCapture={() => selectMockTab(pane.activeTabId)}
+    >
+      <nav
+        aria-label={ariaLabel}
+        className="no-scrollbar scroll-fade-x scroll-fade-6 flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+      >
+        <SortableContext items={[...pane.tabIds]} strategy={horizontalListSortingStrategy}>
+          {paneTabs.map((tab) => (
+            <SortableTab
+              isActive={tab.tabId === pane.activeTabId}
+              key={tab.tabId}
+              paneId={pane.paneId}
+              tab={tab}
+              totalTabCount={tabs.length}
+            />
+          ))}
+        </SortableContext>
+        <PaneDropTail paneId={pane.paneId} />
+      </nav>
+      <NewTabMenu className="mr-2" paneId={pane.paneId} />
+    </div>
+  );
+}
+
+function SortableTab({
   isActive,
+  paneId,
   tab,
-  tabs,
+  totalTabCount,
 }: Readonly<{
   isActive: boolean;
+  paneId: PaneId;
   tab: Tab;
-  tabs: readonly Tab[];
+  totalTabCount: number;
 }>) {
+  const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform } =
+    useSortable({ id: tab.tabId, data: { kind: "tab", paneId } satisfies TabDragData });
+
   function closeTab() {
     const nextTabId = closeMockTab(tab.tabId);
     if (nextTabId) focusTab(nextTabId);
   }
 
   return (
-    <div className="group/tab relative flex h-7 w-37.5 shrink-0 items-center" role="presentation">
+    <div
+      className={cn(
+        "group/tab relative flex h-7 w-37.5 shrink-0 items-center transition-transform duration-200 ease-out motion-reduce:transition-none",
+        isDragging && "opacity-30",
+      )}
+      ref={setNodeRef}
+      role="presentation"
+      style={{ transform: CSS.Transform.toString(transform) }}
+    >
       <Button
+        {...attributes}
+        {...listeners}
         aria-controls={`${tab.tabId}-panel`}
         aria-pressed={isActive}
         className={cn(
@@ -53,12 +131,13 @@ function TabItem({
         )}
         id={`${tab.tabId}-tab`}
         onClick={() => selectMockTab(tab.tabId)}
+        ref={setActivatorNodeRef}
         type="button"
         variant="ghost"
       >
         {tab.title}
       </Button>
-      {tabs.length > 1 && (
+      {totalTabCount > 1 && (
         <Button
           aria-label={`Close ${tab.title}`}
           className={cn(
@@ -75,4 +154,23 @@ function TabItem({
       )}
     </div>
   );
+}
+
+function PaneDropTail({ paneId }: { paneId: PaneId }) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: `pane:${paneId}`,
+    data: { kind: "pane", paneId } satisfies TabDropData,
+  });
+
+  return (
+    <div
+      aria-hidden="true"
+      className={cn("h-7 min-w-6 flex-1 rounded-md", isOver && "bg-accent")}
+      ref={setNodeRef}
+    />
+  );
+}
+
+export function getSplitKey(panes: readonly TabPane[]) {
+  return panes.map(({ paneId }) => paneId).join(":");
 }
