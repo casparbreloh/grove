@@ -18,6 +18,7 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 import {
+  moveMockSplitTabToTabList,
   reorderMockTab,
   splitMockTab,
   useMockGrove,
@@ -26,7 +27,7 @@ import {
 } from "@/lib/mocks/grove";
 import { focusTab } from "./focus-tab";
 
-export type TabDragData = { kind: "tab" };
+export type TabDragData = { kind: "tab"; source: "split" | "tab-list"; tab: Tab };
 export type TabDropData =
   | { kind: "tab" }
   | { kind: "tab-list" }
@@ -34,11 +35,12 @@ export type TabDropData =
 
 type TabDragState =
   | { kind: "idle"; draggedTab?: never; input?: never }
-  | { kind: "dragging"; draggedTab: Tab; input: "pointer" | "keyboard" };
-
-type ActiveTabDrag =
-  | { kind: "idle" }
-  | { kind: "dragging"; tabId: string; input: "pointer" | "keyboard" };
+  | {
+      kind: "dragging";
+      draggedTab: Tab;
+      input: "keyboard" | "pointer";
+      source: TabDragData["source"];
+    };
 
 const TabDragStateContext = createContext<TabDragState | undefined>(undefined);
 
@@ -46,32 +48,56 @@ const tabCollisionDetection: CollisionDetection = (arguments_) => {
   const collisions = closestCenter(arguments_).filter(
     (collision) => collision.id !== arguments_.active.id,
   );
-  const { pointerCoordinates } = arguments_;
-  if (!pointerCoordinates) return collisions;
+  const coordinates = arguments_.pointerCoordinates ?? {
+    x: arguments_.collisionRect.left + arguments_.collisionRect.width / 2,
+    y: arguments_.collisionRect.top + arguments_.collisionRect.height / 2,
+  };
+  const containing = collisions.filter(({ id }) => {
+    const rect = arguments_.droppableRects.get(id);
+    return (
+      rect !== undefined &&
+      coordinates.x >= rect.left &&
+      coordinates.x <= rect.right &&
+      coordinates.y >= rect.top &&
+      coordinates.y <= rect.bottom
+    );
+  });
+  const splitCollisions = containing.filter(
+    (collision) => collision.data?.droppableContainer.data.current?.kind === "split-edge",
+  );
+  const splitRect = splitCollisions[0]
+    ? arguments_.droppableRects.get(splitCollisions[0].id)
+    : undefined;
 
-  return collisions
-    .filter(({ id }) => {
-      const rect = arguments_.droppableRects.get(id);
-      return (
-        rect !== undefined &&
-        pointerCoordinates.x >= rect.left &&
-        pointerCoordinates.x <= rect.right &&
-        pointerCoordinates.y >= rect.top &&
-        pointerCoordinates.y <= rect.bottom
-      );
-    })
-    .sort((left, right) => {
-      const priority = (kind: unknown) => (kind === "tab" ? 2 : kind === "split-edge" ? 1 : 0);
-      return (
-        priority(right.data?.droppableContainer.data.current?.kind) -
-        priority(left.data?.droppableContainer.data.current?.kind)
-      );
-    });
+  if (splitRect) {
+    const edge = getNearestEdge(coordinates, splitRect);
+    const collision = splitCollisions.find(
+      (candidate) => candidate.data?.droppableContainer.data.current?.edge === edge,
+    );
+    if (collision) return [collision];
+  }
+
+  return containing.length > 0 ? containing : collisions;
 };
+
+function getNearestEdge(
+  point: { x: number; y: number },
+  rect: { top: number; right: number; bottom: number; left: number },
+): SplitEdge {
+  const distances: readonly [SplitEdge, number][] = [
+    ["left", point.x - rect.left],
+    ["right", rect.right - point.x],
+    ["top", point.y - rect.top],
+    ["bottom", rect.bottom - point.y],
+  ];
+  return distances.reduce((nearest, candidate) =>
+    candidate[1] < nearest[1] ? candidate : nearest,
+  )[0];
+}
 
 export function TabDragDropProvider({ children }: { children: ReactNode }) {
   const { tabs } = useMockGrove();
-  const [drag, setDrag] = useState<ActiveTabDrag>({ kind: "idle" });
+  const [drag, setDrag] = useState<TabDragState>({ kind: "idle" });
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
@@ -79,27 +105,19 @@ export function TabDragDropProvider({ children }: { children: ReactNode }) {
       keyboardCodes: { start: ["KeyD"], cancel: ["Escape"], end: ["KeyD"] },
     }),
   );
-  const draggedTab =
-    drag.kind === "dragging" ? tabs.find(({ tabId }) => tabId === drag.tabId) : undefined;
-  const dragState = useMemo<TabDragState>(
-    () =>
-      drag.kind === "dragging" && draggedTab
-        ? { kind: "dragging", draggedTab, input: drag.input }
-        : { kind: "idle" },
-    [drag, draggedTab],
-  );
+  const draggedTab = drag.kind === "dragging" ? drag.draggedTab : undefined;
   const announcements = useMemo<Announcements>(
     () => ({
-      onDragStart: ({ active }) => `Picked up ${getTabTitle(tabs, active.id)}.`,
+      onDragStart: ({ active }) => `Picked up ${getDragTitle(tabs, active)}.`,
       onDragOver: ({ active, over }) =>
         over
-          ? `${getTabTitle(tabs, active.id)} is over ${getDropDescription(tabs, over)}.`
-          : `${getTabTitle(tabs, active.id)} is no longer over a drop target.`,
+          ? `${getDragTitle(tabs, active)} is over ${getDropDescription(tabs, over)}.`
+          : `${getDragTitle(tabs, active)} is no longer over a drop target.`,
       onDragEnd: ({ active, over }) =>
         over
-          ? `Dropped ${getTabTitle(tabs, active.id)} on ${getDropDescription(tabs, over)}.`
-          : `Dropped ${getTabTitle(tabs, active.id)} in its original position.`,
-      onDragCancel: ({ active }) => `Cancelled dragging ${getTabTitle(tabs, active.id)}.`,
+          ? `Dropped ${getDragTitle(tabs, active)} on ${getDropDescription(tabs, over)}.`
+          : `Dropped ${getDragTitle(tabs, active)} in its original position.`,
+      onDragCancel: ({ active }) => `Cancelled dragging ${getDragTitle(tabs, active)}.`,
     }),
     [tabs],
   );
@@ -109,43 +127,54 @@ export function TabDragDropProvider({ children }: { children: ReactNode }) {
   }
 
   function handleDragStart(event: DragStartEvent) {
+    const data = event.active.data.current as TabDragData | undefined;
+    if (data?.kind !== "tab") return;
     setDrag({
+      draggedTab: data.tab,
       kind: "dragging",
-      tabId: String(event.active.id),
       input: event.activatorEvent instanceof KeyboardEvent ? "keyboard" : "pointer",
+      source: data.source,
     });
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    const tabId = String(event.active.id);
+    const dragData = event.active.data.current as TabDragData | undefined;
     const dropData = event.over?.data.current as TabDropData | undefined;
     clearDrag();
-    if (!dropData) return;
+    if (dragData?.kind !== "tab" || !dropData) return;
+
+    const { source, tab } = dragData;
 
     switch (dropData.kind) {
       case "split-edge": {
-        const ownerTabId = splitMockTab(tabId, dropData.targetTabId, dropData.edge);
+        if (source !== "tab-list") return;
+        const ownerTabId = splitMockTab(tab.tabId, dropData.targetTabId, dropData.edge);
         if (ownerTabId) focusTab(ownerTabId);
         return;
       }
-      case "tab":
-        reorderMockTab(tabId, String(event.over?.id));
+      case "tab": {
+        const overTabId = String(event.over?.id);
+        if (source === "split") moveMockSplitTabToTabList(tab.tabId, overTabId);
+        else reorderMockTab(tab.tabId, overTabId);
         break;
-      case "tab-list":
-        reorderMockTab(tabId);
+      }
+      case "tab-list": {
+        if (source === "split") moveMockSplitTabToTabList(tab.tabId);
+        else reorderMockTab(tab.tabId);
         break;
+      }
     }
-    focusTab(tabId);
+    focusTab(tab.tabId);
   }
 
   return (
-    <TabDragStateContext value={dragState}>
+    <TabDragStateContext value={drag}>
       <DndContext
         accessibility={{
           announcements,
           screenReaderInstructions: {
             draggable:
-              "To pick up a tab, press D. Use the arrow keys to reorder it or move it into the active tab. Press D again to drop, or Escape to cancel.",
+              "To pick up a focused tab, press D. Use the arrow keys to move it. Press D again to drop, or Escape to cancel.",
           },
         }}
         collisionDetection={tabCollisionDetection}
@@ -156,7 +185,7 @@ export function TabDragDropProvider({ children }: { children: ReactNode }) {
         sensors={sensors}
       >
         {children}
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay adjustScale={false} dropAnimation={null}>
           {draggedTab ? <TabDragPreview tab={draggedTab} /> : null}
         </DragOverlay>
       </DndContext>
@@ -166,6 +195,14 @@ export function TabDragDropProvider({ children }: { children: ReactNode }) {
 
 function getTabTitle(tabs: readonly Tab[], tabId: UniqueIdentifier) {
   return tabs.find((tab) => tab.tabId === String(tabId))?.title ?? "tab";
+}
+
+function getDragTitle(
+  tabs: readonly Tab[],
+  active: { data: { current?: Record<string, unknown> }; id: UniqueIdentifier },
+) {
+  const data = active.data.current as TabDragData | undefined;
+  return data?.kind === "tab" ? data.tab.title : getTabTitle(tabs, active.id);
 }
 
 function getDropDescription(tabs: readonly Tab[], over: Over) {
@@ -185,7 +222,7 @@ export function useTabDragState() {
 
 function TabDragPreview({ tab }: { tab: Tab }) {
   return (
-    <div className="flex h-7 w-37.5 items-center rounded-md border bg-popover px-3 text-sm text-popover-foreground shadow-md">
+    <div className="flex h-7 w-37.5 cursor-grabbing items-center rounded-md bg-accent px-3 pr-7 text-sm text-accent-foreground shadow-sm">
       <span className="truncate">{tab.title}</span>
     </div>
   );

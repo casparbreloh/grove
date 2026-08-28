@@ -298,6 +298,34 @@ export function reorderMockTab(tabId: string, overTabId?: string) {
   emitChange();
 }
 
+export function moveMockSplitTabToTabList(tabId: string, overTabId?: string) {
+  if (!tabSplit) return;
+
+  const movedTab = tabSplit.surfaces.find((tab) => tab.tabId === tabId);
+  const remainingTab = tabSplit.surfaces.find((tab) => tab.tabId !== tabId);
+  if (!movedTab || !remainingTab) return;
+
+  const ownerIndex = tabs.findIndex((tab) => tab.tabId === tabSplit?.ownerTabId);
+  if (ownerIndex < 0) return;
+
+  const nextTabs = tabs.filter((tab) => tab.tabId !== tabSplit?.ownerTabId);
+  nextTabs.splice(ownerIndex, 0, remainingTab);
+
+  const targetIndex =
+    overTabId === tabSplit.ownerTabId
+      ? ownerIndex
+      : Math.max(
+          0,
+          overTabId ? nextTabs.findIndex((tab) => tab.tabId === overTabId) : nextTabs.length,
+        );
+  nextTabs.splice(targetIndex, 0, movedTab);
+
+  tabs = nextTabs;
+  tabSplit = undefined;
+  activeTabId = movedTab.tabId;
+  emitChange();
+}
+
 export function splitMockTab(tabId: string, targetTabId: string, edge: SplitEdge) {
   const sourceTab = tabs.find((tab) => tab.tabId === tabId);
   const targetTab = tabs.find((tab) => tab.tabId === targetTabId);

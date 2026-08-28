@@ -50,8 +50,19 @@ function SortableTab({
   totalTabCount: number;
 }>) {
   const { input } = useTabDragState();
-  const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform } =
-    useSortable({ id: tab.tabId, data: { kind: "tab" } satisfies TabDragData });
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({
+    id: tab.tabId,
+    data: { kind: "tab", source: "tab-list", tab } satisfies TabDragData,
+    transition: { duration: 200, easing: "cubic-bezier(0.77, 0, 0.175, 1)" },
+  });
 
   function closeTab() {
     const nextTabId = closeMockTab(tab.tabId);
@@ -61,13 +72,15 @@ function SortableTab({
   return (
     <div
       className={cn(
-        "group/tab relative flex h-7 w-37.5 shrink-0 items-center transition-transform duration-200 [transition-timing-function:cubic-bezier(0.77,0,0.175,1)] data-[drag-input=keyboard]:transition-none motion-reduce:transition-none",
+        "group/tab relative flex h-7 w-37.5 shrink-0 items-center motion-reduce:transition-none!",
         isDragging && "opacity-30",
       )}
-      data-drag-input={input ?? "none"}
       ref={setNodeRef}
       role="presentation"
-      style={{ transform: CSS.Transform.toString(transform) }}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition: input === "keyboard" ? undefined : transition,
+      }}
     >
       <Button
         {...attributes}
@@ -75,7 +88,7 @@ function SortableTab({
         aria-controls={`${tab.tabId}-panel`}
         aria-pressed={isActive}
         className={cn(
-          "h-full w-full cursor-default justify-start truncate pr-7 font-normal transition-colors duration-75 group-hover/tab:bg-accent group-hover/tab:text-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0 motion-reduce:transition-none",
+          "h-full w-full touch-none cursor-grab select-none justify-start truncate pr-7 font-normal transition-colors duration-75 active:cursor-grabbing group-hover/tab:bg-accent group-hover/tab:text-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0 motion-reduce:transition-none",
           isActive && "bg-accent text-accent-foreground",
         )}
         id={`${tab.tabId}-tab`}
