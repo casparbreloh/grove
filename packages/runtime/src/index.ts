@@ -1,42 +1,30 @@
-import { Agent } from "@earendil-works/pi-agent-core";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createPiAgentSession, type PiAgentSessionOptions } from "./pi-agent-session.ts";
+import { createDirectGroveClient, type DirectGroveClientOptions } from "./runtime.ts";
+import type { GroveClient } from "./types.ts";
 
-export interface Harness {
-  prompt(text: string, onText: (text: string) => void): Promise<void>;
-  abort(): void;
-}
+export type {
+  GroveBootstrap,
+  GroveClient,
+  GroveCommand,
+  GroveCommandResult,
+  GroveCursor,
+  GroveMessage,
+  GroveProgress,
+  GroveUpdate,
+  GroveWatchOptions,
+  MessagePart,
+  ModelRef,
+  ModelSummary,
+  ResultFor,
+  SessionSnapshot,
+  ThinkingLevel,
+} from "./types.ts";
 
-export async function createHarness(): Promise<Harness> {
-  const models = await ModelRuntime.create();
-  const model = models.getModel("openai-codex", "gpt-5.6-sol");
+export interface CreateGroveClientOptions extends PiAgentSessionOptions, DirectGroveClientOptions {}
 
-  if (!model) throw new Error("Pi model not found");
-
-  const agent = new Agent({
-    initialState: {
-      model,
-      systemPrompt: "You are a concise software development agent.",
-      thinkingLevel: "low",
-      tools: [],
-    },
-    streamFn: models.streamSimple.bind(models),
-  });
-
-  return {
-    async prompt(text, onText) {
-      const unsubscribe = agent.subscribe((event) => {
-        if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-          onText(event.assistantMessageEvent.delta);
-        }
-      });
-
-      try {
-        await agent.prompt(text);
-        if (agent.state.errorMessage) throw new Error(agent.state.errorMessage);
-      } finally {
-        unsubscribe();
-      }
-    },
-    abort: () => agent.abort(),
-  };
+export async function createGroveClient(
+  options: CreateGroveClientOptions = {},
+): Promise<GroveClient> {
+  const agent = await createPiAgentSession(options);
+  return createDirectGroveClient(agent, options);
 }

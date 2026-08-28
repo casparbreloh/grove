@@ -1,2 +1,3 @@
 [tasks]
 build = "aube exec tsdown"
+test = "node --test src/*.test.ts"
