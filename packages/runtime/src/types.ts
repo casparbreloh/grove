@@ -66,7 +66,7 @@ export interface TaskSummary {
 
 export type GroveCursor = Readonly<Record<string, number>>;
 
-export interface GroveBootstrap {
+export interface GroveSync {
   task: TaskSummary;
   session: SessionSnapshot;
   models: readonly ModelSummary[];
@@ -183,9 +183,10 @@ export interface GroveWatchOptions {
 }
 
 export interface GroveClient {
-  bootstrap(): Promise<GroveBootstrap>;
+  sync(): Promise<GroveSync>;
   execute<TCommand extends GroveCommand>(command: TCommand): Promise<ResultFor<TCommand>>;
   watch(options?: GroveWatchOptions): AsyncIterable<GroveUpdate>;
+  close(): Promise<void>;
 }
 
 export type JsonValue =

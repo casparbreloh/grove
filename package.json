@@ -2,6 +2,7 @@
   "name": "grove",
   "private": true,
   "devDependencies": {
+    "effect": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

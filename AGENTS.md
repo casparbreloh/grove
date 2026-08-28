@@ -31,6 +31,10 @@ Inspiration is not authority. Preserve Grove semantics even when an upstream sha
 - Assistant UI belongs in `apps/desktop/src/renderer/src/components/ai-elements`. Install it only with `npx assistant-ui@latest add <component> --path src/renderer/src/components/ai-elements`; keep transitive shadcn primitives in `components/ui`.
 - Renderer-only slices use explicitly named mock modules. Do not smuggle preload, IPC, filesystem, process, Agent, or Environment behavior into renderer code.
 
+## Learning more about Effect
+
+This repository uses the Effect TypeScript library. Before writing Effect code, read `node_modules/effect/AGENTS.md` completely and follow its links when required. For APIs and concepts it does not cover, search `node_modules/effect/src`.
+
 ## Verification
 
 Run the narrowest relevant check; the full check is `mise run check`. Stop only processes you started and can identify—never kill by name or pattern.

@@ -29,27 +29,30 @@ The first local slice may bind the client directly in-process. Electron later ex
 
 Do not make HTTP, OpenAPI, CBOR, Electron IPC, or a Pi protocol the source of truth. Those are possible bindings around Grove contracts.
 
+Internally, the local runtime is an Effect service composed from scoped Layers. Effect owns command serialization, Agent lifetime, Turn fibers, update fan-out, and cleanup. `ManagedRuntime` is the single bridge to the Promise/`AsyncIterable` client; Effect types do not leak into the external contract.
+
 ### Current checkpoint
 
 The checked-in prototype covers the contract, direct in-process binding, Pi Agent projection, and TUI harness. Its state, replay journal, and command receipts are intentionally process-local; it is not yet the durable local runtime described in step 2 below. The next runtime slice must put those responsibilities behind a real local Environment implementation before the desktop adopts the client.
 
 ## The external interface
 
-Keep the primitive interface to three operations:
+Keep the behavioral interface to three operations, plus explicit lifecycle cleanup:
 
 ```ts
 interface GroveClient {
-  bootstrap(): Promise<GroveBootstrap>;
+  sync(): Promise<GroveSync>;
   execute<TCommand extends GroveCommand>(command: TCommand): Promise<ResultFor<TCommand>>;
   watch(options: GroveWatchOptions): AsyncIterable<GroveUpdate>;
+  close(): Promise<void>;
 }
 ```
 
 Typed convenience handles for Tasks, Sessions, terminals, models, and auth may sit on top of these operations. They must not introduce different semantics.
 
-### Bootstrap
+### Sync
 
-`bootstrap()` returns an authoritative, serializable snapshot plus the durable cursors from which observation continues. It includes only state a client may project:
+`sync()` returns an authoritative, serializable snapshot plus the durable cursors from which observation continues. It is safe to call initially or again after reconnecting; it is not command execution. It includes only state a client may project:
 
 - Workspace, Project, Task, Session, and tab descriptors;
 - current Turn and approval state;

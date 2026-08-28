@@ -32,7 +32,7 @@ import { ModelPicker } from "./model-picker.ts";
 initTheme();
 
 const client = await createGroveClient();
-const initial = await client.bootstrap();
+const initial = await client.sync();
 const models = initial.models;
 let session = initial.session;
 
@@ -126,7 +126,7 @@ tui.addInputListener((data) => {
   }
   if (matchesKey(data, Key.ctrl("c"))) {
     if (session.phase.type === "running" && session.capabilities.abort) void abortTurn();
-    else shutdown();
+    else void shutdown();
     return { consume: true };
   }
   return undefined;
@@ -331,9 +331,10 @@ function setNotice(message: string): void {
   tui.requestRender();
 }
 
-function shutdown(): never {
+async function shutdown(): Promise<never> {
   shuttingDown = true;
-  void updates.return?.();
+  await updates.return?.();
+  await client.close();
   loader.stop();
   tui.stop();
   process.exit(0);

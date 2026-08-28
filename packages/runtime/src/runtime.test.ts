@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Effect } from "effect";
 
 import type {
   AgentRunResult,
   AgentSessionCapabilities,
-  AgentSessionDriver,
+  AgentSessionService,
   AgentSessionSink,
 } from "./agent-session.ts";
 import { createDirectGroveClient } from "./runtime.ts";
@@ -15,9 +16,9 @@ const models = [
   model("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
 ];
 
-test("bootstrap exposes authoritative session state and model commands update it", async () => {
+test("sync exposes authoritative session state and model commands update it", async () => {
   const client = createDirectGroveClient(new ScriptedAgentSession(models));
-  const initial = await client.bootstrap();
+  const initial = await client.sync();
 
   assert.equal(initial.task.environment.kind, "local");
   assert.equal(initial.session.phase.type, "idle");
@@ -32,12 +33,13 @@ test("bootstrap exposes authoritative session state and model commands update it
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual((await client.bootstrap()).session.model, models[1]?.ref);
+  assert.deepEqual((await client.sync()).session.model, models[1]?.ref);
+  await client.close();
 });
 
 test("prompt publishes transient progress and settles an authoritative transcript", async () => {
   const client = createDirectGroveClient(new ScriptedAgentSession(models));
-  const initial = await client.bootstrap();
+  const initial = await client.sync();
   const iterator = client.watch({ after: initial.cursor })[Symbol.asyncIterator]();
 
   const execution = client.execute({
@@ -59,7 +61,7 @@ test("prompt publishes transient progress and settles an authoritative transcrip
   assert.equal(result.type, "session.prompt");
   if (result.ok && result.type === "session.prompt") assert.equal(result.status, "accepted");
 
-  const settled = await client.bootstrap();
+  const settled = await client.sync();
   assert.equal(settled.session.phase.type, "idle");
   assert.deepEqual(
     settled.session.messages.map((message) => message.role),
@@ -69,12 +71,13 @@ test("prompt publishes transient progress and settles an authoritative transcrip
   assert.equal(settled.session.messages[1]?.parts[0]?.text, "Hello from the scripted agent.");
 
   await iterator.return?.();
+  await client.close();
 });
 
 test("a second prompt is rejected while the session is running and abort settles the first", async () => {
   const agent = new ScriptedAgentSession(models, true);
   const client = createDirectGroveClient(agent);
-  const { session } = await client.bootstrap();
+  const { session } = await client.sync();
 
   const first = await client.execute({
     type: "session.prompt",
@@ -107,13 +110,14 @@ test("a second prompt is rejected while the session is running and abort settles
   assert.equal(aborted.ok, true);
 
   await waitForIdle(client);
-  assert.equal((await client.bootstrap()).session.lastTurn?.outcome, "aborted");
+  assert.equal((await client.sync()).session.lastTurn?.outcome, "aborted");
+  await client.close();
 });
 
 test("redelivering a command ID returns its receipt without running the command twice", async () => {
   const agent = new ScriptedAgentSession(models);
   const client = createDirectGroveClient(agent);
-  const { session } = await client.bootstrap();
+  const { session } = await client.sync();
   const command = {
     type: "session.prompt" as const,
     commandId: "command-retried",
@@ -121,17 +125,18 @@ test("redelivering a command ID returns its receipt without running the command 
     text: "Only once",
   };
 
-  const first = await client.execute(command);
-  const retried = await client.execute(command);
+  const [first, retried] = await Promise.all([client.execute(command), client.execute(command)]);
 
   assert.deepEqual(retried, first);
   assert.equal(agent.runCount, 1);
-  assert.equal((await client.bootstrap()).session.messages.length, 2);
+  await waitForIdle(client);
+  assert.equal((await client.sync()).session.messages.length, 2);
+  await client.close();
 });
 
 test("watch replay closes the snapshot gap and isolates subscribers", async () => {
   const client = createDirectGroveClient(new ScriptedAgentSession(models));
-  const initial = await client.bootstrap();
+  const initial = await client.sync();
   await client.execute({
     type: "session.select-model",
     commandId: "command-between-bootstrap-and-watch",
@@ -154,12 +159,13 @@ test("watch replay closes the snapshot gap and isolates subscribers", async () =
 
   await first.return?.();
   await second.return?.();
+  await client.close();
 });
 
 test("Agent capabilities are authoritative for command admission", async () => {
   const agent = new ScriptedAgentSession(models, false, { prompt: false });
   const client = createDirectGroveClient(agent);
-  const { session } = await client.bootstrap();
+  const { session } = await client.sync();
 
   const result = await client.execute({
     type: "session.prompt",
@@ -175,16 +181,38 @@ test("Agent capabilities are authoritative for command admission", async () => {
     error: { code: "unsupported", message: "The Agent does not support prompting" },
   });
   assert.equal(agent.runCount, 0);
+  await client.close();
 });
 
-class ScriptedAgentSession implements AgentSessionDriver {
+test("closing a client ends active update iterators", async () => {
+  const agent = new ScriptedAgentSession(models);
+  const client = createDirectGroveClient(agent);
+  const initial = await client.sync();
+  const iterator = client.watch({ after: initial.cursor })[Symbol.asyncIterator]();
+
+  await client.execute({
+    type: "session.select-model",
+    commandId: "command-before-close",
+    sessionId: initial.session.id,
+    model: models[1]!.ref,
+  });
+  assert.equal((await iterator.next()).done, false);
+
+  const pending = iterator.next();
+  await client.close();
+  assert.equal((await pending).done, true);
+  assert.equal(agent.shutdownCount, 1);
+});
+
+class ScriptedAgentSession implements AgentSessionService {
   readonly capabilities: AgentSessionCapabilities;
-  readonly models: readonly ModelSummary[];
-  model: ModelSummary;
-  thinkingLevel: ThinkingLevel = "low";
+  readonly #models: readonly ModelSummary[];
+  #model: ModelSummary;
+  #thinkingLevel: ThinkingLevel = "low";
   readonly #waitForAbort: boolean;
   #resolveAbort: (() => void) | undefined;
   runCount = 0;
+  shutdownCount = 0;
 
   constructor(
     availableModels: readonly ModelSummary[],
@@ -198,49 +226,85 @@ class ScriptedAgentSession implements AgentSessionDriver {
       setThinkingLevel: true,
       ...capabilities,
     };
-    this.models = availableModels;
-    this.model = availableModels[0]!;
+    this.#models = availableModels;
+    this.#model = availableModels[0]!;
     this.#waitForAbort = waitForAbort;
   }
 
-  async run(sink: AgentSessionSink, _text: string): Promise<AgentRunResult> {
-    this.runCount += 1;
-    sink.progress({ type: "message.text-delta", delta: "Hello from the scripted agent." });
-    if (this.#waitForAbort) await new Promise<void>((resolve) => (this.#resolveAbort = resolve));
-    return {
-      outcome: this.#waitForAbort ? "aborted" : "completed",
-      parts: [{ type: "text", text: "Hello from the scripted agent." }],
-    };
+  get models(): Effect.Effect<readonly ModelSummary[]> {
+    return Effect.succeed(this.#models);
   }
 
-  abort(): boolean {
-    if (!this.#resolveAbort) return false;
-    this.#resolveAbort();
-    this.#resolveAbort = undefined;
-    return true;
+  get model(): Effect.Effect<ModelSummary> {
+    return Effect.sync(() => this.#model);
   }
 
-  selectModel(ref: ModelSummary["ref"]): boolean {
-    const selected = this.models.find(
-      (candidate) =>
-        candidate.ref.providerId === ref.providerId && candidate.ref.modelId === ref.modelId,
+  get thinkingLevel(): Effect.Effect<ThinkingLevel> {
+    return Effect.sync(() => this.#thinkingLevel);
+  }
+
+  run(sink: AgentSessionSink, _text: string): Effect.Effect<AgentRunResult> {
+    const start = Effect.sync(() => {
+      this.runCount += 1;
+      sink.progress({ type: "message.text-delta", delta: "Hello from the scripted agent." });
+    });
+    const waitForAbort = this.#waitForAbort
+      ? Effect.callback<void>((resume) => {
+          this.#resolveAbort = () => resume(Effect.void);
+        })
+      : Effect.void;
+    const outcome = this.#waitForAbort ? ("aborted" as const) : ("completed" as const);
+    return start.pipe(
+      Effect.andThen(waitForAbort),
+      Effect.as({
+        outcome,
+        parts: [{ type: "text" as const, text: "Hello from the scripted agent." }],
+      }),
     );
-    if (!selected) return false;
-    this.model = selected;
-    return true;
   }
 
-  setThinkingLevel(level: ThinkingLevel): boolean {
-    if (!this.model.thinkingLevels.includes(level)) return false;
-    this.thinkingLevel = level;
-    return true;
+  get abort(): Effect.Effect<boolean> {
+    return Effect.sync(() => {
+      if (!this.#resolveAbort) return false;
+      this.#resolveAbort();
+      this.#resolveAbort = undefined;
+      return true;
+    });
+  }
+
+  selectModel(ref: ModelSummary["ref"]): Effect.Effect<boolean> {
+    return Effect.sync(() => {
+      const selected = this.#models.find(
+        (candidate) =>
+          candidate.ref.providerId === ref.providerId && candidate.ref.modelId === ref.modelId,
+      );
+      if (!selected) return false;
+      this.#model = selected;
+      return true;
+    });
+  }
+
+  setThinkingLevel(level: ThinkingLevel): Effect.Effect<boolean> {
+    return Effect.sync(() => {
+      if (!this.#model.thinkingLevels.includes(level)) return false;
+      this.#thinkingLevel = level;
+      return true;
+    });
+  }
+
+  get shutdown(): Effect.Effect<void> {
+    return Effect.sync(() => {
+      this.shutdownCount += 1;
+      this.#resolveAbort?.();
+      this.#resolveAbort = undefined;
+    });
   }
 }
 
 async function waitForIdle(client: ReturnType<typeof createDirectGroveClient>): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if ((await client.bootstrap()).session.phase.type === "idle") return;
-    await Promise.resolve();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if ((await client.sync()).session.phase.type === "idle") return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
   assert.fail("Session did not settle");
 }

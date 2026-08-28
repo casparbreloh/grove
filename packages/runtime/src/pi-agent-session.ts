@@ -1,4 +1,4 @@
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -7,8 +7,13 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { Cause, Effect } from "effect";
 
-import type { AgentRunResult, AgentSessionDriver, AgentSessionSink } from "./agent-session.ts";
+import {
+  type AgentRunResult,
+  type AgentSessionService,
+  type AgentSessionSink,
+} from "./agent-session.ts";
 import type { JsonValue, MessagePart, ModelRef, ModelSummary, ThinkingLevel } from "./types.ts";
 
 export interface PiAgentSessionOptions {
@@ -17,21 +22,25 @@ export interface PiAgentSessionOptions {
   thinkingLevel?: ThinkingLevel;
 }
 
-export async function createPiAgentSession(
-  options: PiAgentSessionOptions = {},
-): Promise<AgentSessionDriver> {
-  const models = await ModelRuntime.create();
-  const preferred = options.model
-    ? models.getModel(options.model.providerId, options.model.modelId)
-    : models.getModel("openai-codex", "gpt-5.6-sol");
-  const model = preferred ?? models.getAvailableSnapshot()[0] ?? models.getModels()[0];
+export const createPiAgentSession: (
+  options?: PiAgentSessionOptions,
+) => Effect.Effect<AgentSessionService, Cause.UnknownError> = Effect.fn("PiAgentSession.create")(
+  function* (options: PiAgentSessionOptions = {}) {
+    const models = yield* Effect.tryPromise(() => ModelRuntime.create());
+    const preferred = options.model
+      ? models.getModel(options.model.providerId, options.model.modelId)
+      : models.getModel("openai-codex", "gpt-5.6-sol");
+    const model = preferred ?? models.getAvailableSnapshot()[0] ?? models.getModels()[0];
 
-  if (!model) throw new Error("Pi has no models available");
+    if (!model) {
+      return yield* Effect.fail(new Cause.UnknownError(undefined, "Pi has no models available"));
+    }
 
-  return new PiAgentSession(models, model, options);
-}
+    return new PiAgentSession(models, model, options);
+  },
+);
 
-class PiAgentSession implements AgentSessionDriver {
+class PiAgentSession implements AgentSessionService {
   readonly capabilities = {
     prompt: true,
     abort: true,
@@ -55,95 +64,125 @@ class PiAgentSession implements AgentSessionDriver {
     });
   }
 
-  get models(): readonly ModelSummary[] {
-    return uniqueModels([this.#agent.state.model, ...this.#models.getAvailableSnapshot()]).map(
-      toModelSummary,
+  get models(): Effect.Effect<readonly ModelSummary[]> {
+    return Effect.sync(() =>
+      uniqueModels([this.#agent.state.model, ...this.#models.getAvailableSnapshot()]).map(
+        toModelSummary,
+      ),
     );
   }
 
-  get model(): ModelSummary {
-    return toModelSummary(this.#agent.state.model);
+  get model(): Effect.Effect<ModelSummary> {
+    return Effect.sync(() => toModelSummary(this.#agent.state.model));
   }
 
-  get thinkingLevel(): ThinkingLevel {
-    return this.#agent.state.thinkingLevel;
+  get thinkingLevel(): Effect.Effect<ThinkingLevel> {
+    return Effect.sync(() => this.#agent.state.thinkingLevel);
   }
 
-  async run(sink: AgentSessionSink, text: string): Promise<AgentRunResult> {
-    const unsubscribe = this.#agent.subscribe((event) => {
-      if (event.type === "message_update") {
-        const update = event.assistantMessageEvent;
-        if (update.type === "text_delta")
-          sink.progress({ type: "message.text-delta", delta: update.delta });
-        if (update.type === "thinking_delta") {
-          sink.progress({ type: "message.reasoning-delta", delta: update.delta });
-        }
-      }
-      if (event.type === "tool_execution_start") {
-        sink.progress({ type: "tool.started", callId: event.toolCallId, name: event.toolName });
-      }
-      if (event.type === "tool_execution_end") {
-        sink.progress({
-          type: "tool.settled",
-          callId: event.toolCallId,
-          name: event.toolName,
-          isError: event.isError,
-        });
-      }
+  run(sink: AgentSessionSink, text: string): Effect.Effect<AgentRunResult, Cause.UnknownError> {
+    return Effect.scoped(runPiAgent(this.#agent, sink, text));
+  }
+
+  get abort(): Effect.Effect<boolean> {
+    return Effect.sync(() => {
+      if (!this.#agent.state.isStreaming) return false;
+      this.#agent.abort();
+      return true;
     });
+  }
 
-    try {
-      await this.#agent.prompt(text);
-      const message = findLastAssistantMessage(this.#agent.state.messages);
-      if (!message) {
-        return {
-          outcome: "failed",
-          parts: [],
-          error: {
-            code: "missing-response",
-            message: "Pi completed without an assistant response",
-          },
-        };
-      }
-      if (message.stopReason === "error") {
-        return {
-          outcome: "failed",
-          parts: toMessageParts(message),
-          error: {
-            code: "provider-error",
-            message: message.errorMessage ?? "Model request failed",
-          },
-        };
-      }
-      if (message.stopReason === "aborted") {
-        return { outcome: "aborted", parts: toMessageParts(message) };
-      }
-      return { outcome: "completed", parts: toMessageParts(message) };
-    } finally {
-      unsubscribe();
+  selectModel(ref: ModelRef): Effect.Effect<boolean> {
+    return Effect.sync(() => {
+      if (ref.agentId !== "pi") return false;
+      const model = this.#models.getModel(ref.providerId, ref.modelId);
+      if (!model) return false;
+      this.#agent.state.model = model;
+      this.#agent.state.thinkingLevel = clampThinkingLevel(model, this.#agent.state.thinkingLevel);
+      return true;
+    });
+  }
+
+  setThinkingLevel(level: ThinkingLevel): Effect.Effect<boolean> {
+    return Effect.sync(() => {
+      if (!getSupportedThinkingLevels(this.#agent.state.model).includes(level)) return false;
+      this.#agent.state.thinkingLevel = level;
+      return true;
+    });
+  }
+
+  get shutdown(): Effect.Effect<void> {
+    return Effect.sync(() => this.#agent.abort());
+  }
+}
+
+const runPiAgent = Effect.fn("PiAgentSession.run")(function* (
+  agent: Agent,
+  sink: AgentSessionSink,
+  text: string,
+) {
+  yield* Effect.acquireRelease(
+    Effect.sync(() => agent.subscribe((event) => publishProgress(sink, event))),
+    (unsubscribe) => Effect.sync(unsubscribe),
+  );
+  yield* Effect.callback<void, Cause.UnknownError>((resume) => {
+    void agent.prompt(text).then(
+      () => resume(Effect.void),
+      (cause) => resume(Effect.fail(new Cause.UnknownError(cause, "Pi Agent request failed"))),
+    );
+    return Effect.sync(() => agent.abort());
+  });
+  return toRunResult(agent.state.messages);
+});
+
+function publishProgress(sink: AgentSessionSink, event: AgentEvent): void {
+  if (event.type === "message_update") {
+    const update = event.assistantMessageEvent;
+    if (update.type === "text_delta")
+      sink.progress({ type: "message.text-delta", delta: update.delta });
+    if (update.type === "thinking_delta") {
+      sink.progress({ type: "message.reasoning-delta", delta: update.delta });
     }
   }
-
-  abort(): boolean {
-    if (!this.#agent.state.isStreaming) return false;
-    this.#agent.abort();
-    return true;
+  if (event.type === "tool_execution_start") {
+    sink.progress({ type: "tool.started", callId: event.toolCallId, name: event.toolName });
   }
-
-  selectModel(ref: ModelRef): boolean {
-    if (ref.agentId !== "pi") return false;
-    const model = this.#models.getModel(ref.providerId, ref.modelId);
-    if (!model) return false;
-    this.#agent.state.model = model;
-    this.#agent.state.thinkingLevel = clampThinkingLevel(model, this.#agent.state.thinkingLevel);
-    return true;
+  if (event.type === "tool_execution_end") {
+    sink.progress({
+      type: "tool.settled",
+      callId: event.toolCallId,
+      name: event.toolName,
+      isError: event.isError,
+    });
   }
+}
 
-  setThinkingLevel(level: ThinkingLevel): boolean {
-    if (!getSupportedThinkingLevels(this.#agent.state.model).includes(level)) return false;
-    this.#agent.state.thinkingLevel = level;
-    return true;
+function toRunResult(messages: readonly unknown[]): AgentRunResult {
+  const message = findLastAssistantMessage(messages);
+  if (!message) {
+    return {
+      outcome: "failed",
+      parts: [],
+      error: {
+        code: "missing-response",
+        message: "Pi completed without an assistant response",
+      },
+    };
   }
+  if (message.stopReason === "error") {
+    return {
+      outcome: "failed",
+      parts: toMessageParts(message),
+      error: {
+        code: "provider-error",
+        message: message.errorMessage ?? "Model request failed",
+      },
+    };
+  }
+  if (message.stopReason === "aborted") {
+    return { outcome: "aborted", parts: toMessageParts(message) };
+  }
+  return { outcome: "completed", parts: toMessageParts(message) };
 }
 
 function toModelSummary(model: Model<Api>): ModelSummary {
