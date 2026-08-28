@@ -2,8 +2,6 @@ import { PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { Outlet } from "@tanstack/react-router";
 
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { useMockGrove } from "@/lib/mocks/grove";
-import { cn } from "@/lib/utils";
 import { AppSidebar } from "./app-sidebar";
 import { NewTabMenu } from "./tabs/new-tab-menu";
 import { TabBar } from "./tabs/tab-bar";
@@ -12,27 +10,17 @@ import { TabDragDropProvider } from "./tabs/tab-drag-drop";
 export function AppLayout() {
   return (
     <SidebarProvider className="relative isolate h-svh flex-col overflow-hidden before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:backdrop-blur-2xl before:backdrop-saturate-150 [--header-height:2.5rem] [--titlebar-safe-area:min(4.5rem,env(titlebar-area-x,0px))]">
-      <TabDragDropProvider>
-        <DesktopHeader />
-        <DesktopBody />
-      </TabDragDropProvider>
+      <DesktopHeader />
+      <DesktopBody />
     </SidebarProvider>
   );
 }
 
 function DesktopBody() {
-  const { activeTabId, tabSplit } = useMockGrove();
-  const activeTabOwnsSplit = tabSplit?.ownerTabId === activeTabId;
-
   return (
     <div className="flex min-h-0 flex-1">
       <AppSidebar />
-      <SidebarInset
-        className={cn(
-          "min-h-0 min-w-0 overflow-hidden",
-          activeTabOwnsSplit && "bg-transparent! shadow-none!",
-        )}
-      >
+      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <Outlet />
       </SidebarInset>
     </div>
@@ -49,7 +37,9 @@ function DesktopHeader() {
           icon={PencilEdit02Icon}
         />
       </div>
-      <TabBar />
+      <TabDragDropProvider>
+        <TabBar />
+      </TabDragDropProvider>
     </header>
   );
 }

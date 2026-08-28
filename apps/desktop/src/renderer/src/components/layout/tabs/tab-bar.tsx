@@ -60,7 +60,7 @@ function SortableTab({
     transition,
   } = useSortable({
     id: tab.tabId,
-    data: { kind: "tab", source: "tab-list", tab } satisfies TabDragData,
+    data: { kind: "tab", tab } satisfies TabDragData,
     transition: { duration: 150, easing: "cubic-bezier(0.77, 0, 0.175, 1)" },
   });
 

@@ -27,13 +27,6 @@ type UnavailableTab = {
 
 export type Tab = ChatTab | TerminalTab | UnavailableTab;
 
-export type SplitEdge = "left" | "right" | "top" | "bottom";
-export type TabSplit = {
-  ownerTabId: string;
-  orientation: "horizontal" | "vertical";
-  surfaces: readonly [Tab, Tab];
-};
-
 type GroveViewState = {
   workspaces: readonly Workspace[];
   activeWorkspaceId: string | undefined;
@@ -43,7 +36,6 @@ type GroveViewState = {
   taskProjectFilterId: string | undefined;
   tabs: readonly Tab[];
   activeTabId: string;
-  tabSplit: TabSplit | undefined;
 };
 
 const workspaces: readonly Workspace[] = [
@@ -191,7 +183,6 @@ let tabs: readonly Tab[] = [
   { tabId: "tab_terminal_1", kind: "terminal", terminalId: "terminal_1", title: "Terminal" },
 ];
 let activeTabId = tabs[0].tabId;
-let tabSplit: TabSplit | undefined;
 
 function createState(): GroveViewState {
   const visibleProjects: Project[] = [];
@@ -217,7 +208,6 @@ function createState(): GroveViewState {
     taskProjectFilterId,
     tabs,
     activeTabId,
-    tabSplit,
   };
 }
 
@@ -278,7 +268,6 @@ export function closeMockTab(tabId: string) {
   if (tabIndex < 0 || tabs.length === 1) return;
 
   tabs = tabs.filter((tab) => tab.tabId !== tabId);
-  if (tabSplit?.ownerTabId === tabId) tabSplit = undefined;
   if (activeTabId === tabId) activeTabId = tabs[Math.min(tabIndex, tabs.length - 1)].tabId;
   emitChange();
   return activeTabId;
@@ -296,51 +285,6 @@ export function reorderMockTab(tabId: string, overTabId?: string) {
   nextTabs.splice(targetIndex, 0, movedTab);
   tabs = nextTabs;
   emitChange();
-}
-
-export function moveMockSplitTabToTabList(tabId: string, overTabId?: string) {
-  if (!tabSplit) return;
-
-  const movedTab = tabSplit.surfaces.find((tab) => tab.tabId === tabId);
-  const remainingTab = tabSplit.surfaces.find((tab) => tab.tabId !== tabId);
-  if (!movedTab || !remainingTab) return;
-
-  const ownerIndex = tabs.findIndex((tab) => tab.tabId === tabSplit?.ownerTabId);
-  if (ownerIndex < 0) return;
-
-  const nextTabs = tabs.filter((tab) => tab.tabId !== tabSplit?.ownerTabId);
-  nextTabs.splice(ownerIndex, 0, remainingTab);
-
-  const targetIndex =
-    overTabId === tabSplit.ownerTabId
-      ? ownerIndex
-      : Math.max(
-          0,
-          overTabId ? nextTabs.findIndex((tab) => tab.tabId === overTabId) : nextTabs.length,
-        );
-  nextTabs.splice(targetIndex, 0, movedTab);
-
-  tabs = nextTabs;
-  tabSplit = undefined;
-  activeTabId = movedTab.tabId;
-  emitChange();
-}
-
-export function splitMockTab(tabId: string, targetTabId: string, edge: SplitEdge) {
-  const sourceTab = tabs.find((tab) => tab.tabId === tabId);
-  const targetTab = tabs.find((tab) => tab.tabId === targetTabId);
-  if (!sourceTab || !targetTab || sourceTab === targetTab) return;
-  if (tabSplit) return;
-
-  tabSplit = {
-    ownerTabId: targetTabId,
-    orientation: edge === "left" || edge === "right" ? "horizontal" : "vertical",
-    surfaces: edge === "left" || edge === "top" ? [sourceTab, targetTab] : [targetTab, sourceTab],
-  };
-  tabs = tabs.filter((tab) => tab.tabId !== tabId);
-  activeTabId = targetTabId;
-  emitChange();
-  return targetTabId;
 }
 
 export function selectMockDraftProject(projectId: string | undefined) {
