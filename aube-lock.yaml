@@ -24,9 +24,6 @@ catalogs:
     "@dnd-kit/utilities":
       specifier: 3.2.2
       version: 3.2.2
-    "@earendil-works/pi-ai":
-      specifier: 0.84.3
-      version: 0.84.3
     "@earendil-works/pi-coding-agent":
       specifier: 0.84.3
       version: 0.84.3
@@ -273,27 +270,11 @@ importers:
         specifier: ^2.4.2
         version: 2.9.0
 
-  packages/pi-extension:
+  packages/agent:
     dependencies:
       "@earendil-works/pi-coding-agent":
         specifier: "catalog:"
         version: 0.84.3
-    devDependencies:
-      typescript:
-        specifier: "catalog:"
-        version: 7.0.2
-
-  packages/runtime:
-    dependencies:
-      "@earendil-works/pi-ai":
-        specifier: "catalog:"
-        version: 0.84.3
-      "@earendil-works/pi-coding-agent":
-        specifier: "catalog:"
-        version: 0.84.3
-      "@grove/pi-extension":
-        specifier: workspace:*
-        version: 0.0.0
     devDependencies:
       "@opentelemetry/api":
         specifier: ^1.9.0

@@ -1,8 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "./packages/runtime" },
-    { "path": "./packages/pi-extension" },
-    { "path": "./apps/desktop" }
-  ]
+  "references": [{ "path": "./packages/agent" }, { "path": "./apps/desktop" }]
 }

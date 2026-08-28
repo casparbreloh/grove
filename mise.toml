@@ -25,7 +25,7 @@ check = { depends = [
   "typecheck",
 ] }
 desktop = { depends = [{ task = "//apps/desktop:dev" }] }
-tui = "aube exec pi --extension packages/pi-extension/src/index.ts"
+tui = "aube exec pi --extension packages/agent/src/extensions/local/index.ts"
 doctor = "aube exec react-doctor apps/desktop --verbose"
 doctor-design = "aube exec react-doctor design apps/desktop --verbose"
 format = "aube exec oxfmt --write ."

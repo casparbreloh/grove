@@ -1,0 +1,23 @@
+{
+  "name": "@grove/agent",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./extension": "./src/extensions/local/index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extensions/local/index.ts"
+    ]
+  }
+}

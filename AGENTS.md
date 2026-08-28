@@ -15,15 +15,15 @@ Inspiration is not authority. Preserve Grove product semantics even when an upst
 
 - Ship the smallest clear vertical slice. Avoid speculative providers, protocols, configuration, storage, or extension systems.
 - Agent and Environment are Grove's only pluggable boundaries; use **adapter** only for an external protocol such as ACP. Git is optional and never defines Task or change semantics.
-- Pi Coding Agent owns local and development-machine Agent behavior. Extend it through its typed SDK and extensions; do not reimplement its loop, model/auth handling, tools, compaction, session tree, or TUI.
+- Pi's session, runtime, protocol, and extension contracts are Grove's Agent primitives. Extend them; do not create parallel Grove contracts for prompts, messages, tools, models, compaction, session trees, or the TUI. A non-Pi Agent adapts to the Pi-shaped seam.
 - Prefer platform-native APIs and add a dependency only when it materially reduces code or risk. The renderer projects Grove-owned durable state.
 
 ## Boundaries
 
 - `main` owns Electron, persistence, credentials, agents, environments, filesystem/process access, and validated IPC. `preload` exposes only a narrow typed Grove API. `renderer` is unprivileged: never import Node or Electron there.
-- Keep serializable Grove contracts shared and integration types at their boundaries. Preserve context isolation, sandboxing, and no Node integration; validate renderer input in main and network data at its receiver.
+- Keep Grove contracts limited to Grove product state such as Workspaces, Projects, Tasks, Environments, revisions, and multiplayer. Preserve context isolation, sandboxing, and no Node integration; validate renderer input in main and network data at its receiver.
 - Keep credentials out of Task state, transfers, logs, and transcripts. Treat plugins, hooks, executable skills, and Agent extensions as trusted until isolation exists.
-- The shared runtime composes Agent and Environment; it is not a third pluggable boundary. Local and development-machine Environments share native-directory semantics, while Cloudflare is a separate implementation of the same Environment interface.
+- Agent execution uses Pi's runtime directly. Local and development-machine Environments share native-directory semantics, while Cloudflare is a separate implementation of the same Environment interface.
 
 ## Implementation
 

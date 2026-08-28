@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-/** Grove's typed customization point for the Pi Coding Agent. */
-export function grovePiExtension(pi: ExtensionAPI): void {
+/** Grove's local extension composition for Pi-compatible agent hosts. */
+export function localExtension(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, context) => {
     context.ui.setStatus("grove", context.ui.theme.fg("muted", "Grove"));
   });
@@ -11,4 +11,4 @@ export function grovePiExtension(pi: ExtensionAPI): void {
   });
 }
 
-export default grovePiExtension;
+export default localExtension;
