@@ -44,7 +44,7 @@ export function AppSidebar() {
       className="top-(--header-height) h-[calc(100svh-var(--header-height))]"
       variant="inset"
     >
-      <SidebarHeader className="shrink-0 gap-0 p-0 pb-1 pl-2">
+      <SidebarHeader className="p-0 pl-2">
         <SidebarMenu aria-label="Primary">
           <SidebarMenuItem>
             <SidebarMenuButton>
