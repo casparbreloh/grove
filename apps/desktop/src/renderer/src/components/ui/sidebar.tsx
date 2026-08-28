@@ -100,7 +100,6 @@ function SidebarProvider({
       <div
         data-sidebar-provider="app"
         data-slot="sidebar-wrapper"
-        // SAFETY: React forwards custom properties unchanged; these values only size this primitive.
         style={
           {
             "--sidebar-width": SIDEBAR_WIDTH,
@@ -158,7 +157,6 @@ function Sidebar({
           data-slot="sidebar"
           data-mobile="true"
           className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          // SAFETY: React forwards this custom property unchanged to the mobile sidebar surface.
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -513,7 +511,6 @@ function SidebarMenuSkeleton({
       <Skeleton
         className="h-4 max-w-(--skeleton-width) flex-1"
         data-sidebar="menu-skeleton-text"
-        // SAFETY: React forwards this local custom property to the skeleton's inline width.
         style={
           {
             "--skeleton-width": width,

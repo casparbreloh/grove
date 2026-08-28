@@ -27,7 +27,6 @@ export interface AgentOptions {
   session?: AgentSessionOptions;
 }
 
-/** Creates Grove's configured Pi agent and returns Pi's runtime unchanged. */
 export async function createAgent(options: AgentOptions = {}): Promise<AgentSessionRuntime> {
   const sessionCwd = options.sessionManager?.getCwd();
   if (options.cwd && sessionCwd && resolve(options.cwd) !== resolve(sessionCwd)) {
