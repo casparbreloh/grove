@@ -2,7 +2,7 @@
   "name": "grove",
   "private": true,
   "devDependencies": {
-    "effect": "catalog:",
+    "@earendil-works/pi-coding-agent": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

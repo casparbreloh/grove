@@ -70,7 +70,7 @@ The **Environment boundary** provides Project access, Task isolation and revisio
 
 An Agent must not assume an Environment; an Environment must not assume an Agent. Source-local tools use injected Environment capabilities. Only translation to an external protocol is called an **adapter**; ACP is such an adapter, while Agent and Environment are implementation boundaries.
 
-Grove's domain is the source of truth, not Pi, ACP, assistant-ui, Electron, or a transport. assistant-ui renders it through the library's external-store interface.
+Grove's domain is the source of truth for Workspace, Project, Task, Environment, revisions, durable events, and client projections. Pi Coding Agent is the behavioral core of a Pi Session: Grove uses its SDK and extension system instead of cloning its agent loop, model and OAuth handling, tools, compaction, conversation tree, or TUI. Provider-native state remains private and is projected into Grove contracts. assistant-ui renders Grove state through the library's external-store interface.
 
 ### Electron security
 
@@ -82,15 +82,17 @@ Preserve context isolation, renderer sandboxing, and no Node integration. Valida
 
 Pi is Grove's universal default and the only planned Cloudflare Agent.
 
-| Agent path                     | Local                                                        | Development machine                                          | Cloudflare                                                                    |
-| ------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Pi                             | Official TypeScript SDK; official RPC optional               | Official TypeScript SDK; official RPC optional               | `pi-agent-core` and selective `pi-ai`, with Grove-owned persistence and tools |
-| ACP-compatible process         | Supported through the ACP adapter                            | Supported through the ACP adapter                            | Not supported                                                                 |
-| Claude or Codex via ACP bridge | Only after bridge maintenance and capabilities are validated | Only after bridge maintenance and capabilities are validated | Not supported                                                                 |
+| Agent path                     | Local                                                             | Development machine                                               | Cloudflare                                                                    |
+| ------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Pi                             | Pi Coding Agent SDK/CLI with typed Grove extensions; RPC optional | Pi Coding Agent SDK/CLI with typed Grove extensions; RPC optional | Worker-compatible Pi host with Grove tool operations; move to AgentHarness V2 |
+| ACP-compatible process         | Supported through the ACP adapter                                 | Supported through the ACP adapter                                 | Not supported                                                                 |
+| Claude or Codex via ACP bridge | Only after bridge maintenance and capabilities are validated      | Only after bridge maintenance and capabilities are validated      | Not supported                                                                 |
 
 Local and development-machine Pi use the official TypeScript SDK for high-fidelity events, tools, extension UI, and conversation-tree behavior. Official Pi RPC is an isolation option, not a different product path. Do not route Pi through a community ACP bridge without demonstrated parity and a credible maintenance path.
 
-Cloudflare cannot use the full Pi coding-agent package because it is not Worker-native. A Worker-native Pi integration uses `pi-agent-core`, only the needed `pi-ai` providers, and Grove-owned Session persistence and Environment-backed tools. Pi file, list, search, and edit tools operate directly against Grove's virtual filesystem without a Sandbox.
+`mise run tui` launches Pi's official TUI with Grove's extension. It is a development surface for the same Pi configuration, not a separate Grove client or product UI.
+
+For Cloudflare, preserve Pi's contracts and extension-shaped tool seam while replacing host-dependent file and process operations with injected Grove Environment operations. Broad Node compatibility makes a selective Pi Coding Agent SDK build worth testing, but Grove must not rely on Worker-local filesystem durability or child processes. If the current package cannot run cleanly, use the smallest Pi core subset needed behind the same boundary. Move the Cloudflare host to Pi AgentHarness V2 when that API is complete rather than inventing a competing harness.
 
 ACP requires a compatible subprocess and therefore works only on local and development-machine Environments. Claude and Codex currently need separately maintained bridges. Grove does not plan to lease Cloudflare Sandboxes for agent runtimes, so ACP, Claude, and Codex are unavailable there.
 
@@ -142,7 +144,7 @@ Task-family Durable Object
           multiplayer connections, blob references
       │
       ├── R2: large immutable content blobs
-      ├── Worker-native Pi: direct VFS file/list/search/edit tools
+      ├── Pi host: Grove-backed file/list/search/edit tool operations
       └── exclusive revision-fenced Sandbox lease
             materialize → execute POSIX command → collect delta
             → upload blobs → commit revision and outcome → release
@@ -150,7 +152,7 @@ Task-family Durable Object
 
 A Task-family Durable Object is the durable coordinator. Its SQLite database owns Tasks, Sessions, revisions, snapshot ancestry, logical overlays and whiteouts, ordered journals, command receipts, and multiplayer connection state. Large immutable file content belongs in R2, not SQLite. Durable Object WebSocket hibernation keeps idle multiplayer inexpensive.
 
-Normal Pi filesystem tools read and mutate the logical VFS directly; they do not require a Sandbox. A side Sandbox is leased only for an actual POSIX command, build, test, or package installation. Grove does not place the Agent runtime there.
+The Grove extension supplies Pi-compatible filesystem tool definitions whose operations read and mutate the logical VFS directly; they do not require a Sandbox. A side Sandbox is leased only for an actual POSIX command, build, test, or package installation. Grove does not place the Agent runtime there.
 
 A mutating command receives an exclusive lease fenced to the Task's starting revision. Grove materializes that revision into a normal directory, executes the command, quiesces Agent tools, terminals, background processes, and every other filesystem writer, collects changed content and tombstones, uploads immutable blobs, then transactionally commits the new revision and command outcome before releasing the lease. A stale fence cannot commit. The command remains provisional until synchronization commits; unsynchronized files and processes may disappear. One active mutating Turn per Task keeps this protocol initially tractable.
 
@@ -169,8 +171,8 @@ Benchmark materialization, command startup, dependency installation, delta colle
 
 Ship the smallest vertical slices in this order:
 
-1. Grove-owned Workspace, Project, Task, Session, Turn, message, capability, event, and durable local persistence.
-2. Local Pi on that state with real Environment-backed tools.
+1. Pi-native local development through the official TUI, SDK, and a typed Grove extension.
+2. Grove-owned Workspace, Project, Task, Environment, revision, durable event, and client projections around Pi Sessions.
 3. Local native-directory Task isolation with copy-on-write probing and an explicit full-copy fallback.
 4. Restorable chat and terminal tabs; compare/apply; cancellation and restart recovery.
 5. The ACP adapter, followed by explicit Claude and Codex bridge validation.

@@ -1,4 +1,3 @@
-import { Effect } from "effect";
 import { assert, it } from "vitest";
 
 import type {
@@ -233,73 +232,60 @@ class ScriptedAgentSession implements AgentSessionService {
     this.#waitForAbort = waitForAbort;
   }
 
-  get models(): Effect.Effect<readonly ModelSummary[]> {
-    return Effect.succeed(this.#models);
+  get models(): readonly ModelSummary[] {
+    return this.#models;
   }
 
-  get model(): Effect.Effect<ModelSummary> {
-    return Effect.sync(() => this.#model);
+  get model(): ModelSummary {
+    return this.#model;
   }
 
-  get thinkingLevel(): Effect.Effect<ThinkingLevel> {
-    return Effect.sync(() => this.#thinkingLevel);
+  get thinkingLevel(): ThinkingLevel {
+    return this.#thinkingLevel;
   }
 
-  run(sink: AgentSessionSink, _text: string): Effect.Effect<AgentRunResult> {
-    const start = Effect.sync(() => {
-      this.runCount += 1;
-      sink.progress({ type: "message.text-delta", delta: "Hello from the scripted agent." });
-    });
-    const waitForAbort = this.#waitForAbort
-      ? Effect.callback<void>((resume) => {
-          this.#resolveAbort = () => resume(Effect.void);
-        })
-      : Effect.void;
+  async run(sink: AgentSessionSink, _text: string): Promise<AgentRunResult> {
+    this.runCount += 1;
+    sink.progress({ type: "message.text-delta", delta: "Hello from the scripted agent." });
+    if (this.#waitForAbort) {
+      await new Promise<void>((resolve) => {
+        this.#resolveAbort = resolve;
+      });
+    }
     const outcome = this.#waitForAbort ? ("aborted" as const) : ("completed" as const);
-    return start.pipe(
-      Effect.andThen(waitForAbort),
-      Effect.as({
-        outcome,
-        parts: [{ type: "text" as const, text: "Hello from the scripted agent." }],
-      }),
+    return {
+      outcome,
+      parts: [{ type: "text", text: "Hello from the scripted agent." }],
+    };
+  }
+
+  async abort(): Promise<boolean> {
+    if (!this.#resolveAbort) return false;
+    this.#resolveAbort();
+    this.#resolveAbort = undefined;
+    return true;
+  }
+
+  async selectModel(ref: ModelSummary["ref"]): Promise<boolean> {
+    const selected = this.#models.find(
+      (candidate) =>
+        candidate.ref.providerId === ref.providerId && candidate.ref.modelId === ref.modelId,
     );
+    if (!selected) return false;
+    this.#model = selected;
+    return true;
   }
 
-  get abort(): Effect.Effect<boolean> {
-    return Effect.sync(() => {
-      if (!this.#resolveAbort) return false;
-      this.#resolveAbort();
-      this.#resolveAbort = undefined;
-      return true;
-    });
+  async setThinkingLevel(level: ThinkingLevel): Promise<boolean> {
+    if (!this.#model.thinkingLevels.includes(level)) return false;
+    this.#thinkingLevel = level;
+    return true;
   }
 
-  selectModel(ref: ModelSummary["ref"]): Effect.Effect<boolean> {
-    return Effect.sync(() => {
-      const selected = this.#models.find(
-        (candidate) =>
-          candidate.ref.providerId === ref.providerId && candidate.ref.modelId === ref.modelId,
-      );
-      if (!selected) return false;
-      this.#model = selected;
-      return true;
-    });
-  }
-
-  setThinkingLevel(level: ThinkingLevel): Effect.Effect<boolean> {
-    return Effect.sync(() => {
-      if (!this.#model.thinkingLevels.includes(level)) return false;
-      this.#thinkingLevel = level;
-      return true;
-    });
-  }
-
-  get shutdown(): Effect.Effect<void> {
-    return Effect.sync(() => {
-      this.shutdownCount += 1;
-      this.#resolveAbort?.();
-      this.#resolveAbort = undefined;
-    });
+  async shutdown(): Promise<void> {
+    this.shutdownCount += 1;
+    this.#resolveAbort?.();
+    this.#resolveAbort = undefined;
   }
 }
 

@@ -9,12 +9,13 @@
   - `.repos/pi-main` — current Pi; inspect `packages/agent`, `protocol`, `server`, `client`, and `coding-agent`.
   - `.repos/pi-harness-v2` — Pi's historical `harness-v2/j4` line for comparison only; current harness work is on `pi-main`.
 
-Inspiration is not authority. Preserve Grove semantics even when an upstream shape is useful.
+Inspiration is not authority. Preserve Grove product semantics even when an upstream shape is useful.
 
 ## Principles
 
 - Ship the smallest clear vertical slice. Avoid speculative providers, protocols, configuration, storage, or extension systems.
 - Agent and Environment are Grove's only pluggable boundaries; use **adapter** only for an external protocol such as ACP. Git is optional and never defines Task or change semantics.
+- Pi Coding Agent owns local and development-machine Agent behavior. Extend it through its typed SDK and extensions; do not reimplement its loop, model/auth handling, tools, compaction, session tree, or TUI.
 - Prefer platform-native APIs and add a dependency only when it materially reduces code or risk. The renderer projects Grove-owned durable state.
 
 ## Boundaries
@@ -27,13 +28,9 @@ Inspiration is not authority. Preserve Grove semantics even when an upstream sha
 ## Implementation
 
 - Follow local TypeScript/UI patterns, infer types, avoid `any`, validate untrusted data, and use discriminated unions for finite states. Mock only external/system boundaries.
-- Do not edit generated files (including `routeTree.gen.ts`) or add Effect without a concrete lifecycle/concurrency need.
+- Do not edit generated files (including `routeTree.gen.ts`).
 - Assistant UI belongs in `apps/desktop/src/renderer/src/components/ai-elements`. Install it only with `npx assistant-ui@latest add <component> --path src/renderer/src/components/ai-elements`; keep transitive shadcn primitives in `components/ui`.
 - Renderer-only slices use explicitly named mock modules. Do not smuggle preload, IPC, filesystem, process, Agent, or Environment behavior into renderer code.
-
-## Learning more about Effect
-
-This repository uses the Effect TypeScript library. Before writing Effect code, read `node_modules/effect/AGENTS.md` completely and follow its links when required. For APIs and concepts it does not cover, search `node_modules/effect/src`. Use `@effect/vitest` for Effect tests; keep tests of Promise-based public contracts as ordinary Vitest tests.
 
 ## Verification
 

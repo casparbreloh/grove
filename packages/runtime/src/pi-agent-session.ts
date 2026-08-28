@@ -1,13 +1,24 @@
-import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import {
-  clampThinkingLevel,
+  type AgentSession,
+  type AgentSessionEvent,
+  type AgentSessionRuntime,
+  createAgentSessionFromServices,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
+  type CreateAgentSessionRuntimeFactory,
+  getAgentDir,
+  type ModelRuntime,
+  SessionManager,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import {
   getSupportedThinkingLevels,
   type Api,
   type AssistantMessage,
   type Model,
+  type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Cause, Effect } from "effect";
+import { grovePiExtension } from "@grove/pi-extension";
 
 import {
   type AgentRunResult,
@@ -17,28 +28,75 @@ import {
 import type { JsonValue, MessagePart, ModelRef, ModelSummary, ThinkingLevel } from "./types.ts";
 
 export interface PiAgentSessionOptions {
+  cwd?: string;
+  agentDir?: string;
   model?: { providerId: string; modelId: string };
   systemPrompt?: string;
   thinkingLevel?: ThinkingLevel;
+  tools?: string[];
+  excludeTools?: string[];
+  noTools?: "all" | "builtin";
+  customTools?: ToolDefinition[];
 }
 
-export const createPiAgentSession: (
-  options?: PiAgentSessionOptions,
-) => Effect.Effect<AgentSessionService, Cause.UnknownError> = Effect.fn("PiAgentSession.create")(
-  function* (options: PiAgentSessionOptions = {}) {
-    const models = yield* Effect.tryPromise(() => ModelRuntime.create());
-    const preferred = options.model
-      ? models.getModel(options.model.providerId, options.model.modelId)
-      : models.getModel("openai-codex", "gpt-5.6-sol");
-    const model = preferred ?? models.getAvailableSnapshot()[0] ?? models.getModels()[0];
-
-    if (!model) {
-      return yield* Effect.fail(new Cause.UnknownError(undefined, "Pi has no models available"));
+export async function createPiAgentSession(
+  options: PiAgentSessionOptions = {},
+): Promise<AgentSessionService> {
+  const cwd = options.cwd ?? process.cwd();
+  const agentDir = options.agentDir ?? getAgentDir();
+  const createRuntime: CreateAgentSessionRuntimeFactory = async ({
+    cwd: sessionCwd,
+    sessionManager,
+    sessionStartEvent,
+  }) => {
+    const services = await createAgentSessionServices({
+      cwd: sessionCwd,
+      agentDir,
+      resourceLoaderOptions: {
+        extensionFactories: [grovePiExtension],
+        ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
+      },
+    });
+    const model = options.model
+      ? services.modelRuntime.getModel(options.model.providerId, options.model.modelId)
+      : undefined;
+    if (options.model && !model) {
+      throw new Error(
+        `Pi model is unavailable: ${options.model.providerId}/${options.model.modelId}`,
+      );
     }
+    const result = await createAgentSessionFromServices({
+      services,
+      sessionManager,
+      sessionStartEvent,
+      ...(model ? { model } : {}),
+      ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
+      ...(options.tools ? { tools: options.tools } : {}),
+      ...(options.excludeTools ? { excludeTools: options.excludeTools } : {}),
+      ...(options.noTools ? { noTools: options.noTools } : {}),
+      ...(options.customTools ? { customTools: options.customTools } : {}),
+    });
+    return { ...result, services, diagnostics: services.diagnostics };
+  };
+  const runtime = await createAgentSessionRuntime(createRuntime, {
+    cwd,
+    agentDir,
+    sessionManager: SessionManager.inMemory(cwd),
+  });
 
-    return new PiAgentSession(models, model, options);
-  },
-);
+  if (!runtime.session.model) {
+    await runtime.dispose();
+    throw new Error("Pi has no models available");
+  }
+  try {
+    await runtime.session.bindExtensions({});
+  } catch (error) {
+    await runtime.dispose();
+    throw error;
+  }
+
+  return new PiAgentSession(runtime);
+}
 
 class PiAgentSession implements AgentSessionService {
   readonly capabilities = {
@@ -47,99 +105,87 @@ class PiAgentSession implements AgentSessionService {
     selectModel: true,
     setThinkingLevel: true,
   };
-  readonly #models: ModelRuntime;
-  readonly #agent: Agent;
+  readonly #runtime: AgentSessionRuntime;
 
-  constructor(models: ModelRuntime, model: Model<Api>, options: PiAgentSessionOptions) {
-    this.#models = models;
-    const requestedThinking = options.thinkingLevel ?? "low";
-    this.#agent = new Agent({
-      initialState: {
-        model,
-        systemPrompt: options.systemPrompt ?? "You are a concise software development agent.",
-        thinkingLevel: clampThinkingLevel(model, requestedThinking),
-        tools: [],
-      },
-      streamFn: models.streamSimple.bind(models),
-    });
+  constructor(runtime: AgentSessionRuntime) {
+    this.#runtime = runtime;
   }
 
-  get models(): Effect.Effect<readonly ModelSummary[]> {
-    return Effect.sync(() =>
-      uniqueModels([this.#agent.state.model, ...this.#models.getAvailableSnapshot()]).map(
-        toModelSummary,
-      ),
+  get models(): readonly ModelSummary[] {
+    return uniqueModels([this.#requireModel(), ...this.#models.getAvailableSnapshot()]).map(
+      toModelSummary,
     );
   }
 
-  get model(): Effect.Effect<ModelSummary> {
-    return Effect.sync(() => toModelSummary(this.#agent.state.model));
+  get model(): ModelSummary {
+    return toModelSummary(this.#requireModel());
   }
 
-  get thinkingLevel(): Effect.Effect<ThinkingLevel> {
-    return Effect.sync(() => this.#agent.state.thinkingLevel);
+  get thinkingLevel(): ThinkingLevel {
+    return this.#session.thinkingLevel;
   }
 
-  run(sink: AgentSessionSink, text: string): Effect.Effect<AgentRunResult, Cause.UnknownError> {
-    return Effect.scoped(runPiAgent(this.#agent, sink, text));
+  async run(sink: AgentSessionSink, text: string): Promise<AgentRunResult> {
+    const startIndex = this.#session.messages.length;
+    const unsubscribe = this.#session.subscribe((event) => publishProgress(sink, event));
+    try {
+      await this.#session.prompt(text);
+      return toRunResult(this.#session.messages.slice(startIndex));
+    } finally {
+      unsubscribe();
+    }
   }
 
-  get abort(): Effect.Effect<boolean> {
-    return Effect.sync(() => {
-      if (!this.#agent.state.isStreaming) return false;
-      this.#agent.abort();
+  async abort(): Promise<boolean> {
+    if (!this.#session.isStreaming) return false;
+    await this.#session.abort();
+    return true;
+  }
+
+  async selectModel(ref: ModelRef): Promise<boolean> {
+    if (ref.agentId !== "pi") return false;
+    const model = this.#models.getModel(ref.providerId, ref.modelId);
+    if (!model) return false;
+    try {
+      await this.#session.setModel(model);
       return true;
-    });
+    } catch {
+      return false;
+    }
   }
 
-  selectModel(ref: ModelRef): Effect.Effect<boolean> {
-    return Effect.sync(() => {
-      if (ref.agentId !== "pi") return false;
-      const model = this.#models.getModel(ref.providerId, ref.modelId);
-      if (!model) return false;
-      this.#agent.state.model = model;
-      this.#agent.state.thinkingLevel = clampThinkingLevel(model, this.#agent.state.thinkingLevel);
-      return true;
-    });
+  async setThinkingLevel(level: ThinkingLevel): Promise<boolean> {
+    if (!this.#session.getAvailableThinkingLevels().includes(level)) return false;
+    this.#session.setThinkingLevel(level);
+    return true;
   }
 
-  setThinkingLevel(level: ThinkingLevel): Effect.Effect<boolean> {
-    return Effect.sync(() => {
-      if (!getSupportedThinkingLevels(this.#agent.state.model).includes(level)) return false;
-      this.#agent.state.thinkingLevel = level;
-      return true;
-    });
+  async shutdown(): Promise<void> {
+    if (this.#session.isStreaming) await this.#session.abort();
+    await this.#runtime.dispose();
   }
 
-  get shutdown(): Effect.Effect<void> {
-    return Effect.sync(() => this.#agent.abort());
+  get #models(): ModelRuntime {
+    return this.#runtime.services.modelRuntime;
+  }
+
+  get #session(): AgentSession {
+    return this.#runtime.session;
+  }
+
+  #requireModel(): Model<Api> {
+    const model = this.#session.model;
+    if (!model) throw new Error("Pi session has no model");
+    return model;
   }
 }
 
-const runPiAgent = Effect.fn("PiAgentSession.run")(function* (
-  agent: Agent,
-  sink: AgentSessionSink,
-  text: string,
-) {
-  yield* Effect.acquireRelease(
-    Effect.sync(() => agent.subscribe((event) => publishProgress(sink, event))),
-    (unsubscribe) => Effect.sync(unsubscribe),
-  );
-  yield* Effect.callback<void, Cause.UnknownError>((resume) => {
-    void agent.prompt(text).then(
-      () => resume(Effect.void),
-      (cause) => resume(Effect.fail(new Cause.UnknownError(cause, "Pi Agent request failed"))),
-    );
-    return Effect.sync(() => agent.abort());
-  });
-  return toRunResult(agent.state.messages);
-});
-
-function publishProgress(sink: AgentSessionSink, event: AgentEvent): void {
+function publishProgress(sink: AgentSessionSink, event: AgentSessionEvent): void {
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
-    if (update.type === "text_delta")
+    if (update.type === "text_delta") {
       sink.progress({ type: "message.text-delta", delta: update.delta });
+    }
     if (update.type === "thinking_delta") {
       sink.progress({ type: "message.reasoning-delta", delta: update.delta });
     }
@@ -159,10 +205,11 @@ function publishProgress(sink: AgentSessionSink, event: AgentEvent): void {
 
 function toRunResult(messages: readonly unknown[]): AgentRunResult {
   const message = findLastAssistantMessage(messages);
+  const parts = toTurnParts(messages);
   if (!message) {
     return {
       outcome: "failed",
-      parts: [],
+      parts,
       error: {
         code: "missing-response",
         message: "Pi completed without an assistant response",
@@ -172,7 +219,7 @@ function toRunResult(messages: readonly unknown[]): AgentRunResult {
   if (message.stopReason === "error") {
     return {
       outcome: "failed",
-      parts: toMessageParts(message),
+      parts,
       error: {
         code: "provider-error",
         message: message.errorMessage ?? "Model request failed",
@@ -180,9 +227,9 @@ function toRunResult(messages: readonly unknown[]): AgentRunResult {
     };
   }
   if (message.stopReason === "aborted") {
-    return { outcome: "aborted", parts: toMessageParts(message) };
+    return { outcome: "aborted", parts };
   }
-  return { outcome: "completed", parts: toMessageParts(message) };
+  return { outcome: "completed", parts };
 }
 
 function toModelSummary(model: Model<Api>): ModelSummary {
@@ -215,12 +262,41 @@ function isAssistantMessage(message: unknown): message is AssistantMessage {
   );
 }
 
+function isToolResultMessage(message: unknown): message is ToolResultMessage {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "role" in message &&
+    message.role === "toolResult"
+  );
+}
+
 function findLastAssistantMessage(messages: readonly unknown[]): AssistantMessage | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (isAssistantMessage(message)) return message;
   }
   return undefined;
+}
+
+function toTurnParts(messages: readonly unknown[]): MessagePart[] {
+  return messages.flatMap((message) => {
+    if (isAssistantMessage(message)) return toMessageParts(message);
+    if (isToolResultMessage(message)) {
+      return [
+        {
+          type: "tool-result" as const,
+          callId: message.toolCallId,
+          name: message.toolName,
+          output: message.content
+            .map((part) => (part.type === "text" ? part.text : "[image]"))
+            .join("\n"),
+          isError: message.isError,
+        },
+      ];
+    }
+    return [];
+  });
 }
 
 function toMessageParts(message: AssistantMessage): MessagePart[] {

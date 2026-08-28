@@ -1,5 +1,3 @@
-import { Cause, Effect } from "effect";
-
 import type { MessagePart, ModelRef, ModelSummary, ThinkingLevel } from "./types.ts";
 
 export type AgentSessionProgress =
@@ -27,12 +25,12 @@ export interface AgentSessionCapabilities {
 
 export interface AgentSessionService {
   readonly capabilities: AgentSessionCapabilities;
-  readonly models: Effect.Effect<readonly ModelSummary[]>;
-  readonly model: Effect.Effect<ModelSummary>;
-  readonly thinkingLevel: Effect.Effect<ThinkingLevel>;
-  run(sink: AgentSessionSink, text: string): Effect.Effect<AgentRunResult, Cause.UnknownError>;
-  readonly abort: Effect.Effect<boolean>;
-  selectModel(ref: ModelRef): Effect.Effect<boolean>;
-  setThinkingLevel(level: ThinkingLevel): Effect.Effect<boolean>;
-  readonly shutdown: Effect.Effect<void>;
+  readonly models: readonly ModelSummary[];
+  readonly model: ModelSummary;
+  readonly thinkingLevel: ThinkingLevel;
+  run(sink: AgentSessionSink, text: string): Promise<AgentRunResult>;
+  abort(): Promise<boolean>;
+  selectModel(ref: ModelRef): Promise<boolean>;
+  setThinkingLevel(level: ThinkingLevel): Promise<boolean>;
+  shutdown(): Promise<void>;
 }

@@ -1,5 +1,5 @@
 import { createPiAgentSession, type PiAgentSessionOptions } from "./pi-agent-session.ts";
-import { createEffectGroveClient, type DirectGroveClientOptions } from "./runtime.ts";
+import { createDirectGroveClient, type DirectGroveClientOptions } from "./runtime.ts";
 import type { GroveClient } from "./types.ts";
 
 export type {
@@ -25,5 +25,11 @@ export interface CreateGroveClientOptions extends PiAgentSessionOptions, DirectG
 export async function createGroveClient(
   options: CreateGroveClientOptions = {},
 ): Promise<GroveClient> {
-  return createEffectGroveClient(createPiAgentSession(options), options);
+  const agent = await createPiAgentSession(options);
+  try {
+    return createDirectGroveClient(agent, options);
+  } catch (error) {
+    await agent.shutdown();
+    throw error;
+  }
 }

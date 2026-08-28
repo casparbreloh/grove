@@ -2,7 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/runtime" },
-    { "path": "./apps/tui" },
+    { "path": "./packages/pi-extension" },
     { "path": "./apps/desktop" }
   ]
 }
