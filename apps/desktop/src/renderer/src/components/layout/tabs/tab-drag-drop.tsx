@@ -5,6 +5,7 @@ import {
   KeyboardSensor,
   MeasuringStrategy,
   PointerSensor,
+  useDndContext,
   useSensor,
   useSensors,
   type Announcements,
@@ -77,7 +78,7 @@ const tabCollisionDetection: CollisionDetection = (arguments_) => {
     if (collision) return [collision];
   }
 
-  return containing.length > 0 ? containing : collisions;
+  return collisions;
 };
 
 function getNearestEdge(
@@ -99,7 +100,7 @@ export function TabDragDropProvider({ children }: { children: ReactNode }) {
   const { tabs } = useMockGrove();
   const [drag, setDrag] = useState<TabDragState>({ kind: "idle" });
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
       keyboardCodes: { start: ["KeyD"], cancel: ["Escape"], end: ["KeyD"] },
@@ -221,8 +222,14 @@ export function useTabDragState() {
 }
 
 function TabDragPreview({ tab }: { tab: Tab }) {
+  const { over } = useDndContext();
+  const dropData = over?.data.current as TabDropData | undefined;
+
   return (
-    <div className="flex h-7 w-37.5 cursor-grabbing items-center rounded-md bg-accent px-3 pr-7 text-sm text-accent-foreground shadow-sm">
+    <div
+      className="flex h-7 w-37.5 select-none items-center rounded-md bg-accent px-3 pr-7 text-sm text-accent-foreground shadow-sm data-[split=true]:opacity-0"
+      data-split={dropData?.kind === "split-edge"}
+    >
       <span className="truncate">{tab.title}</span>
     </div>
   );

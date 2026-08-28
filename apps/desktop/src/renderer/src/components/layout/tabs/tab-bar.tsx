@@ -61,7 +61,7 @@ function SortableTab({
   } = useSortable({
     id: tab.tabId,
     data: { kind: "tab", source: "tab-list", tab } satisfies TabDragData,
-    transition: { duration: 200, easing: "cubic-bezier(0.77, 0, 0.175, 1)" },
+    transition: { duration: 150, easing: "cubic-bezier(0.77, 0, 0.175, 1)" },
   });
 
   function closeTab() {
@@ -88,7 +88,7 @@ function SortableTab({
         aria-controls={`${tab.tabId}-panel`}
         aria-pressed={isActive}
         className={cn(
-          "h-full w-full touch-none cursor-grab select-none justify-start truncate pr-7 font-normal transition-colors duration-75 active:cursor-grabbing group-hover/tab:bg-accent group-hover/tab:text-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0 motion-reduce:transition-none",
+          "h-full w-full touch-none select-none justify-start truncate pr-7 font-normal transition-colors duration-75 group-hover/tab:bg-accent group-hover/tab:text-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0 motion-reduce:transition-none",
           isActive && "bg-accent text-accent-foreground",
         )}
         id={`${tab.tabId}-tab`}
@@ -119,16 +119,10 @@ function SortableTab({
 }
 
 function TabListDropTail() {
-  const { isOver, setNodeRef } = useDroppable({
+  const { setNodeRef } = useDroppable({
     id: "tab-list-tail",
     data: { kind: "tab-list" } satisfies TabDropData,
   });
 
-  return (
-    <div
-      aria-hidden="true"
-      className={cn("h-7 min-w-6 flex-1 rounded-md", isOver && "bg-accent")}
-      ref={setNodeRef}
-    />
-  );
+  return <div aria-hidden="true" className="h-7 min-w-6 flex-1" ref={setNodeRef} />;
 }

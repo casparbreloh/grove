@@ -9,9 +9,9 @@ import { TabContent } from "./tab-content";
 import { useTabDragState, type TabDragData, type TabDropData } from "./tab-drag-drop";
 
 const sourcePaneMotion =
-  "transition-transform duration-200 [transition-timing-function:cubic-bezier(0.77,0,0.175,1)] data-[drag-input=keyboard]:transition-none data-[open=false]:transition-none motion-reduce:transition-none";
+  "transition-transform duration-150 [transition-timing-function:cubic-bezier(0.77,0,0.175,1)] data-[drag-input=keyboard]:transition-none data-[open=false]:transition-none motion-reduce:transition-none";
 const incomingPaneMotion =
-  "[transition:transform_200ms_cubic-bezier(0.77,0,0.175,1),opacity_200ms_cubic-bezier(0.23,1,0.32,1)] data-[drag-input=keyboard]:transition-none data-[open=false]:transition-none motion-reduce:[transition:opacity_200ms_cubic-bezier(0.23,1,0.32,1)]";
+  "[transition:transform_150ms_cubic-bezier(0.77,0,0.175,1),opacity_150ms_cubic-bezier(0.23,1,0.32,1)] data-[drag-input=keyboard]:transition-none data-[open=false]:transition-none motion-reduce:[transition:opacity_150ms_cubic-bezier(0.23,1,0.32,1)]";
 const previewPaneGeometry =
   "data-[orientation=horizontal]:inset-y-0 data-[orientation=horizontal]:left-0 data-[orientation=horizontal]:w-[calc(50%_-_0.25rem)] data-[orientation=vertical]:inset-x-0 data-[orientation=vertical]:top-0 data-[orientation=vertical]:h-[calc(50%_-_0.25rem)] data-[far=true]:data-[orientation=horizontal]:translate-x-[calc(100%+0.5rem)] data-[far=true]:data-[orientation=vertical]:translate-y-[calc(100%+0.5rem)]";
 
@@ -89,7 +89,7 @@ function SingleSurface({ tab }: { tab: Tab }) {
     >
       <div
         className={cn(
-          "absolute overflow-hidden bg-background data-[open=false]:inset-0 data-[open=true]:rounded-xl data-[open=true]:shadow-sm",
+          "absolute flex flex-col overflow-hidden bg-background data-[open=false]:inset-0 data-[open=true]:rounded-xl data-[open=true]:shadow-sm",
           sourcePaneMotion,
           previewPaneGeometry,
         )}
@@ -98,14 +98,17 @@ function SingleSurface({ tab }: { tab: Tab }) {
         data-open={previewOpen}
         data-orientation={orientation}
       >
-        <TabContent tab={tab} />
+        <PreviewPaneHeader open={previewOpen} title={tab.title} />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <TabContent tab={tab} />
+        </div>
       </div>
       {canSplit && <SplitDropTargets targetTabId={tab.tabId} />}
       {drag.kind === "dragging" && canSplit && (
         <div
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute z-10 flex items-center justify-center overflow-hidden rounded-xl border-2 border-foreground/15 bg-background/80 opacity-0 shadow-sm backdrop-blur-xl data-[open=true]:opacity-100 contrast-more:border-foreground/40 contrast-more:bg-background [@media(prefers-reduced-transparency:reduce)]:bg-background [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none",
+            "pointer-events-none absolute z-10 flex flex-col overflow-hidden rounded-xl bg-background opacity-0 shadow-sm data-[open=true]:opacity-100",
             incomingPaneMotion,
             previewPaneGeometry,
           )}
@@ -114,9 +117,8 @@ function SingleSurface({ tab }: { tab: Tab }) {
           data-open={previewOpen}
           data-orientation={orientation}
         >
-          <span className="truncate px-4 text-sm font-medium text-foreground/70 contrast-more:text-foreground">
-            {drag.draggedTab.title}
-          </span>
+          <PreviewPaneHeader open title={drag.draggedTab.title} />
+          <div className="min-h-0 flex-1" />
         </div>
       )}
     </section>
@@ -124,7 +126,7 @@ function SingleSurface({ tab }: { tab: Tab }) {
 }
 
 function SplitPane({ tab }: { tab: Tab }) {
-  const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } = useDraggable({
+  const { attributes, listeners, setActivatorNodeRef, setNodeRef } = useDraggable({
     id: `split-pane:${tab.tabId}`,
     data: { kind: "tab", source: "split", tab } satisfies TabDragData,
   });
@@ -139,10 +141,7 @@ function SplitPane({ tab }: { tab: Tab }) {
       <Button
         {...attributes}
         {...listeners}
-        className={cn(
-          "h-10 w-full shrink-0 touch-none cursor-grab select-none justify-start rounded-none px-3 font-normal active:cursor-grabbing",
-          isDragging && "opacity-30",
-        )}
+        className="h-10 w-full shrink-0 touch-none select-none justify-start rounded-none border-x-0 border-t-0 border-b border-border bg-transparent px-3 font-normal hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-foreground"
         ref={setActivatorNodeRef}
         type="button"
         variant="ghost"
@@ -152,6 +151,17 @@ function SplitPane({ tab }: { tab: Tab }) {
       <div className="min-h-0 flex-1 overflow-hidden">
         <TabContent tab={tab} />
       </div>
+    </div>
+  );
+}
+
+function PreviewPaneHeader({ open, title }: { open: boolean; title: string }) {
+  return (
+    <div
+      className="hidden h-10 shrink-0 items-center border-b border-border px-3 text-sm data-[open=true]:flex"
+      data-open={open}
+    >
+      <span className="truncate">{title}</span>
     </div>
   );
 }
