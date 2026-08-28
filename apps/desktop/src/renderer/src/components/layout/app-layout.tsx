@@ -4,7 +4,7 @@ import { Outlet } from "@tanstack/react-router";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
 import { NewTabMenu } from "./tabs/new-tab-menu";
-import { TopPaneHeaders } from "./tabs/tab-bar";
+import { TabBar } from "./tabs/tab-bar";
 import { TabDragDropProvider } from "./tabs/tab-drag-drop";
 
 export function AppLayout() {
@@ -33,7 +33,7 @@ function DesktopHeader() {
           icon={PencilEdit02Icon}
         />
       </div>
-      <TopPaneHeaders />
+      <TabBar />
     </header>
   );
 }

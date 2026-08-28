@@ -27,31 +27,12 @@ type UnavailableTab = {
 
 export type Tab = ChatTab | TerminalTab | UnavailableTab;
 
-export type PaneId = "pane_main" | "pane_split";
-type SplitOrientation = "horizontal" | "vertical";
 export type SplitEdge = "left" | "right" | "top" | "bottom";
-
-export type TabPane = {
-  paneId: PaneId;
-  tabIds: readonly string[];
-  activeTabId: string;
+export type TabSplit = {
+  ownerTabId: string;
+  orientation: "horizontal" | "vertical";
+  surfaces: readonly [Tab, Tab];
 };
-
-export type TabLayout =
-  | { kind: "single"; activePaneId: PaneId; panes: readonly [TabPane] }
-  | {
-      kind: "split";
-      activePaneId: PaneId;
-      orientation: SplitOrientation;
-      panes: readonly [TabPane, TabPane];
-    };
-
-export function getPaneTabs(pane: TabPane, allTabs: readonly Tab[]) {
-  return pane.tabIds.flatMap((tabId) => {
-    const tab = allTabs.find((candidate) => candidate.tabId === tabId);
-    return tab ? [tab] : [];
-  });
-}
 
 type GroveViewState = {
   workspaces: readonly Workspace[];
@@ -62,7 +43,7 @@ type GroveViewState = {
   taskProjectFilterId: string | undefined;
   tabs: readonly Tab[];
   activeTabId: string;
-  tabLayout: TabLayout;
+  tabSplit: TabSplit | undefined;
 };
 
 const workspaces: readonly Workspace[] = [
@@ -209,62 +190,8 @@ let tabs: readonly Tab[] = [
   { tabId: "tab_chat", kind: "chat", sessionId: "session_mock", title: "Chat" },
   { tabId: "tab_terminal_1", kind: "terminal", terminalId: "terminal_1", title: "Terminal" },
 ];
-let tabLayout: TabLayout = {
-  kind: "single",
-  activePaneId: "pane_main",
-  panes: [
-    {
-      paneId: "pane_main",
-      tabIds: tabs.map(({ tabId }) => tabId),
-      activeTabId: tabs[0].tabId,
-    },
-  ],
-};
-
-function getPane(paneId: PaneId) {
-  return tabLayout.panes.find((pane) => pane.paneId === paneId);
-}
-
-function getPaneForTab(tabId: string) {
-  return tabLayout.panes.find((pane) => pane.tabIds.includes(tabId));
-}
-
-function getActiveTabId() {
-  return getPane(tabLayout.activePaneId)?.activeTabId ?? tabLayout.panes[0].activeTabId;
-}
-
-function replacePane(paneId: PaneId, nextPane: TabPane): TabLayout {
-  if (tabLayout.kind === "single") {
-    return {
-      ...tabLayout,
-      panes: [tabLayout.panes[0].paneId === paneId ? nextPane : tabLayout.panes[0]],
-    };
-  }
-
-  const [firstPane, secondPane] = tabLayout.panes;
-  return {
-    ...tabLayout,
-    panes: [
-      firstPane.paneId === paneId ? nextPane : firstPane,
-      secondPane.paneId === paneId ? nextPane : secondPane,
-    ],
-  };
-}
-
-function removeTabFromPane(pane: TabPane, tabId: string) {
-  const tabIndex = pane.tabIds.indexOf(tabId);
-  if (tabIndex < 0) return pane;
-
-  const tabIds = pane.tabIds.filter((candidate) => candidate !== tabId);
-  if (tabIds.length === 0) return undefined;
-
-  return {
-    ...pane,
-    tabIds,
-    activeTabId:
-      pane.activeTabId === tabId ? tabIds[Math.min(tabIndex, tabIds.length - 1)] : pane.activeTabId,
-  };
-}
+let activeTabId = tabs[0].tabId;
+let tabSplit: TabSplit | undefined;
 
 function createState(): GroveViewState {
   const visibleProjects: Project[] = [];
@@ -289,8 +216,8 @@ function createState(): GroveViewState {
     draftProjectId,
     taskProjectFilterId,
     tabs,
-    activeTabId: getActiveTabId(),
-    tabLayout,
+    activeTabId,
+    tabSplit,
   };
 }
 
@@ -312,31 +239,19 @@ export function useMockGrove() {
   );
 }
 
-function addMockTab(tab: Tab, paneId: PaneId = tabLayout.activePaneId) {
-  const targetPane = getPane(paneId) ?? tabLayout.panes[0];
+function addMockTab(tab: Tab) {
   tabs = [...tabs, tab];
-  tabLayout = {
-    ...replacePane(targetPane.paneId, {
-      ...targetPane,
-      tabIds: [...targetPane.tabIds, tab.tabId],
-      activeTabId: tab.tabId,
-    }),
-    activePaneId: targetPane.paneId,
-  };
+  activeTabId = tab.tabId;
   emitChange();
 }
 
 export function selectMockTab(tabId: string) {
-  const pane = getPaneForTab(tabId);
-  if (!pane || (pane.activeTabId === tabId && tabLayout.activePaneId === pane.paneId)) return;
-  tabLayout = {
-    ...replacePane(pane.paneId, { ...pane, activeTabId: tabId }),
-    activePaneId: pane.paneId,
-  };
+  if (tabId === activeTabId || !tabs.some((tab) => tab.tabId === tabId)) return;
+  activeTabId = tabId;
   emitChange();
 }
 
-export function createMockChatTab(paneId?: PaneId) {
+export function createMockChatTab() {
   const chatNumber = nextChat++;
   const tab: Tab = {
     tabId: `tab_chat_${chatNumber}`,
@@ -344,10 +259,10 @@ export function createMockChatTab(paneId?: PaneId) {
     sessionId: `session_${chatNumber}`,
     title: `Chat ${chatNumber}`,
   };
-  addMockTab(tab, paneId);
+  addMockTab(tab);
 }
 
-export function createMockTerminalTab(paneId?: PaneId) {
+export function createMockTerminalTab() {
   const terminalNumber = nextTerminal++;
   const tab: Tab = {
     tabId: `tab_terminal_${terminalNumber}`,
@@ -355,101 +270,49 @@ export function createMockTerminalTab(paneId?: PaneId) {
     terminalId: `terminal_${terminalNumber}`,
     title: `Terminal ${terminalNumber}`,
   };
-  addMockTab(tab, paneId);
+  addMockTab(tab);
 }
 
 export function closeMockTab(tabId: string) {
   const tabIndex = tabs.findIndex((tab) => tab.tabId === tabId);
   if (tabIndex < 0 || tabs.length === 1) return;
 
-  const sourcePane = getPaneForTab(tabId);
-  if (!sourcePane) return;
-  const nextSourcePane = removeTabFromPane(sourcePane, tabId);
-
   tabs = tabs.filter((tab) => tab.tabId !== tabId);
-  if (!nextSourcePane) {
-    if (tabLayout.kind !== "split") return;
-    const remainingPane = tabLayout.panes.find((pane) => pane.paneId !== sourcePane.paneId);
-    if (!remainingPane) return;
-    tabLayout = {
-      kind: "single",
-      activePaneId: remainingPane.paneId,
-      panes: [remainingPane],
-    };
-  } else {
-    tabLayout = replacePane(sourcePane.paneId, nextSourcePane);
-  }
+  if (tabSplit?.ownerTabId === tabId) tabSplit = undefined;
+  if (activeTabId === tabId) activeTabId = tabs[Math.min(tabIndex, tabs.length - 1)].tabId;
   emitChange();
-  return getActiveTabId();
+  return activeTabId;
 }
 
-export function moveMockTab(tabId: string, targetPaneId: PaneId, overTabId?: string) {
-  const sourcePane = getPaneForTab(tabId);
-  const targetPane = getPane(targetPaneId);
-  if (!sourcePane || !targetPane) return;
+export function reorderMockTab(tabId: string, overTabId?: string) {
+  const sourceIndex = tabs.findIndex((tab) => tab.tabId === tabId);
+  const targetIndex = overTabId
+    ? tabs.findIndex((tab) => tab.tabId === overTabId)
+    : tabs.length - 1;
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
 
-  if (sourcePane.paneId === targetPane.paneId) {
-    const sourceIndex = sourcePane.tabIds.indexOf(tabId);
-    const targetIndex = overTabId
-      ? sourcePane.tabIds.indexOf(overTabId)
-      : sourcePane.tabIds.length - 1;
-    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
-
-    const nextTabIds = [...sourcePane.tabIds];
-    nextTabIds.splice(sourceIndex, 1);
-    nextTabIds.splice(targetIndex, 0, tabId);
-    tabLayout = replacePane(sourcePane.paneId, { ...sourcePane, tabIds: nextTabIds });
-    emitChange();
-    return;
-  }
-
-  if (tabLayout.kind !== "split") return;
-
-  const nextSourcePane = removeTabFromPane(sourcePane, tabId);
-  const targetIndex = overTabId ? targetPane.tabIds.indexOf(overTabId) : targetPane.tabIds.length;
-  if (targetIndex < 0) return;
-  const targetTabIds = [...targetPane.tabIds];
-  targetTabIds.splice(targetIndex, 0, tabId);
-  const nextTargetPane = { ...targetPane, tabIds: targetTabIds, activeTabId: tabId };
-
-  if (!nextSourcePane) {
-    tabLayout = {
-      kind: "single",
-      activePaneId: targetPane.paneId,
-      panes: [nextTargetPane],
-    };
-  } else {
-    const [firstPane] = tabLayout.panes;
-    tabLayout = {
-      ...tabLayout,
-      activePaneId: targetPane.paneId,
-      panes:
-        firstPane.paneId === sourcePane.paneId
-          ? [nextSourcePane, nextTargetPane]
-          : [nextTargetPane, nextSourcePane],
-    };
-  }
+  const nextTabs = [...tabs];
+  const [movedTab] = nextTabs.splice(sourceIndex, 1);
+  nextTabs.splice(targetIndex, 0, movedTab);
+  tabs = nextTabs;
   emitChange();
 }
 
-export function splitMockTab(tabId: string, sourcePaneId: PaneId, edge: SplitEdge) {
-  const sourcePane = getPane(sourcePaneId);
-  if (tabLayout.kind !== "single" || !sourcePane || sourcePane.tabIds.length < 2) return;
-  if (!sourcePane.tabIds.includes(tabId)) return;
+export function splitMockTab(tabId: string, targetTabId: string, edge: SplitEdge) {
+  const sourceTab = tabs.find((tab) => tab.tabId === tabId);
+  const targetTab = tabs.find((tab) => tab.tabId === targetTabId);
+  if (!sourceTab || !targetTab || sourceTab === targetTab) return;
+  if (tabSplit) return;
 
-  const nextSourcePane = removeTabFromPane(sourcePane, tabId);
-  if (!nextSourcePane) return;
-  const splitPaneId: PaneId = sourcePane.paneId === "pane_main" ? "pane_split" : "pane_main";
-  const splitPane: TabPane = { paneId: splitPaneId, tabIds: [tabId], activeTabId: tabId };
-
-  tabLayout = {
-    kind: "split",
-    activePaneId: splitPaneId,
+  tabSplit = {
+    ownerTabId: targetTabId,
     orientation: edge === "left" || edge === "right" ? "horizontal" : "vertical",
-    panes:
-      edge === "left" || edge === "top" ? [splitPane, nextSourcePane] : [nextSourcePane, splitPane],
+    surfaces: edge === "left" || edge === "top" ? [sourceTab, targetTab] : [targetTab, sourceTab],
   };
+  tabs = tabs.filter((tab) => tab.tabId !== tabId);
+  activeTabId = targetTabId;
   emitChange();
+  return targetTabId;
 }
 
 export function selectMockDraftProject(projectId: string | undefined) {
