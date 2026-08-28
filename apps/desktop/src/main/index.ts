@@ -76,7 +76,7 @@ function createWindow() {
           ...(useSidebarVibrancy
             ? {
                 vibrancy: "sidebar" as const,
-                visualEffectState: "active" as const,
+                visualEffectState: "followWindow" as const,
               }
             : {}),
         }

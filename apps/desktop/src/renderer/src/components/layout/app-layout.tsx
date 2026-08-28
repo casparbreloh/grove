@@ -9,7 +9,7 @@ import { TabDragDropProvider } from "./tabs/tab-drag-drop";
 
 export function AppLayout() {
   return (
-    <SidebarProvider className="relative isolate h-svh flex-col overflow-hidden before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:backdrop-blur-2xl before:backdrop-saturate-150 [--header-height:2.5rem] [--titlebar-safe-area:min(4.5rem,env(titlebar-area-x,0px))]">
+    <SidebarProvider className="relative isolate h-svh flex-col overflow-hidden [--header-height:2.5rem] [--titlebar-safe-area:min(4.5rem,env(titlebar-area-x,0px))]">
       <DesktopHeader />
       <DesktopBody />
     </SidebarProvider>

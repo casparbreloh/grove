@@ -18,7 +18,7 @@ export function TabBar() {
     <div className="flex h-full min-w-0 items-center gap-1 [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]">
       <nav
         aria-label="Open tabs"
-        className="no-scrollbar scroll-fade-x scroll-fade-6 flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+        className="no-scrollbar scroll-fade-x scroll-fade-6 relative flex h-full min-w-0 flex-[0_1_auto] items-center gap-1 overflow-x-auto"
       >
         <SortableContext
           items={tabs.map(({ tabId }) => tabId)}
@@ -124,5 +124,11 @@ function TabListDropTail() {
     data: { kind: "tab-list" } satisfies TabDropData,
   });
 
-  return <div aria-hidden="true" className="h-7 min-w-6 flex-1" ref={setNodeRef} />;
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-y-1.5 right-0 w-6"
+      ref={setNodeRef}
+    />
+  );
 }
