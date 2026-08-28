@@ -40,7 +40,7 @@ function TabSurface({ tab, tabSplit }: { tab: Tab; tabSplit: TabSplit | undefine
 
   return (
     <Group
-      className="size-full min-h-0 min-w-0 p-2"
+      className="size-full min-h-0 min-w-0"
       defaultLayout={defaultLayout}
       id={`tab-split-${tab.tabId}`}
       orientation={tabSplit.orientation}
@@ -51,7 +51,7 @@ function TabSurface({ tab, tabSplit }: { tab: Tab; tabSplit: TabSplit | undefine
           <Panel className="min-h-0 min-w-0" id={`${tab.tabId}-surface-${index}`} minSize="20%">
             <div
               aria-label={surface.title}
-              className="size-full overflow-hidden rounded-xl border bg-background/55 shadow-xs backdrop-blur-sm"
+              className="size-full overflow-hidden rounded-xl bg-background shadow-sm"
               role="region"
             >
               <TabContent tab={surface} />
@@ -74,19 +74,32 @@ function SingleSurface({ tab }: { tab: Tab }) {
     canSplit && dropData?.kind === "split-edge" && dropData.targetTabId === tab.tabId
       ? dropData.edge
       : undefined;
+  const previewOpen = previewEdge !== undefined;
+  const previewOrientation =
+    previewEdge === "top" || previewEdge === "bottom" ? "vertical" : "horizontal";
+  const sourceFirst = previewEdge === "left" || previewEdge === "top";
 
   return (
-    <section className="relative size-full min-h-0 min-w-0 overflow-hidden">
+    <section
+      className="relative flex size-full min-h-0 min-w-0 overflow-hidden data-[open=true]:gap-2 data-[open=true]:bg-sidebar data-[orientation=vertical]:flex-col"
+      data-open={previewOpen}
+      data-orientation={previewOrientation}
+    >
       <div
-        className="size-full transition-[clip-path,transform] duration-200 [clip-path:inset(0_round_var(--radius-xl))] [transition-timing-function:cubic-bezier(0.77,0,0.175,1)] data-[drag-input=keyboard]:transition-none data-[preview=bottom]:-translate-y-1 data-[preview=bottom]:[clip-path:inset(0_0_calc(50%+0.25rem)_0_round_var(--radius-xl))] data-[preview=left]:translate-x-1 data-[preview=left]:[clip-path:inset(0_0_0_calc(50%+0.25rem)_round_var(--radius-xl))] data-[preview=right]:-translate-x-1 data-[preview=right]:[clip-path:inset(0_calc(50%+0.25rem)_0_0_round_var(--radius-xl))] data-[preview=top]:translate-y-1 data-[preview=top]:[clip-path:inset(calc(50%+0.25rem)_0_0_0_round_var(--radius-xl))] motion-reduce:transform-none motion-reduce:[transition-property:opacity]"
-        data-drag-input={input ?? "none"}
-        data-preview={previewEdge ?? "none"}
+        className="relative min-h-0 min-w-0 basis-full shrink-0 overflow-hidden bg-background data-[open=true]:[flex-basis:calc(50%_-_0.25rem)] data-[open=true]:rounded-xl data-[open=true]:shadow-sm data-[source-first=true]:order-2"
+        data-open={previewOpen}
+        data-source-first={sourceFirst}
       >
         <TabContent tab={tab} />
       </div>
       {canSplit && <SplitDropTargets targetTabId={tab.tabId} />}
       {draggedTab && canSplit && (
-        <SplitSourcePreview edge={previewEdge} input={input} tab={draggedTab} />
+        <SplitSourcePreview
+          input={input}
+          open={previewOpen}
+          sourceFirst={sourceFirst}
+          tab={draggedTab}
+        />
       )}
     </section>
   );
@@ -147,25 +160,25 @@ function SplitDropTarget({
 }
 
 function SplitSourcePreview({
-  edge,
   input,
+  open,
+  sourceFirst,
   tab,
 }: {
-  edge: SplitEdge | undefined;
   input: "pointer" | "keyboard" | undefined;
+  open: boolean;
+  sourceFirst: boolean;
   tab: Tab;
 }) {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-10 bg-card/80 opacity-0 shadow-sm ring-1 ring-border backdrop-blur-md transition-[clip-path,opacity] duration-200 [clip-path:inset(50%_round_var(--radius-xl))] [transition-timing-function:cubic-bezier(0.77,0,0.175,1)] data-[drag-input=keyboard]:transition-none data-[edge=bottom]:opacity-100 data-[edge=bottom]:[clip-path:inset(calc(50%+0.25rem)_0_0_0_round_var(--radius-xl))] data-[edge=left]:opacity-100 data-[edge=left]:[clip-path:inset(0_calc(50%+0.25rem)_0_0_round_var(--radius-xl))] data-[edge=right]:opacity-100 data-[edge=right]:[clip-path:inset(0_0_0_calc(50%+0.25rem)_round_var(--radius-xl))] data-[edge=top]:opacity-100 data-[edge=top]:[clip-path:inset(0_0_calc(50%+0.25rem)_0_round_var(--radius-xl))] motion-reduce:[transition-property:opacity]"
+      className="pointer-events-none z-10 flex min-h-0 min-w-0 basis-0 shrink-0 scale-[0.97] items-center justify-center overflow-hidden rounded-xl bg-transparent opacity-0 transition-[transform,opacity] duration-200 [transition-timing-function:cubic-bezier(0.23,1,0.32,1)] data-[drag-input=keyboard]:transition-none data-[open=true]:[flex-basis:calc(50%_-_0.25rem)] data-[open=true]:scale-100 data-[open=true]:border-2 data-[open=true]:border-foreground/15 data-[open=true]:bg-background/80 data-[open=true]:opacity-100 data-[open=true]:shadow-sm data-[open=true]:backdrop-blur-xl data-[source-first=true]:order-1 motion-reduce:scale-100 motion-reduce:transition-opacity contrast-more:border-foreground/40 contrast-more:bg-background [@media(prefers-reduced-transparency:reduce)]:bg-background [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
       data-drag-input={input ?? "none"}
-      data-edge={edge ?? "none"}
+      data-open={open}
+      data-source-first={sourceFirst}
     >
-      <span
-        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-md border bg-popover/90 px-3 py-1.5 text-sm text-popover-foreground shadow-sm data-[edge=bottom]:top-3/4 data-[edge=bottom]:left-1/2 data-[edge=left]:top-1/2 data-[edge=left]:left-1/4 data-[edge=right]:top-1/2 data-[edge=right]:left-3/4 data-[edge=top]:top-1/4 data-[edge=top]:left-1/2"
-        data-edge={edge ?? "none"}
-      >
+      <span className="truncate px-4 text-sm font-medium text-foreground/70 contrast-more:text-foreground">
         {tab.title}
       </span>
     </div>
