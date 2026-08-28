@@ -33,7 +33,7 @@ Inspiration is not authority. Preserve Grove semantics even when an upstream sha
 
 ## Learning more about Effect
 
-This repository uses the Effect TypeScript library. Before writing Effect code, read `node_modules/effect/AGENTS.md` completely and follow its links when required. For APIs and concepts it does not cover, search `node_modules/effect/src`.
+This repository uses the Effect TypeScript library. Before writing Effect code, read `node_modules/effect/AGENTS.md` completely and follow its links when required. For APIs and concepts it does not cover, search `node_modules/effect/src`. Use `@effect/vitest` for Effect tests; keep tests of Promise-based public contracts as ordinary Vitest tests.
 
 ## Verification
 

@@ -1,6 +1,5 @@
-import assert from "node:assert/strict";
-import test from "node:test";
 import { Effect } from "effect";
+import { assert, it } from "vitest";
 
 import type {
   AgentRunResult,
@@ -16,7 +15,7 @@ const models = [
   model("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
 ];
 
-test("sync exposes authoritative session state and model commands update it", async () => {
+it("sync exposes authoritative session state and model commands update it", async () => {
   const client = createDirectGroveClient(new ScriptedAgentSession(models));
   const initial = await client.sync();
 
@@ -37,7 +36,7 @@ test("sync exposes authoritative session state and model commands update it", as
   await client.close();
 });
 
-test("prompt publishes transient progress and settles an authoritative transcript", async () => {
+it("prompt publishes transient progress and settles an authoritative transcript", async () => {
   const client = createDirectGroveClient(new ScriptedAgentSession(models));
   const initial = await client.sync();
   const iterator = client.watch({ after: initial.cursor })[Symbol.asyncIterator]();
@@ -67,14 +66,17 @@ test("prompt publishes transient progress and settles an authoritative transcrip
     settled.session.messages.map((message) => message.role),
     ["user", "assistant"],
   );
-  assert.equal(settled.session.messages[1]?.parts[0]?.type, "text");
-  assert.equal(settled.session.messages[1]?.parts[0]?.text, "Hello from the scripted agent.");
+  const assistantPart = settled.session.messages[1]?.parts[0];
+  assert.equal(assistantPart?.type, "text");
+  if (assistantPart?.type === "text") {
+    assert.equal(assistantPart.text, "Hello from the scripted agent.");
+  }
 
   await iterator.return?.();
   await client.close();
 });
 
-test("a second prompt is rejected while the session is running and abort settles the first", async () => {
+it("a second prompt is rejected while the session is running and abort settles the first", async () => {
   const agent = new ScriptedAgentSession(models, true);
   const client = createDirectGroveClient(agent);
   const { session } = await client.sync();
@@ -114,7 +116,7 @@ test("a second prompt is rejected while the session is running and abort settles
   await client.close();
 });
 
-test("redelivering a command ID returns its receipt without running the command twice", async () => {
+it("redelivering a command ID returns its receipt without running the command twice", async () => {
   const agent = new ScriptedAgentSession(models);
   const client = createDirectGroveClient(agent);
   const { session } = await client.sync();
@@ -134,7 +136,7 @@ test("redelivering a command ID returns its receipt without running the command 
   await client.close();
 });
 
-test("watch replay closes the snapshot gap and isolates subscribers", async () => {
+it("watch replay closes the snapshot gap and isolates subscribers", async () => {
   const client = createDirectGroveClient(new ScriptedAgentSession(models));
   const initial = await client.sync();
   await client.execute({
@@ -162,7 +164,7 @@ test("watch replay closes the snapshot gap and isolates subscribers", async () =
   await client.close();
 });
 
-test("Agent capabilities are authoritative for command admission", async () => {
+it("Agent capabilities are authoritative for command admission", async () => {
   const agent = new ScriptedAgentSession(models, false, { prompt: false });
   const client = createDirectGroveClient(agent);
   const { session } = await client.sync();
@@ -184,7 +186,7 @@ test("Agent capabilities are authoritative for command admission", async () => {
   await client.close();
 });
 
-test("closing a client ends active update iterators", async () => {
+it("closing a client ends active update iterators", async () => {
   const agent = new ScriptedAgentSession(models);
   const client = createDirectGroveClient(agent);
   const initial = await client.sync();
