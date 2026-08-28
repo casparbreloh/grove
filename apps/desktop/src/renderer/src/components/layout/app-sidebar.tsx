@@ -154,7 +154,7 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
       onMouseEnter={revealTitle}
       onMouseLeave={resetTitle}
     >
-      <SidebarMenuButton className="h-auto flex-col items-stretch gap-0 group-hover/task-item:bg-sidebar-accent group-hover/task-item:text-sidebar-accent-foreground">
+      <SidebarMenuButton className="h-auto flex-col items-stretch gap-0 group-hover/task-item:bg-sidebar-accent group-hover/task-item:text-sidebar-accent-foreground focus-visible:ring-inset focus-visible:ring-offset-0">
         <span
           className="mask-r-from-[calc(100%-1rem)] overflow-hidden leading-snug whitespace-nowrap group-hover/task-item:mask-none"
           ref={titleViewportRef}
