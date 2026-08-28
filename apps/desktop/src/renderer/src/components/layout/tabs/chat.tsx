@@ -17,7 +17,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { createMockProject, mockChatModel, selectMockDraftProject, useMockGrove } from "@/lib/mock";
+import { mockChatModel } from "@/lib/mocks/chat-model";
+import { createMockProject, selectMockDraftProject, useMockGrove } from "@/lib/mocks/grove";
 
 function createProjectFromPrompt() {
   const name = window.prompt("Project name");

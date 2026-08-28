@@ -23,14 +23,13 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { filterMockTasksByProject, useMockGrove, type Project, type Task } from "@/lib/mock";
+import { filterMockTasksByProject, useMockGrove, type Project, type Task } from "@/lib/mocks/grove";
 
 const allProjectsValue = "all-projects";
 const taskTitleScrollDelayMs = 400;
@@ -41,30 +40,28 @@ export function AppSidebar() {
   const projectById = new Map(projects.map((project) => [project.id, project]));
 
   return (
-    <Sidebar className="backdrop-blur-2xl backdrop-saturate-150">
-      <SidebarHeader className="shrink-0 gap-0 p-0">
-        <div className="h-10 shrink-0 [-webkit-app-region:drag]" />
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu aria-label="Primary">
-              <SidebarMenuItem>
-                <SidebarMenuButton>
-                  <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
-                  <span>New Task</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton>
-                  <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
-                  <span>Explore</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+    <Sidebar
+      className="top-(--header-height) h-[calc(100svh-var(--header-height))]"
+      variant="inset"
+    >
+      <SidebarHeader className="shrink-0 gap-0 p-0 pb-1 pl-2">
+        <SidebarMenu aria-label="Primary">
+          <SidebarMenuItem>
+            <SidebarMenuButton>
+              <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
+              <span>New Task</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton>
+              <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
+              <span>Explore</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
       <SidebarContent className="scroll-fade scroll-fade-6">
-        <SidebarGroup aria-labelledby="tasks-heading">
+        <SidebarGroup aria-labelledby="tasks-heading" className="py-1 pr-0 pl-2">
           <div className="flex items-center">
             <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">
               Tasks
@@ -101,16 +98,14 @@ export function AppSidebar() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {tasks.map((task) => (
-                <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
+          <SidebarMenu>
+            {tasks.map((task) => (
+              <TaskItem key={task.id} project={projectById.get(task.projectId)} task={task} />
+            ))}
+          </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter className="py-1 pr-0 pl-2">
         <ThemeSwitcher />
       </SidebarFooter>
     </Sidebar>

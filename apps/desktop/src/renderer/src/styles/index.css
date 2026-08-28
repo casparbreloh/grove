@@ -15,15 +15,14 @@
   * {
     @apply border-border outline-ring/50;
   }
+
+  body {
+    @apply bg-transparent text-foreground;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   body {
     @apply bg-background;
   }
-}
-
-.desktop-shell {
-  --desktop-header-safe-area-left: min(4.5rem, env(titlebar-area-x, 0px));
-  --desktop-header-controls-width: calc(var(--desktop-header-safe-area-left) + 8.875rem);
 }

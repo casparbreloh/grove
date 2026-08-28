@@ -18,7 +18,14 @@ type TerminalTab = {
   title: string;
 };
 
-export type GroveTab = ChatTab | TerminalTab;
+type UnavailableTab = {
+  tabId: string;
+  kind: "unavailable";
+  originalKind: string;
+  title: string;
+};
+
+export type Tab = ChatTab | TerminalTab | UnavailableTab;
 
 type GroveViewState = {
   workspaces: readonly Workspace[];
@@ -27,7 +34,7 @@ type GroveViewState = {
   tasks: readonly Task[];
   draftProjectId: string | undefined;
   taskProjectFilterId: string | undefined;
-  tabs: readonly GroveTab[];
+  tabs: readonly Tab[];
   activeTabId: string;
 };
 
@@ -171,7 +178,7 @@ let taskProjectFilterId: string | undefined;
 let nextProject = 1;
 let nextChat = 2;
 let nextTerminal = 2;
-let tabs: readonly GroveTab[] = [
+let tabs: readonly Tab[] = [
   { tabId: "tab_chat", kind: "chat", sessionId: "session_mock", title: "Chat" },
   { tabId: "tab_terminal_1", kind: "terminal", terminalId: "terminal_1", title: "Terminal" },
 ];
@@ -222,15 +229,21 @@ export function useMockGrove() {
   );
 }
 
-function addMockTab(tab: GroveTab) {
+function addMockTab(tab: Tab) {
   tabs = [...tabs, tab];
   activeTabId = tab.tabId;
   emitChange();
 }
 
+export function selectMockTab(tabId: string) {
+  if (tabId === activeTabId || !tabs.some((tab) => tab.tabId === tabId)) return;
+  activeTabId = tabId;
+  emitChange();
+}
+
 export function createMockChatTab() {
   const chatNumber = nextChat++;
-  const tab: GroveTab = {
+  const tab: Tab = {
     tabId: `tab_chat_${chatNumber}`,
     kind: "chat",
     sessionId: `session_${chatNumber}`,
@@ -241,13 +254,23 @@ export function createMockChatTab() {
 
 export function createMockTerminalTab() {
   const terminalNumber = nextTerminal++;
-  const tab: GroveTab = {
+  const tab: Tab = {
     tabId: `tab_terminal_${terminalNumber}`,
     kind: "terminal",
     terminalId: `terminal_${terminalNumber}`,
-    title: terminalNumber === 1 ? "Terminal" : `Terminal ${terminalNumber}`,
+    title: `Terminal ${terminalNumber}`,
   };
   addMockTab(tab);
+}
+
+export function closeMockTab(tabId: string) {
+  const tabIndex = tabs.findIndex((tab) => tab.tabId === tabId);
+  if (tabIndex < 0 || tabs.length === 1) return;
+
+  tabs = tabs.filter((tab) => tab.tabId !== tabId);
+  if (activeTabId === tabId) activeTabId = tabs[Math.min(tabIndex, tabs.length - 1)].tabId;
+  emitChange();
+  return activeTabId;
 }
 
 export function selectMockDraftProject(projectId: string | undefined) {
@@ -283,51 +306,3 @@ export function filterMockTasksByProject(projectId: string | undefined) {
   taskProjectFilterId = projectId;
   emitChange();
 }
-
-import type { ChatModelAdapter } from "@assistant-ui/react";
-
-function waitForChunk(abortSignal: AbortSignal) {
-  if (abortSignal.aborted) return Promise.resolve(false);
-
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout>;
-    const finish = (shouldContinue: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      abortSignal.removeEventListener("abort", onAbort);
-      resolve(shouldContinue);
-    };
-    const onAbort = () => finish(false);
-
-    timeout = setTimeout(() => finish(true), 24);
-    abortSignal.addEventListener("abort", onAbort, { once: true });
-    if (abortSignal.aborted) onAbort();
-  });
-}
-
-export const mockChatModel: ChatModelAdapter = {
-  async *run({ messages, abortSignal }) {
-    let userMessage: (typeof messages)[number] | undefined;
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index];
-      if (message?.role !== "user") continue;
-      userMessage = message;
-      break;
-    }
-    const promptParts: string[] = [];
-    for (const part of userMessage?.content ?? []) {
-      if (part.type === "text") promptParts.push(part.text);
-    }
-    const prompt = promptParts.join("\n\n").trim();
-    if (!prompt) throw new Error("A message is required");
-
-    let text = "";
-    for (const character of `You said: ${prompt}`) {
-      if (!(await waitForChunk(abortSignal))) return;
-      text += character;
-      yield { content: [{ type: "text", text }] };
-    }
-  },
-};

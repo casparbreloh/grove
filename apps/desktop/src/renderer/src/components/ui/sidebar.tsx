@@ -24,7 +24,7 @@ import { LayoutLeftIcon } from "@hugeicons/core-free-icons";
 
 const SIDEBAR_WIDTH_MOBILE = "18rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
-const SIDEBAR_WIDTH = "16rem";
+const SIDEBAR_WIDTH = "14rem";
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed";
@@ -189,7 +189,7 @@ function Sidebar({
         className={cn(
           "relative w-(--sidebar-width) shrink-0 bg-transparent transition-[width] duration-150 ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
-          variant === "floating" || variant === "inset"
+          variant === "floating"
             ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
         )}
@@ -198,9 +198,11 @@ function Sidebar({
         data-slot="sidebar-container"
         className={cn(
           "fixed inset-y-0 left-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,width] duration-150 ease-linear group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] md:flex",
-          variant === "floating" || variant === "inset"
-            ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-            : "border-r group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
+          variant === "floating" &&
+            "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]",
+          variant === "inset" && "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
+          variant === "sidebar" &&
+            "border-r group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
           className,
         )}
         {...props}
@@ -208,7 +210,7 @@ function Sidebar({
         <div
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
-          className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          className="flex size-full flex-col bg-sidebar group-data-[variant=inset]:bg-transparent group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
         >
           {children}
         </div>
@@ -245,7 +247,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
     <main
       data-slot="sidebar-inset"
       className={cn(
-        "relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2",
+        "relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:mx-2 md:peer-data-[variant=inset]:mb-2 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm",
         className,
       )}
       {...props}

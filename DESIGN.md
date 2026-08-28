@@ -12,9 +12,9 @@ Keep Grove calm, dense, and desktop-native. Prefer semantic tokens and current s
 ## composition
 
 - Start with shadcn subcomponents, variants, `data-slot`, and state selectors. Keep Grove's compact Button/Input sizing, translucent dropdowns, stronger mobile-sheet scrim, and sidebar without cookie persistence or global shortcut.
-- Add custom CSS only for platform layout or behavior primitives cannot express. Use shadcn `scroll-fade`, not hard-coded gradients or effects. Preserve `content-visibility`, native panel resizing, and CSS-driven pane animation.
-- Tabs keep semantic roles, roving focus, arrow/Home/End navigation, reserved close-control space, a 150px preferred / 100px minimum width, and an always-reachable add button.
-- Preserve focus rings, semantics, inert hidden panes, keyboard behavior, and reduced motion. Let JavaScript change state; render visibility and motion with `data-*` selectors and CSS transitions. Use effects only for measured DOM behavior. `react-resizable-panels` owns accessible splitting.
+- Add custom CSS only for platform layout or behavior primitives cannot express. Use shadcn `scroll-fade`, not hard-coded gradients or effects. Preserve `content-visibility` and CSS-driven motion.
+- Tabs use native button focus order, reserved close-control space, a fixed 150px width, direct horizontal overflow, and an always-reachable add button. Tab and Shift+Tab move through each tab and its close control; Enter and Space activate the focused control.
+- Preserve focus rings, semantics, inert hidden panes, keyboard behavior, and reduced motion. Let JavaScript change state; render visibility and motion with `data-*` selectors and CSS transitions. Use effects only for measured DOM behavior.
 
 ## shadcn updates
 
