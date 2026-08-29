@@ -5,9 +5,9 @@
 - `VISION.md` is the authority for product vocabulary, semantics, Agent/Environment boundaries, and delivery order. Read it before product, runtime, or architecture work.
 - `DESIGN.md` is the authority for renderer design-system and UI work.
 - `.repos/` contains ignored, read-only inspiration checkouts. Before relying on one, run `git -C <path> pull --ff-only`.
-  - `.repos/opencode-2` — current OpenCode V2 development on `dev`; inspect its shared core/server/client and multi-frontend shape.
-  - `.repos/pi-main` — current Pi; inspect `packages/agent`, `protocol`, `server`, `client`, and `coding-agent`.
-  - `.repos/pi-harness-v2` — Pi's historical `harness-v2/j4` line for comparison only; current harness work is on `pi-main`.
+  - `.repos/opencode-dev` — current OpenCode V2 development on `dev`; inspect its shared core/server/client and multi-frontend shape.
+  - `.repos/pi-dev` — current Pi development on `dev`; use this as the primary source for active harness, protocol, server, client, and coding-agent work.
+  - `.repos/pi-main` — Pi's released `main` baseline; use it only for release comparisons.
 
 Inspiration is not authority. Preserve Grove product semantics even when an upstream shape is useful.
 
