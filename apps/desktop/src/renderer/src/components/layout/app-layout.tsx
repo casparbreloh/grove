@@ -29,7 +29,7 @@ function DesktopBody() {
 
 function DesktopHeader() {
   return (
-    <header className="grid h-(--header-height) shrink-0 grid-cols-[calc(var(--sidebar-width)+0.5rem)_minmax(0,1fr)] transition-[grid-template-columns] duration-150 ease-linear group-data-[state=collapsed]/sidebar-wrapper:grid-cols-[calc(var(--titlebar-safe-area)+4.5rem)_minmax(0,1fr)] motion-reduce:transition-none [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]">
+    <header className="grid h-(--header-height) shrink-0 grid-cols-[calc(var(--sidebar-width)+0.375rem)_minmax(0,1fr)] transition-[grid-template-columns] duration-150 ease-linear group-data-[state=collapsed]/sidebar-wrapper:grid-cols-[calc(var(--titlebar-safe-area)+4.5rem)_minmax(0,1fr)] motion-reduce:transition-none [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]">
       <div className="flex items-center gap-1 pr-1 pl-[calc(var(--titlebar-safe-area)+0.5rem)]">
         <SidebarTrigger size="icon-sm" />
         <NewTabMenu
