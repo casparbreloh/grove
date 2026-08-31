@@ -19,12 +19,16 @@ const themeDefinitions = [
 export const themes = themeDefinitions.map(({ hue, ...theme }) => ({
   ...theme,
   light: {
-    sidebar: `oklch(0.91 0.01 ${hue})`,
-    icon: `oklch(0.5 0.05 ${hue})`,
+    accent: `oklch(0.5 0.03 ${hue} / 7%)`,
+    border: `oklch(0.89 0.006 ${hue})`,
+    icon: `oklch(0.5 0.045 ${hue})`,
+    sidebar: `oklch(0.96 0.008 ${hue})`,
   },
   dark: {
-    sidebar: `oklch(0.29 0.012 ${hue})`,
-    icon: `oklch(0.7 0.045 ${hue})`,
+    accent: `oklch(0.75 0.03 ${hue} / 9%)`,
+    border: `oklch(0.32 0.008 ${hue})`,
+    icon: `oklch(0.7 0.04 ${hue})`,
+    sidebar: `oklch(0.24 0.01 ${hue})`,
   },
 }));
 
@@ -71,6 +75,8 @@ function ThemeStateProvider({ children }: { children: ReactNode }) {
         data-theme={themeId}
         style={
           {
+            "--sidebar-accent": colors.accent,
+            "--sidebar-border": colors.border,
             "--sidebar": colors.sidebar,
             "--theme-icon": colors.icon,
           } as CSSProperties
