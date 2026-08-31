@@ -1,18 +1,13 @@
-import { Add01Icon, ChatIcon, TerminalIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { Add01Icon } from "@hugeicons/core-free-icons";
+import type { IconSvgElement } from "@hugeicons/react";
 
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { createMockChatTab, createMockTerminalTab } from "@/lib/mocks/grove";
+import { cn } from "@/lib/utils";
 
 const newTabOptions = [
-  { label: "Chat", icon: ChatIcon, create: createMockChatTab },
-  { label: "Terminal", icon: TerminalIcon, create: createMockTerminalTab },
+  { label: "Chat", create: createMockChatTab },
+  { label: "Terminal", create: createMockTerminalTab },
 ] as const;
 
 export function NewTabMenu({
@@ -23,28 +18,25 @@ export function NewTabMenu({
   icon?: IconSvgElement;
 }) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            aria-label="New tab"
-            className={className}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          />
-        }
-      >
-        <HugeiconsIcon icon={icon} strokeWidth={2} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {newTabOptions.map((option) => (
-          <DropdownMenuItem key={option.label} onClick={option.create}>
-            <HugeiconsIcon icon={option.icon} strokeWidth={2} />
-            {option.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <NativeSelect
+      aria-label="New tab"
+      className={cn("shrink-0 [-webkit-app-region:no-drag]", className)}
+      icon={icon}
+      onChange={(event) => {
+        newTabOptions.find(({ label }) => label === event.currentTarget.value)?.create();
+      }}
+      size="sm"
+      value=""
+      variant="icon"
+    >
+      <NativeSelectOption disabled value="">
+        New tab
+      </NativeSelectOption>
+      {newTabOptions.map((option) => (
+        <NativeSelectOption key={option.label} value={option.label}>
+          {option.label}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
   );
 }

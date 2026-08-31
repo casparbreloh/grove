@@ -15,7 +15,7 @@ export function TabBar() {
   const { activeTabId, tabs } = useMockGrove();
 
   return (
-    <div className="flex h-full min-w-0 items-center gap-1 [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]">
+    <div className="flex h-full min-w-0 flex-1 items-center gap-1 [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]">
       <nav
         aria-label="Open tabs"
         className="no-scrollbar scroll-fade-x scroll-fade-6 relative flex h-full min-w-0 flex-[0_1_auto] items-center gap-1 overflow-x-auto"

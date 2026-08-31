@@ -17,12 +17,6 @@
   }
 
   body {
-    @apply bg-transparent text-foreground;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  body {
-    @apply bg-background;
+    @apply bg-sidebar text-foreground;
   }
 }

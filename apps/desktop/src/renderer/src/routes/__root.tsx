@@ -13,7 +13,7 @@ export const Route = createRootRoute({
 
 function Root() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" storageKey="theme">
+    <ThemeProvider>
       <Outlet />
     </ThemeProvider>
   );
