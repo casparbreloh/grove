@@ -60,25 +60,18 @@ function configureApplicationMenu() {
 }
 
 function createWindow() {
-  const useSidebarVibrancy = isMac && !nativeTheme.prefersReducedTransparency;
   const window = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 960,
     minHeight: 640,
     show: false,
-    ...(!useSidebarVibrancy ? { backgroundColor: opaqueWindowBackground() } : {}),
+    backgroundColor: opaqueWindowBackground(),
     titleBarStyle: isMac ? "hiddenInset" : "hidden",
     titleBarOverlay: true,
     ...(isMac
       ? {
           trafficLightPosition: { x: 12, y: 13 },
-          ...(useSidebarVibrancy
-            ? {
-                vibrancy: "sidebar" as const,
-                visualEffectState: "followWindow" as const,
-              }
-            : {}),
         }
       : {}),
     webPreferences: {
@@ -100,31 +93,10 @@ function createWindow() {
     }
   });
 
-  const updateWindowMaterial = () => {
-    if (window.isDestroyed()) return;
-
-    if (!isMac) {
-      window.setBackgroundColor(opaqueWindowBackground());
-      return;
-    }
-
-    if (nativeTheme.prefersReducedTransparency) {
-      window.setVibrancy(null);
-      window.setBackgroundColor(opaqueWindowBackground());
-      return;
-    }
-
-    window.setVibrancy("sidebar");
-    window.setBackgroundColor("#00000000");
-  };
-
-  nativeTheme.on("updated", updateWindowMaterial);
-
   void window.loadURL(rendererUrl());
 
   mainWindow = window;
   window.on("closed", () => {
-    nativeTheme.off("updated", updateWindowMaterial);
     mainWindow = undefined;
   });
 }

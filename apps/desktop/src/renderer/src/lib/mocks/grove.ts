@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from "react";
 
-type Workspace = { id: string; name: string };
+type Workspace = {
+  id: string;
+  name: string;
+};
 export type Project = { id: string; workspaceId: string; name: string };
 export type Task = { id: string; projectId: string; title: string; updatedAt: string };
 
@@ -38,10 +41,7 @@ type GroveViewState = {
   activeTabId: string;
 };
 
-const workspaces: readonly Workspace[] = [
-  { id: "workspace_grove", name: "Grove" },
-  { id: "workspace_studio", name: "Studio" },
-];
+const workspaces: readonly Workspace[] = [{ id: "workspace_grove", name: "Grove" }];
 
 let projects: readonly Project[] = [
   { id: "project_permalux", workspaceId: "workspace_grove", name: "permalux-service" },
@@ -51,7 +51,6 @@ let projects: readonly Project[] = [
     workspaceId: "workspace_grove",
     name: "consulting-partners",
   },
-  { id: "project_studio", workspaceId: "workspace_studio", name: "studio-site" },
 ];
 
 const tasks: readonly Task[] = [
@@ -163,17 +162,11 @@ const tasks: readonly Task[] = [
     title: "Capture visual regression cases",
     updatedAt: "2026-08-01T09:45:00Z",
   },
-  {
-    id: "task_landing",
-    projectId: "project_studio",
-    title: "Polish the landing page",
-    updatedAt: "2026-08-18T08:10:00Z",
-  },
 ];
 
 const listeners = new Set<() => void>();
 let activeWorkspaceId = workspaces[0]?.id;
-let draftProjectId: string | undefined;
+let draftProjectId: string | undefined = "project_grove";
 let taskProjectFilterId: string | undefined;
 let nextProject = 1;
 let nextChat = 2;

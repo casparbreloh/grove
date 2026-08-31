@@ -6,6 +6,7 @@ import { AppSidebar } from "./app-sidebar";
 import { NewTabMenu } from "./tabs/new-tab-menu";
 import { TabBar } from "./tabs/tab-bar";
 import { TabDragDropProvider } from "./tabs/tab-drag-drop";
+import { ThemePicker } from "./theme-picker";
 
 export function AppLayout() {
   return (
@@ -30,16 +31,19 @@ function DesktopBody() {
 function DesktopHeader() {
   return (
     <header className="grid h-(--header-height) shrink-0 grid-cols-[calc(var(--sidebar-width)+0.375rem)_minmax(0,1fr)] transition-[grid-template-columns] duration-150 ease-linear group-data-[state=collapsed]/sidebar-wrapper:grid-cols-[calc(var(--titlebar-safe-area)+4.5rem)_minmax(0,1fr)] motion-reduce:transition-none [-webkit-app-region:drag] [&_button]:[-webkit-app-region:no-drag]">
-      <div className="flex items-center gap-1 pr-1 pl-[calc(var(--titlebar-safe-area)+0.5rem)]">
+      <div className="flex items-center gap-1 pr-1 pl-[calc(var(--titlebar-safe-area)+0.375rem)]">
         <SidebarTrigger size="icon-sm" />
         <NewTabMenu
           className="hidden group-data-[state=collapsed]/sidebar-wrapper:flex"
           icon={PencilEdit02Icon}
         />
       </div>
-      <TabDragDropProvider>
-        <TabBar />
-      </TabDragDropProvider>
+      <div className="flex min-w-0 items-center">
+        <TabDragDropProvider>
+          <TabBar />
+        </TabDragDropProvider>
+        <ThemePicker />
+      </div>
     </header>
   );
 }

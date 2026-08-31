@@ -2,22 +2,14 @@ import {
   Compass01Icon,
   FilterMailIcon,
   Folder01Icon,
-  Moon02Icon,
   PencilEdit02Icon,
-  Sun03Icon,
+  Settings02Icon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef } from "react";
-import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import {
   Sidebar,
   SidebarContent,
@@ -44,16 +36,16 @@ export function AppSidebar() {
       className="top-(--header-height) h-[calc(100svh-var(--header-height))]"
       variant="inset"
     >
-      <SidebarHeader className="p-0 pl-2">
+      <SidebarHeader className="p-0 pr-2 pl-1.5">
         <SidebarMenu aria-label="Primary">
           <SidebarMenuItem>
-            <SidebarMenuButton>
+            <SidebarMenuButton size="compact">
               <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
               <span>New Task</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton>
+            <SidebarMenuButton size="compact">
               <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} />
               <span>Explore</span>
             </SidebarMenuButton>
@@ -61,42 +53,32 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent className="scroll-fade scroll-fade-6">
-        <SidebarGroup aria-labelledby="tasks-heading" className="py-1 pr-0 pl-2">
+        <SidebarGroup aria-labelledby="tasks-heading" className="py-1 pr-2 pl-1.5">
           <div className="flex items-center">
             <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">
               Tasks
             </SidebarGroupLabel>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    aria-label="Filter tasks by project"
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <HugeiconsIcon icon={FilterMailIcon} strokeWidth={2} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-52" side="bottom">
-                <DropdownMenuRadioGroup
-                  onValueChange={(value) =>
-                    filterMockTasksByProject(value === allProjectsValue ? undefined : value)
-                  }
-                  value={taskProjectFilterId ?? allProjectsValue}
-                >
-                  <DropdownMenuRadioItem value={allProjectsValue}>
-                    All projects
-                  </DropdownMenuRadioItem>
-                  {projects.map((project) => (
-                    <DropdownMenuRadioItem key={project.id} value={project.id}>
-                      {project.name}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <NativeSelect
+              aria-label="Filter tasks by project"
+              icon={FilterMailIcon}
+              onChange={(event) =>
+                filterMockTasksByProject(
+                  event.currentTarget.value === allProjectsValue
+                    ? undefined
+                    : event.currentTarget.value,
+                )
+              }
+              size="sm"
+              value={taskProjectFilterId ?? allProjectsValue}
+              variant="sidebar-icon"
+            >
+              <NativeSelectOption value={allProjectsValue}>All projects</NativeSelectOption>
+              {projects.map((project) => (
+                <NativeSelectOption key={project.id} value={project.id}>
+                  {project.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
           </div>
           <SidebarMenu>
             {tasks.map((task) => (
@@ -105,8 +87,15 @@ export function AppSidebar() {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="py-1 pr-0 pl-2">
-        <ThemeSwitcher />
+      <SidebarFooter className="pt-1 pr-2 pb-1.5 pl-1.5">
+        <SidebarMenu aria-label="Secondary">
+          <SidebarMenuItem>
+            <SidebarMenuButton size="compact">
+              <HugeiconsIcon icon={Settings02Icon} strokeWidth={2} />
+              <span>Settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
   );
@@ -164,11 +153,7 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
           </span>
         </span>
         <span className="flex min-w-0 items-center gap-1 pr-16 text-xs text-muted-foreground">
-          <HugeiconsIcon
-            className="size-[calc(var(--text-xs)+1px)]"
-            icon={Folder01Icon}
-            strokeWidth={2}
-          />
+          <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
           <span className="min-w-0 flex-1 truncate">{project?.name}</span>
         </span>
       </SidebarMenuButton>
@@ -183,36 +168,5 @@ function TaskItem({ project, task }: { project: Project | undefined; task: Task 
         <span>Archive</span>
       </Button>
     </SidebarMenuItem>
-  );
-}
-
-function ThemeSwitcher() {
-  const { resolvedTheme, setTheme } = useTheme();
-
-  return (
-    <div aria-label="Color theme" className="grid grid-cols-2 gap-1" role="group">
-      <Button
-        aria-pressed={resolvedTheme === "light"}
-        className="aria-pressed:bg-accent"
-        onClick={() => setTheme("light")}
-        size="sm"
-        type="button"
-        variant="ghost"
-      >
-        <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />
-        Light
-      </Button>
-      <Button
-        aria-pressed={resolvedTheme === "dark"}
-        className="aria-pressed:bg-accent"
-        onClick={() => setTheme("dark")}
-        size="sm"
-        type="button"
-        variant="ghost"
-      >
-        <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />
-        Dark
-      </Button>
-    </div>
   );
 }

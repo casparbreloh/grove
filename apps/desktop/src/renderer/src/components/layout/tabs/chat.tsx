@@ -4,25 +4,22 @@ import {
   ThreadPrimitive,
   useLocalRuntime,
 } from "@assistant-ui/react";
-import { Add01Icon, ArrowDown01Icon, Cancel01Icon, Folder01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { Folder01Icon } from "@hugeicons/core-free-icons";
 import { useRef } from "react";
 import { Composer } from "@/components/ai-elements/composer";
 import { Message } from "@/components/ai-elements/message";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { mockChatModel } from "@/lib/mocks/chat-model";
 import { createMockProject, selectMockDraftProject, useMockGrove } from "@/lib/mocks/grove";
 
+const newProjectValue = "action:create-project";
+const noProjectValue = "action:no-project";
+
 function createProjectFromPrompt() {
   const name = window.prompt("Project name");
-  if (name?.trim()) createMockProject(name);
+  if (!name?.trim()) return false;
+  createMockProject(name);
+  return true;
 }
 
 export function Chat() {
@@ -37,7 +34,6 @@ export function Chat() {
 
 function ChatViewport() {
   const { projects, draftProjectId } = useMockGrove();
-  const selectedProject = projects.find(({ id }) => id === draftProjectId);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
 
   return (
@@ -60,53 +56,34 @@ function ChatViewport() {
           <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-gradient-to-t from-background via-background to-transparent pb-6 pt-8 sm:-mx-4">
             <AuiIf condition={(state) => state.thread.isEmpty}>
               <div className="mx-4 flex h-10 items-center rounded-t-2xl border border-b-0 bg-card px-2 text-muted-foreground shadow-xs">
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        aria-label="Choose project"
-                        className={
-                          selectedProject
-                            ? "max-w-52 justify-start text-foreground"
-                            : "max-w-52 justify-start text-muted-foreground"
-                        }
-                        size="sm"
-                        variant="ghost"
-                      />
+                <NativeSelect
+                  aria-label="Choose project"
+                  className="max-w-52 [&_select]:truncate [&_select]:border-transparent [&_select]:bg-transparent [&_select]:dark:bg-transparent"
+                  icon={Folder01Icon}
+                  onChange={(event) => {
+                    const projectId = event.currentTarget.value;
+                    if (projectId === newProjectValue) {
+                      if (!createProjectFromPrompt())
+                        event.currentTarget.value = draftProjectId ?? noProjectValue;
+                    } else if (projectId === noProjectValue) {
+                      selectMockDraftProject(undefined);
+                    } else {
+                      selectMockDraftProject(projectId);
                     }
-                  >
-                    <HugeiconsIcon data-icon="inline-start" icon={Folder01Icon} strokeWidth={2} />
-                    <span className="truncate">{selectedProject?.name ?? "Choose project"}</span>
-                    <HugeiconsIcon data-icon="inline-end" icon={ArrowDown01Icon} strokeWidth={2} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    className="w-56"
-                    finalFocus={composerInputRef}
-                    side="top"
-                  >
-                    {projects.map((project) => (
-                      <DropdownMenuItem
-                        key={project.id}
-                        onClick={() => selectMockDraftProject(project.id)}
-                      >
-                        <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
-                        {project.name}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={createProjectFromPrompt}>
-                      <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                      New project
-                    </DropdownMenuItem>
-                    {selectedProject && (
-                      <DropdownMenuItem onClick={() => selectMockDraftProject(undefined)}>
-                        <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-                        No project
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                    requestAnimationFrame(() => composerInputRef.current?.focus());
+                  }}
+                  size="sm"
+                  value={draftProjectId ?? noProjectValue}
+                  variant="leading-icon"
+                >
+                  {projects.map((project) => (
+                    <NativeSelectOption key={project.id} value={project.id}>
+                      {project.name}
+                    </NativeSelectOption>
+                  ))}
+                  <NativeSelectOption value={noProjectValue}>No project</NativeSelectOption>
+                  <NativeSelectOption value={newProjectValue}>New project…</NativeSelectOption>
+                </NativeSelect>
               </div>
             </AuiIf>
             <div className="-mt-px">
