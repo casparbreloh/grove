@@ -1,21 +1,21 @@
-# renderer design
+# Grove renderer design
 
-Keep Grove calm, dense, and desktop-native. Prefer semantic tokens and current shadcn/Base UI composition over bespoke components, wrappers, or one-off values.
+Grove is a calm, dense, desktop-native workbench. This file records visual principles; renderer CSS and existing components define the actual tokens, dimensions, themes, and implementation.
 
-## defaults
+## Principles
 
-- Surfaces: `background` is canvas, `card` raised, and `popover` overlay. `sidebar` is the active named theme's opaque color and fills every part of the window chrome surrounding the content inset. Keep the surface flat; broad gradients and Electron vibrancy are not used. Use semantic foreground, muted, accent, border, ring, and status tokens; never literal light/dark component colors.
-- Type: `text-sm` is 13px for controls, reading, code, terminals, and tab titles. Native `text-xs` is 12px for metadata and compact controls. Use heading utilities only for hierarchy.
-- Icons are text role + 2px: `--icon-sm` is 15px beside `text-sm`; `--icon-xs` is 14px beside `text-xs`. Primitives apply this to unqualified SVGs without changing hit areas. The task-item project folder is the sole +1px optical exception.
-- Use Tailwind spacing and existing radius tokens. Control height and padding come from explicit size variants, not typography. Motion is 75–200ms, communicates state only, and has a `motion-reduce` path.
+- Make the current work—source, conversation, terminals, approvals, and state—the visual focus. Keep surrounding chrome quiet.
+- Prefer clear hierarchy, compact geometry, and stable spatial relationships. Dense should feel efficient, never cramped or ambiguous.
+- Keep Project, Task, Session, and Environment context easy to scan, especially around consequential actions.
+- Use tonal surfaces, borders, typography, and spacing before shadows or decoration. Reserve elevation for elements that genuinely sit above the document.
+- Reuse established Grove, shadcn/Base UI, and assistant-ui patterns. Prefer platform behavior when it serves the interaction.
+- Preserve semantics, keyboard access, visible focus, contrast, usable hit targets, and reduced-motion behavior.
+- Use restrained motion only to communicate state, continuity, or direct manipulation. Meaning and access must not depend on animation.
+- Simplify supporting controls as space narrows without weakening access to the active resource.
 
-## composition
+## Avoid
 
-- Start with shadcn subcomponents, variants, `data-slot`, and state selectors. Use compact native selects for finite choices so their popup follows the platform; reserve custom popovers for content that a native select cannot express. Keep Grove's compact Button/Input sizing, stronger mobile-sheet scrim, and sidebar without cookie persistence or global shortcut.
-- Add custom CSS only for platform layout or behavior primitives cannot express. Use shadcn `scroll-fade`, not hard-coded gradients or effects. Preserve `content-visibility` and CSS-driven motion.
-- Tabs use native button focus order, reserved close-control space, a fixed 150px width, direct horizontal overflow, and an always-reachable add button. Tab and Shift+Tab move through each tab and its close control; Enter and Space activate the focused control.
-- Preserve focus rings, semantics, inert hidden panes, keyboard behavior, and reduced motion. Let JavaScript change state; render visibility and motion with `data-*` selectors and CSS transitions. Use effects only for measured DOM behavior.
-
-## shadcn updates
-
-From `apps/desktop`, inspect `npx shadcn@latest diff --help`, then run `npx shadcn@latest add <component> --diff -y`. Review every difference as upstream improvement, intentional Grove deviation, or integration behavior; never overwrite a deviation blindly. Keep assistant-ui in `src/renderer/src/components/ai-elements`, adapt transitive primitives in `components/ui`, then check light/dark, focus, overflow, reduced motion, and the narrow relevant test.
+- Marketing-page composition, ornamental card grids, oversized typography, and empty space used only to imply polish.
+- Broad gradients, glow, glassmorphism, blurred decoration, Electron vibrancy, and translucent window chrome.
+- One-off visual values, duplicate primitives, or unrelated visual languages within one view.
+- Visual novelty that weakens clarity, accessibility, or platform expectations.

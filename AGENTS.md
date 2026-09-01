@@ -3,7 +3,7 @@
 ## Where to look
 
 - `VISION.md` is the authority for product vocabulary, semantics, Agent/Environment boundaries, and delivery order. Read it before product, runtime, or architecture work.
-- `DESIGN.md` is the authority for renderer design-system and UI work.
+- `DESIGN.md` is the authority for renderer visual intent and UI principles. Renderer CSS and existing components are the source of truth for tokens, dimensions, theme values, and component implementation.
 - `.repos/` contains ignored, read-only inspiration checkouts. Before relying on one, run `git -C <path> pull --ff-only`.
   - `.repos/opencode-dev` — current OpenCode V2 development on `dev`; inspect its shared core/server/client and multi-frontend shape.
   - `.repos/pi-dev` — current Pi development on `dev`; use this as the primary source for active harness, protocol, server, client, and coding-agent work.
@@ -29,6 +29,8 @@ Inspiration is not authority. Preserve Grove product semantics even when an upst
 
 - Follow local TypeScript/UI patterns, infer types, avoid `any`, validate untrusted data, and use discriminated unions for finite states. Mock only external/system boundaries.
 - Do not edit generated files (including `routeTree.gen.ts`).
+- Before creating renderer UI, inspect the nearest existing component and the semantic tokens in `theme.css`; reuse their variants, state selectors, accessibility behavior, and sizing.
+- For shadcn updates, inspect `npx shadcn@latest diff --help`, then run `npx shadcn@latest add <component> --diff -y` from `apps/desktop`. Classify each difference before applying it; never overwrite a Grove deviation blindly.
 - Assistant UI belongs in `apps/desktop/src/renderer/src/components/ai-elements`. Install it only with `npx assistant-ui@latest add <component> --path src/renderer/src/components/ai-elements`; keep transitive shadcn primitives in `components/ui`.
 - Renderer-only slices use explicitly named mock modules. Do not smuggle preload, IPC, filesystem, process, Agent, or Environment behavior into renderer code.
 
