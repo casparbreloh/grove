@@ -1,55 +1,33 @@
 import { ColorsIcon } from "@hugeicons/core-free-icons";
+import { useTheme } from "next-themes";
 
-import { themes, useTheme } from "@/components/theme-provider";
 import {
   NativeSelect,
   NativeSelectOptGroup,
   NativeSelectOption,
 } from "@/components/ui/native-select";
 
-const lightAppearanceValue = "appearance:light";
-const darkAppearanceValue = "appearance:dark";
-const appearanceMenuValue = "";
-
 export function ThemePicker() {
-  const { appearance, setAppearance, setThemeId, themeId } = useTheme();
+  const { theme, setTheme } = useTheme();
 
   return (
     <NativeSelect
-      aria-label="Appearance and sidebar color"
+      aria-label="Appearance"
       className="mr-1.5 shrink-0 [-webkit-app-region:no-drag]"
       icon={ColorsIcon}
-      iconClassName="text-[var(--theme-icon)]"
+      iconClassName="text-muted-foreground"
       onChange={(event) => {
         const value = event.currentTarget.value;
-        const theme = themes.find(({ id }) => id === value);
-        if (theme) setThemeId(theme.id);
-        if (value === lightAppearanceValue) setAppearance("light");
-        if (value === darkAppearanceValue) setAppearance("dark");
-        event.currentTarget.value = appearanceMenuValue;
+        if (value === "system" || value === "light" || value === "dark") setTheme(value);
       }}
       size="sm"
-      value={appearanceMenuValue}
+      value={theme ?? "system"}
       variant="icon"
     >
-      <NativeSelectOption disabled hidden value={appearanceMenuValue}>
-        Appearance
-      </NativeSelectOption>
-      <NativeSelectOptGroup label="Color">
-        {themes.map(({ id, label }) => (
-          <NativeSelectOption key={id} value={id}>
-            {label}
-            {themeId === id ? " ✓" : ""}
-          </NativeSelectOption>
-        ))}
-      </NativeSelectOptGroup>
       <NativeSelectOptGroup label="Appearance">
-        <NativeSelectOption value={lightAppearanceValue}>
-          Light{appearance === "light" ? " ✓" : ""}
-        </NativeSelectOption>
-        <NativeSelectOption value={darkAppearanceValue}>
-          Dark{appearance === "dark" ? " ✓" : ""}
-        </NativeSelectOption>
+        <NativeSelectOption value="system">System</NativeSelectOption>
+        <NativeSelectOption value="light">Light</NativeSelectOption>
+        <NativeSelectOption value="dark">Dark</NativeSelectOption>
       </NativeSelectOptGroup>
     </NativeSelect>
   );

@@ -17,6 +17,6 @@
   }
 
   body {
-    @apply bg-sidebar text-foreground;
+    @apply bg-sidebar text-foreground antialiased;
   }
 }
