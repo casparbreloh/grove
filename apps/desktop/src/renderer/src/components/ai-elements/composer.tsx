@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button";
 export function Composer({ inputRef }: { inputRef?: RefObject<HTMLTextAreaElement | null> }) {
   return (
     <ComposerPrimitive.Root className="relative flex w-full flex-col">
-      <div className="flex w-full cursor-text flex-col gap-2 rounded-3xl border bg-card p-2 shadow-xs transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+      <div className="flex w-full cursor-text flex-col gap-2 rounded-3xl border bg-surface-glass p-2 shadow-xs backdrop-blur-(--glass-blur) transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
         <ComposerPrimitive.Input
           aria-label="Message input"
           autoFocus
-          className="max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-sm/6 outline-none placeholder:text-muted-foreground/60"
+          className="max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-sm/6 outline-none placeholder:text-muted-foreground"
           enterKeyHint="send"
           placeholder="Ask anything"
           ref={inputRef}

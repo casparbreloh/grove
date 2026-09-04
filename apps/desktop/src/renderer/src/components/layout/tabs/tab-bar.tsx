@@ -35,7 +35,7 @@ export function TabBar() {
         </SortableContext>
         <TabListDropTail />
       </nav>
-      <NewTabMenu className="mr-1.5" />
+      <NewTabMenu />
     </div>
   );
 }

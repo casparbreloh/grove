@@ -36,7 +36,7 @@ export function AppSidebar() {
       className="top-(--header-height) h-[calc(100svh-var(--header-height))]"
       variant="inset"
     >
-      <SidebarHeader className="p-0 pr-2 pl-1.5">
+      <SidebarHeader className="px-1.5 py-0 md:pr-0">
         <SidebarMenu aria-label="Primary">
           <SidebarMenuItem>
             <SidebarMenuButton size="compact">
@@ -53,7 +53,7 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent className="scroll-fade scroll-fade-6">
-        <SidebarGroup aria-labelledby="tasks-heading" className="py-1 pr-2 pl-1.5">
+        <SidebarGroup aria-labelledby="tasks-heading" className="px-1.5 py-1 md:pr-0">
           <div className="flex items-center">
             <SidebarGroupLabel className="min-w-0 flex-1" id="tasks-heading">
               Tasks
@@ -87,7 +87,7 @@ export function AppSidebar() {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="pt-1 pr-2 pb-1.5 pl-1.5">
+      <SidebarFooter className="px-1.5 pt-1 pb-1.5 md:pr-0">
         <SidebarMenu aria-label="Secondary">
           <SidebarMenuItem>
             <SidebarMenuButton size="compact">
